@@ -24,19 +24,30 @@ jobs:
           version: "0.12.5"
 
       - name: Install the project
-        run: uv sync --locked --all-groups
+        run: uv sync --locked
 
-      - name: Check formatting
-        run: uv run ruff format --check .
+      - name: Check Python
+        run: |
+          uv run ruff format --check .
+          uv run ruff check .
+          uv run ty check
+          uv run pytest
+          uv build
 
-      - name: Lint
-        run: uv run ruff check .
+      - name: Install Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: "24"
 
-      - name: Type-check
-        run: uv run ty check
+      - name: Install frontend
+        working-directory: frontend
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
 
-      - name: Test
-        run: uv run pytest
-
-      - name: Build distributions
-        run: uv build
+      - name: Check frontend
+        working-directory: frontend
+        run: |
+          pnpm lint
+          pnpm test
+          pnpm build

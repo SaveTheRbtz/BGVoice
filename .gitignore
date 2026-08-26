@@ -1,25 +1,39 @@
-# Python bytecode and caches
+# Python
 __pycache__/
 *.py[cod]
-.pytest_cache/
-.ruff_cache/
-
-# Virtual environments
-.venv/
-venv/
-
-# Test and coverage output
-.coverage
-coverage.xml
-htmlcov/
-
-# Build output
-build/
-dist/
+/.venv/
+/.pytest_cache/
+/.ruff_cache/
+/.coverage
+/coverage.xml
+/htmlcov/
+/build/
+/dist/
 *.egg-info/
 
-# Editors and operating systems
-.idea/
-.vscode/
+# Frontend
+/frontend/node_modules/
+/frontend/dist/
+/frontend/coverage/
+/frontend/.eslintcache
+/frontend/.vite/
+*.tsbuildinfo
+pnpm-debug.log*
+
+# Local pipeline artifacts
+/.tools/
+/data/*.db*
+/data/*.sqlite*
+
+# Local configuration and logs
+.env
+.env.*
+!.env.example
+*.log
+
+# Editors and OS
+/.idea/
+/.vscode/
 .DS_Store
+Desktop.ini
 Thumbs.db

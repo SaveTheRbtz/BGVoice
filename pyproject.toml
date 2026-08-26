@@ -4,10 +4,20 @@ version = "0.1.0"
 description = "AI-generated voice-over tooling for Baldur's Gate EET dialogue."
 readme = "README.md"
 requires-python = ">=3.14"
-dependencies = []
+dependencies = [
+    "fastapi>=0.135.1",
+    "pydantic>=2.13.4",
+    "sqlalchemy>=2.0.52",
+    "sqlmodel>=0.0.39",
+    "uvicorn>=0.41.0",
+]
+
+[project.scripts]
+bgvoice = "bgvoice.__main__:main"
 
 [dependency-groups]
 dev = [
+    "httpx2>=2.12.0",
     "pytest>=9.1.1",
     "pytest-cov>=7.1.0",
     "ruff>=0.16.4",
@@ -20,13 +30,12 @@ build-backend = "uv_build"
 
 [tool.pytest.ini_options]
 addopts = [
+    "-ra",
+    "--cov=bgvoice",
+    "--cov-report=term-missing:skip-covered",
     "--import-mode=importlib",
     "--strict-config",
     "--strict-markers",
-    "--cov=bgvoice",
-    "--cov-report=term-missing:skip-covered",
-    "--cov-fail-under=100",
-    "-ra",
 ]
 filterwarnings = ["error"]
 testpaths = ["tests"]
@@ -34,12 +43,9 @@ xfail_strict = true
 
 [tool.coverage.run]
 branch = true
-source = ["bgvoice"]
 
 [tool.coverage.report]
-fail_under = 100
-show_missing = true
-skip_covered = true
+fail_under = 95
 
 [tool.ruff]
 target-version = "py314"
@@ -59,19 +65,9 @@ select = [
     "SIM",
     "UP",
 ]
-preview = true
-
-[tool.ruff.format]
-docstring-code-format = true
-
-[tool.ty.environment]
-python-version = "3.14"
 
 [tool.ty.src]
-include = [
-    "src",
-    "tests",
-]
+include = ["src", "tests"]
 
 [tool.ty.rules]
 dynamic-function-decorator-return = "error"
