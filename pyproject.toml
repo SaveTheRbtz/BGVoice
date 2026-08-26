@@ -1,0 +1,80 @@
+[project]
+name = "bgvoice"
+version = "0.1.0"
+description = "AI-generated voice-over tooling for Baldur's Gate EET dialogue."
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.16.4",
+    "ty>=0.0.74",
+]
+
+[build-system]
+requires = ["uv_build>=0.12.5,<0.13"]
+build-backend = "uv_build"
+
+[tool.pytest.ini_options]
+addopts = [
+    "--import-mode=importlib",
+    "--strict-config",
+    "--strict-markers",
+    "--cov=bgvoice",
+    "--cov-report=term-missing:skip-covered",
+    "--cov-fail-under=100",
+    "-ra",
+]
+filterwarnings = ["error"]
+testpaths = ["tests"]
+xfail_strict = true
+
+[tool.coverage.run]
+branch = true
+source = ["bgvoice"]
+
+[tool.coverage.report]
+fail_under = 100
+show_missing = true
+skip_covered = true
+
+[tool.ruff]
+target-version = "py314"
+line-length = 100
+
+[tool.ruff.lint]
+select = [
+    "ANN",
+    "B",
+    "E4",
+    "E7",
+    "E9",
+    "F",
+    "I",
+    "PYI",
+    "RUF",
+    "SIM",
+    "UP",
+]
+preview = true
+
+[tool.ruff.format]
+docstring-code-format = true
+
+[tool.ty.environment]
+python-version = "3.14"
+
+[tool.ty.src]
+include = [
+    "src",
+    "tests",
+]
+
+[tool.ty.rules]
+dynamic-function-decorator-return = "error"
+missing-type-argument = "error"
+possibly-unresolved-reference = "warn"
+unsound-return-statement = "error"
