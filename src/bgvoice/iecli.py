@@ -12,11 +12,13 @@ from bgvoice.models import (
     CreResource,
     DlgDump,
     DlgResource,
+    PortraitResource,
     StringReference,
 )
 
 _CRE_RESOURCES = TypeAdapter(list[CreResource])
 _DLG_RESOURCES = TypeAdapter(list[DlgResource])
+_PORTRAIT_RESOURCES = TypeAdapter(list[PortraitResource])
 _LOCAL_IECLI = Path(".tools/iecli/v0.3.0-rc.1/iecli.exe")
 
 
@@ -38,6 +40,16 @@ class DialogueIeCliClient(Protocol):
     def list_dialogues(self, game_root: Path) -> list[DlgResource]: ...
 
     def dump_dialogue(self, game_root: Path, resource_name: str) -> DlgDump: ...
+
+
+class PortraitIeCliClient(Protocol):
+    """The ie-cli operations used by portrait extraction."""
+
+    def version(self) -> str: ...
+
+    def list_portraits(self, game_root: Path) -> list[PortraitResource]: ...
+
+    def read_raw_resource(self, game_root: Path, resource_name: str) -> bytes: ...
 
 
 class MetadataIeCliClient(Protocol):
@@ -96,6 +108,21 @@ class IeCli:
             strict=True,
         )
 
+    def list_portraits(self, game_root: Path) -> list[PortraitResource]:
+        """List every effective BMP resource."""
+        return _PORTRAIT_RESOURCES.validate_json(
+            self._run(
+                "list",
+                "--game",
+                str(game_root),
+                "--type",
+                "BMP",
+                "--format",
+                "json",
+            ),
+            strict=True,
+        )
+
     def dump_creature(self, game_root: Path, resource_name: str) -> CreDump:
         """Dump and validate one CRE resource."""
         dump = CreDump.model_validate_json(
@@ -120,6 +147,10 @@ class IeCli:
 
     def read_text_resource(self, game_root: Path, resource_name: str) -> str:
         """Dump one effective IDS or 2DA resource and decode its raw text."""
+        return _decode_text_resource(self.read_raw_resource(game_root, resource_name))
+
+    def read_raw_resource(self, game_root: Path, resource_name: str) -> bytes:
+        """Return the exact bytes of one effective resource."""
         with tempfile.TemporaryDirectory(prefix="bgvoice-iecli-") as temporary_directory:
             output = Path(temporary_directory, "resource.bin")
             self._run(
@@ -132,7 +163,7 @@ class IeCli:
                 str(output),
             )
             data = output.read_bytes()
-        return _decode_text_resource(data)
+        return data
 
     def resolve_string(self, game_root: Path, strref: int) -> StringReference:
         """Resolve one unsigned dialog.tlk string reference."""

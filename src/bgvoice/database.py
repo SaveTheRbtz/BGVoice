@@ -42,6 +42,7 @@ from bgvoice.models import (
     InteractionKind,
     KitDefinition,
     MetadataExtraction,
+    PortraitImage,
     RaceTextRow,
     ResourceSource,
     ResourceTargetType,
@@ -55,6 +56,7 @@ from bgvoice.models import (
 )
 
 _CHARACTERS = "characters"
+_PORTRAIT_IMAGES = "portrait_images"
 _CHARACTER_SOUNDS = "character_sounds"
 _CHARACTER_DIALOGUES = "character_dialogues"
 _VOICE_RESOURCES = "voice_resources"
@@ -101,6 +103,7 @@ _METADATA_TABLES = (
 TABLE_NAMES = frozenset(
     {
         _CHARACTERS,
+        _PORTRAIT_IMAGES,
         _CHARACTER_SOUNDS,
         _CHARACTER_DIALOGUES,
         _VOICE_RESOURCES,
@@ -136,6 +139,7 @@ TABLE_INDEXES: dict[str, tuple[IndexSpec, ...]] = {
         IndexSpec("resource_name", BTree(), "characters_resource_name_btree"),
         IndexSpec("search_text", _FTS, "characters_search_fts"),
     ),
+    _PORTRAIT_IMAGES: (IndexSpec("resref", BTree(), "portrait_images_resref_btree"),),
     _CHARACTER_SOUNDS: (
         IndexSpec("id", BTree(), "character_sounds_id_btree"),
         IndexSpec(
@@ -424,6 +428,16 @@ class CharacterRecord(_Record):
             "only complete CREs carry a serialized size"
         )
         return self
+
+
+class PortraitImageRecord(_Record):
+    """One effective CRE portrait, normalized to a directly usable PNG."""
+
+    resref: str = Field(min_length=1, max_length=8)
+    source: ResourceSource
+    width: int = Field(gt=0)
+    height: int = Field(gt=0)
+    png: bytes = Field(min_length=1)
 
 
 class CharacterSoundRecord(_Record):
@@ -841,6 +855,7 @@ class KitDefinitionRecord(_KeyedRecord):
 
 TABLE_MODELS: dict[str, type[LanceModel]] = {
     _CHARACTERS: CharacterRecord,
+    _PORTRAIT_IMAGES: PortraitImageRecord,
     _CHARACTER_SOUNDS: CharacterSoundRecord,
     _CHARACTER_DIALOGUES: CharacterAttributionRecord,
     _VOICE_RESOURCES: VoiceResourceRecord,
@@ -1130,6 +1145,32 @@ class PipelineDatabase:
             for character in characters
             if refresh or character.extraction.status is not DetailStatus.COMPLETE
         }
+
+    def referenced_portrait_resrefs(self) -> set[str]:
+        """Return every portrait referenced by a successfully extracted CRE."""
+        return {
+            resref
+            for character in self._records(_CHARACTERS, CharacterRecord)
+            if character.detail is not None
+            for resref in (character.detail.small_portrait, character.detail.large_portrait)
+            if resref is not None
+        }
+
+    def replace_portraits(self, run_id: str, images: Sequence[PortraitImage]) -> None:
+        """Replace the complete set of effective character portrait images."""
+        self._run(run_id, expected_kind=RunKind.PORTRAITS)
+        records = [
+            PortraitImageRecord.model_validate(image, from_attributes=True) for image in images
+        ]
+        self._assert_unique_names([record.resref for record in records], kind="portrait images")
+        self._replace(_PORTRAIT_IMAGES, "resref", PortraitImageRecord, records)
+
+    def portraits(self) -> list[PortraitImageRecord]:
+        """Return stored portraits in stable resource order."""
+        return sorted(
+            self._records(_PORTRAIT_IMAGES, PortraitImageRecord),
+            key=lambda portrait: (portrait.resref.casefold(), portrait.resref),
+        )
 
     def apply_detail_batch(
         self,
@@ -1467,6 +1508,8 @@ class PipelineDatabase:
             if run.run_kind is RunKind.CHARACTERS:
                 self._optimize(_CHARACTERS, self._table(_CHARACTERS))
                 self._optimize(_CHARACTER_SOUNDS, self._table(_CHARACTER_SOUNDS))
+            elif run.run_kind is RunKind.PORTRAITS:
+                self._optimize(_PORTRAIT_IMAGES, self._table(_PORTRAIT_IMAGES))
             elif run.run_kind is RunKind.DIALOGUES:
                 self._optimize(_DIALOGUES, self._table(_DIALOGUES))
                 self._optimize(_DIALOGUE_LINES, self._table(_DIALOGUE_LINES))

@@ -7,7 +7,12 @@ from pathlib import Path
 from pydantic import PositiveInt
 
 from bgvoice.database import PipelineDatabase
-from bgvoice.iecli import CharacterIeCliClient, DialogueIeCliClient, MetadataIeCliClient
+from bgvoice.iecli import (
+    CharacterIeCliClient,
+    DialogueIeCliClient,
+    MetadataIeCliClient,
+    PortraitIeCliClient,
+)
 from bgvoice.metadata import build_metadata
 from bgvoice.models import (
     CharacterExtraction,
@@ -16,6 +21,8 @@ from bgvoice.models import (
     DlgResource,
     ExtractionProgress,
     ExtractionSummary,
+    PortraitImage,
+    PortraitResource,
     RunKind,
     RunStatus,
     TerminalRunStatus,
@@ -72,6 +79,80 @@ def extract_metadata(
                 discovered=discovered,
                 attempted=discovered,
                 extracted=0,
+                failures=0,
+                error=str(error),
+            )
+        except BaseException as finalization_error:
+            error.add_note(f"Failed to finalize extraction run {run_id}: {finalization_error!r}")
+        raise
+
+
+def extract_portraits(
+    client: PortraitIeCliClient,
+    database: PipelineDatabase,
+    game_root: Path,
+    *,
+    workers: PositiveInt = 8,
+) -> ExtractionSummary:
+    """Extract each effective BMP referenced by at least one character."""
+    root = game_root.expanduser().resolve()
+    iecli_version = client.version()
+    run_id = database.start_run(root, iecli_version, run_kind=RunKind.PORTRAITS)
+    discovered = attempted = extracted = 0
+
+    try:
+        resources = client.list_portraits(root)
+        discovered = len(resources)
+        resources_by_resref = {resource.resref.casefold(): resource for resource in resources}
+        referenced = {resref.casefold() for resref in database.referenced_portrait_resrefs()}
+        targets = [
+            resources_by_resref[resref]
+            for resref in sorted(referenced & resources_by_resref.keys())
+        ]
+        attempted = len(targets)
+
+        def extract(resource: PortraitResource) -> PortraitImage:
+            return PortraitImage.from_bmp(
+                resource,
+                client.read_raw_resource(root, resource.resource_name),
+            )
+
+        with ThreadPoolExecutor(
+            max_workers=int(workers),
+            thread_name_prefix="iecli-portrait",
+        ) as executor:
+            images = list(executor.map(extract, targets))
+
+        database.replace_portraits(run_id, images)
+        extracted = len(images)
+        database.finish_run(
+            run_id,
+            status=RunStatus.COMPLETE,
+            discovered=discovered,
+            attempted=attempted,
+            extracted=extracted,
+            failures=0,
+        )
+        return ExtractionSummary(
+            run_id=run_id,
+            game_root=root,
+            database_path=database.path,
+            iecli_version=iecli_version,
+            discovered=discovered,
+            attempted=attempted,
+            extracted=extracted,
+            failed=0,
+            skipped=discovered - attempted,
+            status=RunStatus.COMPLETE,
+        )
+    except BaseException as error:
+        try:
+            database.finish_run(
+                run_id,
+                status=RunStatus.FAILED,
+                discovered=discovered,
+                attempted=attempted,
+                extracted=extracted,
                 failures=0,
                 error=str(error),
             )

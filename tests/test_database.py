@@ -33,6 +33,7 @@ from bgvoice.database import (
     KitDefinitionRecord,
     MonthDefinitionRecord,
     PipelineDatabase,
+    PortraitImageRecord,
     RaceTextRecord,
     SoundsetLineRecord,
     SoundSlotGroupRecord,
@@ -69,6 +70,7 @@ from bgvoice.models import (
     KitListRowId,
     MetadataExtraction,
     MonthDefinition,
+    PortraitImage,
     RaceId,
     RaceTextRow,
     ResourceSource,
@@ -467,6 +469,7 @@ def test_database_creates_exact_typed_schemas_and_native_indexes(tmp_path: Path)
     tables = set(database.list_tables(limit=None).tables)
     assert tables == {
         "characters",
+        "portrait_images",
         "character_sounds",
         "character_dialogues",
         "voice_resources",
@@ -495,6 +498,7 @@ def test_database_creates_exact_typed_schemas_and_native_indexes(tmp_path: Path)
 
     models: dict[str, type[LanceModel]] = {
         "characters": CharacterRecord,
+        "portrait_images": PortraitImageRecord,
         "character_sounds": CharacterSoundRecord,
         "character_dialogues": CharacterAttributionRecord,
         "voice_resources": VoiceResourceRecord,
@@ -548,6 +552,45 @@ def test_database_creates_exact_typed_schemas_and_native_indexes(tmp_path: Path)
     ]
     assert fts_indexes
     assert all(config == fts for config in fts_indexes)
+
+
+def test_portraits_follow_character_references_and_replace_atomically(tmp_path: Path) -> None:
+    database = PipelineDatabase(tmp_path / "portraits.lancedb")
+    character = make_resource()
+    character_run = database.start_run(tmp_path, "iecli test")
+    database.replace_inventory(character_run, [character])
+    database.apply_detail_batch(
+        character_run,
+        [CharacterExtraction.from_dump(character, make_dump())],
+        [],
+    )
+
+    assert database.referenced_portrait_resrefs() == {"AERIES"}
+
+    portrait = PortraitImage(
+        resref="AERIES",
+        source=ResourceSource(kind=SourceKind.OVERRIDE, path="C:/game/override/AERIES.BMP"),
+        width=54,
+        height=84,
+        png=b"\x89PNG\r\n\x1a\n",
+    )
+    portrait_run = database.start_run(tmp_path, "iecli test", run_kind=RunKind.PORTRAITS)
+    database.replace_portraits(portrait_run, [portrait])
+    database.finish_run(
+        portrait_run,
+        status=RunStatus.COMPLETE,
+        attempted=1,
+        extracted=1,
+        failures=0,
+    )
+
+    assert database.portraits() == [
+        PortraitImageRecord.model_validate(portrait, from_attributes=True)
+    ]
+
+    replacement_run = database.start_run(tmp_path, "iecli test", run_kind=RunKind.PORTRAITS)
+    database.replace_portraits(replacement_run, [])
+    assert database.portraits() == []
 
 
 def test_metadata_replacement_readers_and_run_lifecycle(tmp_path: Path) -> None:

@@ -27,6 +27,7 @@ Run the stages in order:
 uv run bgvoice extract-metadata --game "D:\Games\BG\BG2EE-EET"
 uv run bgvoice extract-dialogues --game "D:\Games\BG\BG2EE-EET"
 uv run bgvoice extract-characters --game "D:\Games\BG\BG2EE-EET"
+uv run bgvoice extract-portraits --game "D:\Games\BG\BG2EE-EET"
 uv run bgvoice attribute-dialogues
 ```
 
@@ -41,7 +42,9 @@ uv run bgvoice attribute-dialogues
 3. `extract-characters` inventories every effective CRE and stores its voice-relevant metadata,
    populated soundset lines, dialogue reference, typed engine classifications, animation, class
    levels, abilities, morale, reputation, racial enemy, and both raw and normalized kit values.
-4. `attribute-dialogues` combines direct CRE dialogue fields with imported party/banter links, then
+4. `extract-portraits` intersects the CRE portrait references with the effective BMP inventory,
+   extracts every referenced image once, and stores its original dimensions and PNG bytes by resref.
+5. `attribute-dialogues` combines direct CRE dialogue fields with imported party/banter links, then
    accounts for matched, dangling, and failed character references and every attributed or
    unattributed dialogue and line. It groups successfully extracted CREs by their resolved,
    case-insensitive display name and publishes only groups with NPC lines. Each voice retains its
@@ -65,7 +68,8 @@ the fields consumed from `ie-cli` output, while tolerating unrelated fields adde
 versions; typed LanceModel rows define the stored schema. The pipeline keeps its current
 state in typed LanceDB tables with native full-text indexes. CRE and DLG rows own only their
 resource envelope and nested extraction result; child lines, transitions, and sounds own their
-intrinsic coordinates and content. Dialogue attribution and voice membership are published as one
+intrinsic coordinates and content. Referenced portrait images are normalized to PNG and stored once
+while characters retain their native portrait resrefs. Dialogue attribution and voice membership are published as one
 run-scoped generation, with the completed run marker written last. Canonical IDS values are
 normalized separately from campaign-specific race and class text, and duplicate IDS aliases are
 preserved. Generated databases are local and reproducible, so schema changes are handled by

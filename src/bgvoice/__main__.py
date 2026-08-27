@@ -9,7 +9,12 @@ from pathlib import Path
 from bgvoice.database import PipelineDatabase
 from bgvoice.iecli import IeCli
 from bgvoice.models import ExtractionProgress, RunStatus
-from bgvoice.pipeline import extract_characters, extract_dialogues, extract_metadata
+from bgvoice.pipeline import (
+    extract_characters,
+    extract_dialogues,
+    extract_metadata,
+    extract_portraits,
+)
 
 _DEFAULT_DATABASE = Path("data/bgvoice.lancedb")
 
@@ -31,7 +36,10 @@ def build_parser() -> argparse.ArgumentParser:
     dialogues = commands.add_parser(
         "extract-dialogues", help="inventory and extract all EET DLG resources"
     )
-    for extraction in (metadata, characters, dialogues):
+    portraits = commands.add_parser(
+        "extract-portraits", help="store CRE portrait resources as deduplicated PNG images"
+    )
+    for extraction in (metadata, characters, portraits, dialogues):
         extraction.add_argument(
             "--game", required=True, type=Path, help="game root containing chitin.key"
         )
@@ -110,6 +118,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             workers=args.workers,
             refresh=args.refresh,
             progress=_print_character_progress,
+        )
+    elif args.command == "extract-portraits":
+        summary = extract_portraits(
+            client,
+            database,
+            args.game,
+            workers=args.workers,
         )
     else:
         summary = extract_dialogues(

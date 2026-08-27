@@ -10,9 +10,11 @@ from collections import Counter
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from enum import StrEnum
+from io import BytesIO
 from pathlib import Path
 from typing import Annotated, Literal, NewType, Self
 
+from PIL import Image
 from pydantic import BaseModel, ConfigDict, Field, PositiveInt, model_validator
 
 
@@ -47,6 +49,7 @@ class AttributionPublicationStatus(StrEnum):
 class RunKind(StrEnum):
     CHARACTERS = "characters"
     DIALOGUES = "dialogues"
+    PORTRAITS = "portraits"
     METADATA = "metadata"
     ATTRIBUTION = "attribution"
 
@@ -159,6 +162,16 @@ class DlgResource(IeCliProjection):
         return compose_search_text(self.resource_name, self.resref, self.source_path)
 
 
+class PortraitResource(IeCliProjection):
+    """One effective BMP resource returned by ``iecli list``."""
+
+    resource_name: str = Field(min_length=1)
+    resref: ResRef
+    source_kind: SourceKind = Field(strict=False)
+    source_path: str = Field(min_length=1)
+    resource_type: Literal["BMP"] = Field(alias="type")
+
+
 class ResourceSource(StrictModel):
     """Physical origin of one effective Infinity Engine resource."""
 
@@ -166,8 +179,34 @@ class ResourceSource(StrictModel):
     path: str = Field(min_length=1)
 
     @classmethod
-    def from_resource(cls, resource: CreResource | DlgResource) -> Self:
+    def from_resource(cls, resource: CreResource | DlgResource | PortraitResource) -> Self:
         return cls(kind=resource.source_kind, path=resource.source_path)
+
+
+class PortraitImage(StrictModel):
+    """One canonical portrait encoded as browser-ready PNG bytes."""
+
+    resref: ResRef
+    source: ResourceSource
+    width: PositiveInt
+    height: PositiveInt
+    png: Annotated[bytes, Field(min_length=1)]
+
+    @classmethod
+    def from_bmp(cls, resource: PortraitResource, bmp: bytes) -> Self:
+        """Convert one effective Infinity Engine BMP portrait to optimized RGB PNG."""
+        with Image.open(BytesIO(bmp)) as source:
+            width, height = source.size
+            image = source.convert("RGB")
+        output = BytesIO()
+        image.save(output, format="PNG", optimize=True)
+        return cls(
+            resref=resource.resref.upper(),
+            source=ResourceSource.from_resource(resource),
+            width=width,
+            height=height,
+            png=output.getvalue(),
+        )
 
 
 class ExtractionState(StrictModel):

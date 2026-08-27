@@ -8,7 +8,7 @@ export type AttributionStatus =
   | "character_unavailable";
 export type AttributionPublication = "missing" | "stale" | "published";
 type DialogueLineKind = "npc" | "player" | "journal";
-type RunKind = "characters" | "dialogues" | "metadata" | "attribution";
+type RunKind = "characters" | "dialogues" | "portraits" | "metadata" | "attribution";
 type RunStatus =
   | "running"
   | "complete"

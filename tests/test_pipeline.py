@@ -2,11 +2,13 @@
 
 import re
 from collections.abc import Callable, Sequence
+from io import BytesIO
 from pathlib import Path
 from threading import Event
 
 import lancedb
 import pytest
+from PIL import Image
 
 import bgvoice.pipeline as pipeline
 from bgvoice.database import ExtractionRunRecord, PipelineDatabase
@@ -20,11 +22,24 @@ from bgvoice.models import (
     ExtractionProgress,
     ExtractionSummary,
     MetadataExtraction,
+    PortraitImage,
+    PortraitResource,
     RunKind,
     StringReference,
 )
-from bgvoice.pipeline import extract_characters, extract_dialogues, extract_metadata
-from tests.factories import make_dialogue_dump, make_dialogue_resource, make_dump, make_resource
+from bgvoice.pipeline import (
+    extract_characters,
+    extract_dialogues,
+    extract_metadata,
+    extract_portraits,
+)
+from tests.factories import (
+    make_dialogue_dump,
+    make_dialogue_resource,
+    make_dump,
+    make_portrait_resource,
+    make_resource,
+)
 
 type Extractor = Callable[..., ExtractionSummary]
 
@@ -59,12 +74,20 @@ def _empty_metadata(source_count: int = 3) -> MetadataExtraction:
     )
 
 
+def _bmp(width: int, height: int, color: tuple[int, int, int]) -> bytes:
+    output = BytesIO()
+    Image.new("RGB", (width, height), color).save(output, format="BMP")
+    return output.getvalue()
+
+
 class FakeIeCli:
     """A deterministic client spanning both resource kinds."""
 
     def __init__(self) -> None:
         self.creatures = [make_resource(), make_resource("MINSC.CRE")]
         self.dialogues = [make_dialogue_resource(), make_dialogue_resource("MINSC.DLG")]
+        self.portraits: list[PortraitResource] = []
+        self.raw_resources: dict[str, bytes] = {}
         self.failures: set[str] = set()
         self.inventory_failure: RunKind | None = None
         self.dumped: list[str] = []
@@ -80,6 +103,10 @@ class FakeIeCli:
         self._raise_inventory_failure(RunKind.DIALOGUES)
         return self.dialogues
 
+    def list_portraits(self, game_root: Path) -> list[PortraitResource]:
+        self._raise_inventory_failure(RunKind.PORTRAITS)
+        return self.portraits
+
     def dump_creature(self, game_root: Path, resource_name: str) -> CreDump:
         self._record_dump(resource_name)
         return make_dump(resource_name, dialog=resource_name.removesuffix(".CRE"))
@@ -87,6 +114,10 @@ class FakeIeCli:
     def dump_dialogue(self, game_root: Path, resource_name: str) -> DlgDump:
         self._record_dump(resource_name)
         return make_dialogue_dump(resource_name)
+
+    def read_raw_resource(self, game_root: Path, resource_name: str) -> bytes:
+        self._record_dump(resource_name)
+        return self.raw_resources[resource_name]
 
     def read_text_resource(self, game_root: Path, resource_name: str) -> str:
         raise AssertionError("metadata builder is replaced in pipeline lifecycle tests")
@@ -165,6 +196,88 @@ def test_metadata_extraction_failure_is_finalized_and_propagated(
         "failed",
         str(expected),
     )
+
+
+def test_portrait_extraction_deduplicates_and_persists_only_referenced_bmps(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    client = FakeIeCli()
+    client.portraits = [
+        make_portrait_resource("UNUSED.BMP"),
+        make_portrait_resource("MINSCM.BMP"),
+        make_portrait_resource("AERIES.BMP"),
+    ]
+    client.raw_resources = {
+        "AERIES.BMP": _bmp(54, 84, (1, 2, 3)),
+        "MINSCM.BMP": _bmp(169, 266, (4, 5, 6)),
+    }
+    database = PipelineDatabase(tmp_path / "portraits.lancedb")
+    monkeypatch.setattr(
+        database,
+        "referenced_portrait_resrefs",
+        lambda: {"AERIES", "aeries", "minscm"},
+    )
+    replacements: list[list[PortraitImage]] = []
+    replace_portraits = database.replace_portraits
+
+    def replace(run_id: str, images: Sequence[PortraitImage]) -> None:
+        replacements.append(list(images))
+        replace_portraits(run_id, images)
+
+    monkeypatch.setattr(database, "replace_portraits", replace)
+    summary = extract_portraits(client, database, tmp_path, workers=2)
+
+    assert (
+        summary.discovered,
+        summary.attempted,
+        summary.extracted,
+        summary.skipped,
+        summary.status,
+    ) == (3, 2, 2, 1, "complete")
+    assert sorted(client.dumped, key=str.casefold) == ["AERIES.BMP", "MINSCM.BMP"]
+    assert [[image.resref for image in images] for images in replacements] == [["AERIES", "MINSCM"]]
+    portraits = database.portraits()
+    assert [(row.resref, row.width, row.height) for row in portraits] == [
+        ("AERIES", 54, 84),
+        ("MINSCM", 169, 266),
+    ]
+    assert all(row.png.startswith(b"\x89PNG\r\n\x1a\n") for row in portraits)
+
+
+def test_portrait_extraction_failure_is_finalized_and_propagated(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    expected = OSError("cannot read portrait")
+    client = FakeIeCli()
+    client.portraits = [make_portrait_resource()]
+
+    def fail(_game_root: Path, _resource_name: str) -> bytes:
+        raise expected
+
+    monkeypatch.setattr(client, "read_raw_resource", fail)
+    database = PipelineDatabase(tmp_path / "portrait-failure.lancedb")
+    monkeypatch.setattr(database, "referenced_portrait_resrefs", lambda: {"aeries"})
+    with pytest.raises(OSError) as raised:
+        extract_portraits(client, database, tmp_path)
+
+    assert raised.value is expected
+    run = (
+        lancedb.connect(database.path)
+        .open_table("extraction_runs")
+        .search()
+        .to_pydantic(ExtractionRunRecord)
+    )[0]
+    assert (
+        run.run_kind,
+        run.status,
+        run.resources_discovered,
+        run.details_attempted,
+        run.details_extracted,
+        run.error,
+    ) == (RunKind.PORTRAITS, "failed", 1, 1, 0, str(expected))
+    assert database.portraits() == []
 
 
 def test_character_inventory_can_skip_detail_extraction(tmp_path: Path) -> None:

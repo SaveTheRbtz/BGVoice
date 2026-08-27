@@ -9,7 +9,13 @@ import pytest
 from pydantic import ValidationError
 
 from bgvoice.iecli import IeCli
-from tests.factories import make_dialogue_dump, make_dialogue_resource, make_dump, make_resource
+from tests.factories import (
+    make_dialogue_dump,
+    make_dialogue_resource,
+    make_dump,
+    make_portrait_resource,
+    make_resource,
+)
 
 
 def test_iecli_builds_commands_and_validates_json(
@@ -22,6 +28,7 @@ def test_iecli_builds_commands_and_validates_json(
             "iecli 0.3.0-rc.1\n",
             json.dumps([make_resource().model_dump(by_alias=True)]),
             json.dumps([make_dialogue_resource().model_dump(by_alias=True)]),
+            json.dumps([make_portrait_resource().model_dump(by_alias=True)]),
             make_dump("MONKTU 8.CRE").model_dump_json(by_alias=True),
             make_dialogue_dump().model_dump_json(by_alias=True),
         ]
@@ -38,6 +45,7 @@ def test_iecli_builds_commands_and_validates_json(
     assert client.version() == "iecli 0.3.0-rc.1"
     assert client.list_creatures(game_root)[0].resref == "AERIE"
     assert client.list_dialogues(game_root)[0].resref == "AERIE"
+    assert client.list_portraits(game_root)[0].resref == "AERIES"
     assert client.dump_creature(game_root, "MONKTU 8.CRE").resource_name == "MONKTU 8.CRE"
     assert client.dump_dialogue(game_root, "AERIE.DLG").header.num_states == 2
 
@@ -46,6 +54,7 @@ def test_iecli_builds_commands_and_validates_json(
         [program, "--version"],
         [program, "list", "--game", str(game_root), "--type", "CRE", "--format", "json"],
         [program, "list", "--game", str(game_root), "--type", "DLG", "--format", "json"],
+        [program, "list", "--game", str(game_root), "--type", "BMP", "--format", "json"],
         [
             program,
             "dump",
@@ -188,6 +197,33 @@ def test_iecli_reads_raw_text_resources_and_resolves_tlk(
         "--output",
     ]
     assert calls[1][1:] == ["tlk", "--game", str(game_root), "--strref", "7193"]
+
+
+def test_iecli_returns_raw_resource_bytes_exactly(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    raw = b"BM\x00\xff\x80portrait"
+    calls: list[list[str]] = []
+
+    def run(command: list[str], **_options: object) -> subprocess.CompletedProcess[str]:
+        calls.append(command)
+        output = Path(command[command.index("--output") + 1])
+        output.write_bytes(raw)
+        return subprocess.CompletedProcess(command, 0, stdout="ignored", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", run)
+    client = IeCli(tmp_path / "iecli.exe")
+
+    assert client.read_raw_resource(tmp_path / "game", "AERIES.BMP") == raw
+    assert calls[0][1:7] == [
+        "dump-raw",
+        "--game",
+        str(tmp_path / "game"),
+        "--resource",
+        "AERIES.BMP",
+        "--output",
+    ]
 
 
 def test_tlk_result_must_match_the_requested_strref(

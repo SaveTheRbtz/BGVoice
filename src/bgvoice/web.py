@@ -766,6 +766,7 @@ class PipelineReader:
     _connection: AsyncConnection
     characters_table: AsyncTable
     character_sounds_table: AsyncTable
+    portrait_images_table: AsyncTable
     character_dialogues_table: AsyncTable
     voices_table: AsyncTable
     dialogues_table: AsyncTable
@@ -831,6 +832,7 @@ class PipelineReader:
             connection,
             tables["characters"],
             tables["character_sounds"],
+            tables["portrait_images"],
             tables["character_dialogues"],
             tables["voice_resources"],
             tables["dialogues"],

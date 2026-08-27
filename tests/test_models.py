@@ -1,6 +1,9 @@
 """Tests for IESDP-backed model constraints and voice-data projections."""
 
+from io import BytesIO
+
 import pytest
+from PIL import Image
 from pydantic import ValidationError
 
 from bgvoice.models import (
@@ -31,6 +34,7 @@ from bgvoice.models import (
     InteractionKind,
     InteractionRule,
     MonthDefinition,
+    PortraitImage,
     RaceId,
     ResourceTargetType,
     SoundsetLine,
@@ -46,7 +50,7 @@ from bgvoice.models import (
     cre_kit_value_from_bytes,
     kit_ids_value_from_cre,
 )
-from tests.factories import make_dialogue_dump, make_dump, make_resource
+from tests.factories import make_dialogue_dump, make_dump, make_portrait_resource, make_resource
 
 
 def test_character_detail_projects_voice_fields() -> None:
@@ -91,6 +95,30 @@ def test_character_detail_projects_voice_fields() -> None:
         {"slot_id": 44, "strref": 2044, "text": "What is it, <CHARNAME>?"},
     ]
     assert {"resource_name", "sounds", "serialized_size"}.isdisjoint(CharacterDetail.model_fields)
+
+
+def test_portrait_image_converts_palette_bmp_to_optimized_rgb_png() -> None:
+    palette = Image.new("P", (3, 2))
+    palette.putpalette([255, 0, 0, 0, 255, 0, *([0] * 762)])
+    palette.putdata([0, 1, 0, 1, 0, 1])
+    bmp = BytesIO()
+    palette.save(bmp, format="BMP")
+
+    portrait = PortraitImage.from_bmp(
+        make_portrait_resource("aeries.bmp"),
+        bmp.getvalue(),
+    )
+
+    assert portrait.resref == "AERIES"
+    assert portrait.source.model_dump() == {
+        "kind": SourceKind.OVERRIDE,
+        "path": "C:/game/override/aeries.bmp",
+    }
+    assert (portrait.width, portrait.height) == (3, 2)
+    assert portrait.png.startswith(b"\x89PNG\r\n\x1a\n")
+    with Image.open(BytesIO(portrait.png)) as png:
+        assert (png.format, png.mode, png.size) == ("PNG", "RGB", (3, 2))
+        assert png.tobytes() == b"\xff\x00\x00\x00\xff\x00" * 3
 
 
 def test_character_extraction_rejects_a_dump_for_another_resource() -> None:

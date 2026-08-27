@@ -42,6 +42,8 @@ def test_parser_uses_available_cpu_count(monkeypatch: pytest.MonkeyPatch) -> Non
 
     metadata = cli.build_parser().parse_args(["extract-metadata", "--game", "C:/game"])
     assert metadata.workers == 12
+    portraits = cli.build_parser().parse_args(["extract-portraits", "--game", "C:/game"])
+    assert portraits.workers == 12
 
 
 @pytest.mark.parametrize(
@@ -111,13 +113,37 @@ def test_extraction_commands_dispatch_options_and_status(
         calls["dialogues"] = options
         return _summary(tmp_path, RunStatus.COMPLETE_WITH_ERRORS)
 
+    def fake_portraits(
+        _client: object,
+        _database: object,
+        _game_root: Path,
+        **options: object,
+    ) -> ExtractionSummary:
+        calls["portraits"] = options
+        return _summary(tmp_path, RunStatus.COMPLETE)
+
     monkeypatch.setattr(cli, "IeCli", fake_iecli)
     monkeypatch.setattr(cli, "extract_metadata", fake_metadata)
     monkeypatch.setattr(cli, "extract_characters", fake_characters)
     monkeypatch.setattr(cli, "extract_dialogues", fake_dialogues)
+    monkeypatch.setattr(cli, "extract_portraits", fake_portraits)
 
     executable = tmp_path / "iecli.exe"
     database = tmp_path / "pipeline.lancedb"
+    assert (
+        cli.main(
+            [
+                "extract-portraits",
+                "--game",
+                str(tmp_path),
+                "--database",
+                str(database),
+                "--workers",
+                "6",
+            ]
+        )
+        == 0
+    )
     assert (
         cli.main(
             [
@@ -165,7 +191,7 @@ def test_extraction_commands_dispatch_options_and_status(
         == 1
     )
 
-    assert executables == [None, executable, None]
+    assert executables == [None, None, executable, None]
     assert calls["metadata"] == {"workers": 4}
     assert calls["characters"] == {
         "include_details": False,
@@ -178,10 +204,11 @@ def test_extraction_commands_dispatch_options_and_status(
         "refresh": False,
         "progress": cli._print_dialogue_progress,
     }
+    assert calls["portraits"] == {"workers": 6}
     output = capsys.readouterr()
     assert '"status": "complete"' in output.out
     assert '"status": "complete_with_errors"' in output.out
-    assert output.err.count("Active character records: 0") == 2
+    assert output.err.count("Active character records: 0") == 3
 
 
 def test_native_extraction_errors_propagate(

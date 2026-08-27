@@ -2,13 +2,13 @@
 
 from typing import Literal
 
-from bgvoice.models import CreDump, CreResource, DlgDump, DlgResource
+from bgvoice.models import CreDump, CreResource, DlgDump, DlgResource, PortraitResource
 
 
-def _resource_data(name: str, resource_type: Literal["CRE", "DLG"]) -> dict[str, object]:
+def _resource_data(name: str, resource_type: Literal["BMP", "CRE", "DLG"]) -> dict[str, object]:
     return {
         "resource_name": name,
-        "resref": name.removesuffix(f".{resource_type}"),
+        "resref": name.rsplit(".", maxsplit=1)[0],
         "source_kind": "override",
         "source_path": f"C:/game/override/{name}",
         "type": resource_type,
@@ -23,6 +23,11 @@ def make_resource(name: str = "AERIE.CRE") -> CreResource:
 def make_dialogue_resource(name: str = "AERIE.DLG") -> DlgResource:
     """Create a representative DLG inventory entry."""
     return DlgResource.model_validate(_resource_data(name, "DLG"))
+
+
+def make_portrait_resource(name: str = "AERIES.BMP") -> PortraitResource:
+    """Create a representative BMP inventory entry."""
+    return PortraitResource.model_validate(_resource_data(name, "BMP"))
 
 
 def make_dump(
