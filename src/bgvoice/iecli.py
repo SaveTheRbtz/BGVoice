@@ -7,10 +7,10 @@ from typing import Protocol
 
 from pydantic import TypeAdapter
 
-from bgvoice.models import (
-    CreDump,
+from bgvoice.character_models import CreDump
+from bgvoice.dialogue_models import DlgDump
+from bgvoice.model_types import (
     CreResource,
-    DlgDump,
     DlgResource,
     PortraitResource,
     StringReference,
@@ -147,7 +147,7 @@ class IeCli:
 
     def read_text_resource(self, game_root: Path, resource_name: str) -> str:
         """Dump one effective IDS or 2DA resource and decode its raw text."""
-        return _decode_text_resource(self.read_raw_resource(game_root, resource_name))
+        return self.read_raw_resource(game_root, resource_name).decode("cp1252")
 
     def read_raw_resource(self, game_root: Path, resource_name: str) -> bytes:
         """Return the exact bytes of one effective resource."""
@@ -197,7 +197,3 @@ class IeCli:
             encoding="utf-8",
             timeout=self.timeout_seconds,
         ).stdout
-
-
-def _decode_text_resource(data: bytes) -> str:
-    return data.decode("cp1252")

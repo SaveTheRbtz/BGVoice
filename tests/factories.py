@@ -2,7 +2,17 @@
 
 from typing import Literal
 
-from bgvoice.models import CreDump, CreResource, DlgDump, DlgResource, PortraitResource
+from bgvoice.character_models import (
+    CreDump,
+)
+from bgvoice.dialogue_models import (
+    DlgDump,
+)
+from bgvoice.model_types import (
+    CreResource,
+    DlgResource,
+    PortraitResource,
+)
 
 
 def _resource_data(name: str, resource_type: Literal["BMP", "CRE", "DLG"]) -> dict[str, object]:

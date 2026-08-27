@@ -5,7 +5,12 @@ import {
   TextFilter,
 } from "./browser";
 import type { Column, TableBrowserProps } from "./browser";
-import type { ListQuery, ListResult } from "./api";
+import {
+  listCharacterClasses,
+  listIdentifierDefinitions,
+  listKits,
+  listRaces,
+} from "./api";
 import { formatCount, formatHex } from "./format";
 import { IdentifierKind } from "./gen/bgvoice/v1/pipeline_pb";
 import type {
@@ -148,7 +153,7 @@ const KIT_COLUMNS = [
             ["Lower name", kit.lowerName],
             ["Mixed name", kit.mixedName],
             ["Help", kit.helpText],
-            ["Proficiency column", nullableNumber(kit.proficiencyColumn)],
+            ["Proficiency column", kit.proficiencyColumn == null ? undefined : String(kit.proficiencyColumn)],
             ["Unusable mask", kit.unusableMask == null ? undefined : formatHex(kit.unusableMask)],
           ],
         }]}
@@ -187,13 +192,11 @@ const IDENTIFIER_COLUMNS = [
   },
 ] satisfies readonly Column<IdentifierDefinition, IdentifierOrder>[];
 
-export function RaceBrowser({ loadPage }: {
-  loadPage: (query: ListQuery, signal: AbortSignal) => Promise<ListResult<Race>>;
-}) {
+export function RaceBrowser() {
   return (
     <MetadataTable
       defaultOrderBy="race_id asc"
-      loadPage={loadPage}
+      loadPage={listRaces}
       columns={RACE_COLUMNS}
       eyebrow="ENGINE DEFINITIONS"
       title="Races"
@@ -212,13 +215,11 @@ export function RaceBrowser({ loadPage }: {
   );
 }
 
-export function ClassBrowser({ loadPage }: {
-  loadPage: (query: ListQuery, signal: AbortSignal) => Promise<ListResult<CharacterClass>>;
-}) {
+export function ClassBrowser() {
   return (
     <MetadataTable
       defaultOrderBy="class_id asc"
-      loadPage={loadPage}
+      loadPage={listCharacterClasses}
       columns={CLASS_COLUMNS}
       eyebrow="ENGINE DEFINITIONS"
       title="Character classes"
@@ -251,13 +252,11 @@ export function ClassBrowser({ loadPage }: {
   );
 }
 
-export function KitBrowser({ loadPage }: {
-  loadPage: (query: ListQuery, signal: AbortSignal) => Promise<ListResult<Kit>>;
-}) {
+export function KitBrowser() {
   return (
     <MetadataTable
       defaultOrderBy="row_id asc"
-      loadPage={loadPage}
+      loadPage={listKits}
       columns={KIT_COLUMNS}
       eyebrow="ENGINE DEFINITIONS"
       title="Kits"
@@ -275,16 +274,11 @@ export function KitBrowser({ loadPage }: {
   );
 }
 
-export function IdentifierBrowser({ loadPage }: {
-  loadPage: (
-    query: ListQuery,
-    signal: AbortSignal,
-  ) => Promise<ListResult<IdentifierDefinition>>;
-}) {
+export function IdentifierBrowser() {
   return (
     <MetadataTable
       defaultOrderBy="kind asc"
-      loadPage={loadPage}
+      loadPage={listIdentifierDefinitions}
       columns={IDENTIFIER_COLUMNS}
       eyebrow="ENGINE DEFINITIONS"
       title="Identifier definitions"
@@ -367,10 +361,6 @@ function Tags({ values }: { values: readonly string[] }) {
       {unique.map((value) => <span key={value}>{value}</span>)}
     </div>
   );
-}
-
-function nullableNumber(value: number | undefined): string | undefined {
-  return value == null ? undefined : String(value);
 }
 
 function identifierKindLabel(value: IdentifierKind): string {

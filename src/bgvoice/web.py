@@ -10,8 +10,8 @@ from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from lancedb.expr import col
 
-from bgvoice.database import PortraitImageRecord
 from bgvoice.reader import PipelineReader
+from bgvoice.storage_records import PortraitImageRecord
 from bgvoice.v1.pipeline_connect import PipelineServiceASGIApplication
 from bgvoice.web_contract import INSTALLATION_ID, resource_id
 from bgvoice.web_service import PipelineService

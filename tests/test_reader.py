@@ -10,38 +10,44 @@ from lancedb.pydantic import LanceModel
 from pydantic import model_validator
 
 import bgvoice.reader as reader_module
-from bgvoice.database import (
-    CharacterAttributionRecord,
-    CharacterRecord,
-    PipelineDatabase,
-)
-from bgvoice.models import (
-    AttributionStatus,
+from bgvoice.character_models import (
     CharacterExtraction,
-    DetailStatus,
+)
+from bgvoice.database import PipelineDatabase
+from bgvoice.dialogue_models import (
     DialogueExtraction,
-    DialogueLineKind,
+)
+from bgvoice.metadata_models import (
     IdentifierDefinition,
+    SoundSlotGroup,
+)
+from bgvoice.model_types import (
+    AttributionStatus,
+    DetailStatus,
+    DialogueLineKind,
     IdentifierKind,
     RaceId,
     RunKind,
     RunStatus,
-    SoundSlotGroup,
     SoundSlotId,
     SourceKind,
 )
-from bgvoice.reader import (
+from bgvoice.reader import PipelineReader
+from bgvoice.reader_models import (
     CharacterQuery,
     ClassQuery,
     DialogueQuery,
     IdentifierQuery,
     KitQuery,
     LineQuery,
-    PipelineReader,
     RaceQuery,
     SoundQuery,
     TransitionQuery,
     VoiceQuery,
+)
+from bgvoice.storage_records import (
+    CharacterAttributionRecord,
+    CharacterRecord,
 )
 from tests.factories import make_dialogue_dump, make_dialogue_resource, make_dump, make_resource
 from tests.test_database import make_metadata_extraction

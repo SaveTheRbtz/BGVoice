@@ -1,18 +1,20 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  characterPath,
   countFilters,
   filterSearch,
   filterValue,
   listQuery,
   listSearch,
-  dialoguePath,
-  routeFromPath,
   setExactFilter,
   setFilterSearch,
+} from "./filters";
+import {
+  characterPath,
+  dialoguePath,
+  routeFromPath,
   voicePath,
-} from "./browser-state";
+} from "./routes";
 
 describe("resource routes", () => {
   it("uses voices as the root and restores canonical detail routes", () => {

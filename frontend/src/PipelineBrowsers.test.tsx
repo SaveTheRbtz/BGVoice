@@ -2,16 +2,16 @@ import { create } from "@bufbuild/protobuf";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { LineContext, VoiceLink } from "./App";
+import { LineContext } from "./DialogueLines";
+import { VoiceLink } from "./resource-ui";
 import { VoiceSchema } from "./gen/bgvoice/v1/pipeline_pb";
 import {
   ResourceLinks,
-  ScriptText,
-  SoundSlot,
   VoiceAvatar,
   VoiceCard,
   VoiceDetail,
-} from "./PipelineBrowsers";
+} from "./VoiceBrowser";
+import { ScriptText, SoundSlot } from "./SourceBrowsers";
 
 const voice = create(VoiceSchema, {
   name: "installations/bg2ee-eet/voices/imoen",

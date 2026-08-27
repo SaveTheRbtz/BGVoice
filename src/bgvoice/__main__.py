@@ -8,13 +8,14 @@ from pathlib import Path
 
 from bgvoice.database import PipelineDatabase
 from bgvoice.iecli import IeCli
-from bgvoice.models import ExtractionProgress, RunStatus
+from bgvoice.model_types import RunStatus
 from bgvoice.pipeline import (
     extract_characters,
     extract_dialogues,
     extract_metadata,
     extract_portraits,
 )
+from bgvoice.pipeline_models import ExtractionProgress
 
 _DEFAULT_DATABASE = Path("data/bgvoice.lancedb")
 
@@ -82,7 +83,6 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     """Run a BGVoice command."""
     args = build_parser().parse_args(argv)
-
     if args.command == "web":
         import uvicorn
 
@@ -90,25 +90,21 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         uvicorn.run(create_app(args.database), host=args.host, port=args.port)
         return 0
-
     if args.command == "attribute-dialogues":
         assert args.database.expanduser().resolve().is_dir(), (
             f"pipeline database does not exist: {args.database}"
         )
-        database = PipelineDatabase(args.database)
-        summary = database.rebuild_attributions()
+        summary = PipelineDatabase(args.database).rebuild_attributions()
         print(summary.model_dump_json(indent=2))
         return 0
+    return _extract(args)
 
+
+def _extract(args: argparse.Namespace) -> int:
     client = IeCli(args.iecli) if args.iecli is not None else IeCli()
     database = PipelineDatabase(args.database)
     if args.command == "extract-metadata":
-        summary = extract_metadata(
-            client,
-            database,
-            args.game,
-            workers=args.workers,
-        )
+        summary = extract_metadata(client, database, args.game, workers=args.workers)
     elif args.command == "extract-characters":
         summary = extract_characters(
             client,
@@ -120,12 +116,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             progress=_print_character_progress,
         )
     elif args.command == "extract-portraits":
-        summary = extract_portraits(
-            client,
-            database,
-            args.game,
-            workers=args.workers,
-        )
+        summary = extract_portraits(client, database, args.game, workers=args.workers)
     else:
         summary = extract_dialogues(
             client,

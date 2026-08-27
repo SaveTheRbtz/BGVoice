@@ -1,12 +1,15 @@
 """Concurrent, resumable extraction of EET resources."""
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
+from contextlib import contextmanager
 from pathlib import Path
 
 from pydantic import PositiveInt
 
+from bgvoice.character_models import CharacterExtraction
 from bgvoice.database import PipelineDatabase
+from bgvoice.dialogue_models import DialogueExtraction
 from bgvoice.iecli import (
     CharacterIeCliClient,
     DialogueIeCliClient,
@@ -14,19 +17,14 @@ from bgvoice.iecli import (
     PortraitIeCliClient,
 )
 from bgvoice.metadata import build_metadata
-from bgvoice.models import (
-    CharacterExtraction,
+from bgvoice.model_types import (
     CreResource,
-    DialogueExtraction,
-    DlgResource,
-    ExtractionProgress,
-    ExtractionSummary,
     PortraitImage,
-    PortraitResource,
     RunKind,
     RunStatus,
     TerminalRunStatus,
 )
+from bgvoice.pipeline_models import ExtractionProgress, ExtractionSummary
 
 type ProgressCallback = Callable[[ExtractionProgress], None]
 type CommitCallback = Callable[[int, int], None]
@@ -72,18 +70,15 @@ def extract_metadata(
             status=RunStatus.COMPLETE,
         )
     except BaseException as error:
-        try:
-            database.finish_run(
-                run_id,
-                status=RunStatus.FAILED,
-                discovered=discovered,
-                attempted=discovered,
-                extracted=0,
-                failures=0,
-                error=str(error),
-            )
-        except BaseException as finalization_error:
-            error.add_note(f"Failed to finalize extraction run {run_id}: {finalization_error!r}")
+        _fail_run(
+            database,
+            run_id,
+            error,
+            discovered=discovered,
+            attempted=discovered,
+            extracted=0,
+            failures=0,
+        )
         raise
 
 
@@ -111,17 +106,19 @@ def extract_portraits(
         ]
         attempted = len(targets)
 
-        def extract(resource: PortraitResource) -> PortraitImage:
-            return PortraitImage.from_bmp(
-                resource,
-                client.read_raw_resource(root, resource.resource_name),
-            )
-
         with ThreadPoolExecutor(
             max_workers=int(workers),
             thread_name_prefix="iecli-portrait",
         ) as executor:
-            images = list(executor.map(extract, targets))
+            images = list(
+                executor.map(
+                    lambda resource: PortraitImage.from_bmp(
+                        resource,
+                        client.read_raw_resource(root, resource.resource_name),
+                    ),
+                    targets,
+                )
+            )
 
         database.replace_portraits(run_id, images)
         extracted = len(images)
@@ -146,18 +143,15 @@ def extract_portraits(
             status=RunStatus.COMPLETE,
         )
     except BaseException as error:
-        try:
-            database.finish_run(
-                run_id,
-                status=RunStatus.FAILED,
-                discovered=discovered,
-                attempted=attempted,
-                extracted=extracted,
-                failures=0,
-                error=str(error),
-            )
-        except BaseException as finalization_error:
-            error.add_note(f"Failed to finalize extraction run {run_id}: {finalization_error!r}")
+        _fail_run(
+            database,
+            run_id,
+            error,
+            discovered=discovered,
+            attempted=attempted,
+            extracted=extracted,
+            failures=0,
+        )
         raise
 
 
@@ -222,9 +216,6 @@ def extract_dialogues(
     """Inventory every effective DLG and extract its metrics and lines."""
     root = game_root.expanduser().resolve()
 
-    def select_targets(_resources: Sequence[DlgResource]) -> list[str]:
-        return database.dialogue_targets(refresh=refresh)
-
     def extract_details(
         run_id: str,
         resource_names: Sequence[str],
@@ -250,7 +241,7 @@ def extract_dialogues(
         run_kind=RunKind.DIALOGUES,
         discover=client.list_dialogues,
         store_inventory=database.replace_dialogue_inventory,
-        select_targets=select_targets,
+        select_targets=lambda _resources: database.dialogue_targets(refresh=refresh),
         extract_details=extract_details,
     )
 
@@ -306,18 +297,15 @@ def _run_extraction[Inventory, Target](
             status=status,
         )
     except BaseException as error:
-        try:
-            database.finish_run(
-                run_id,
-                status=RunStatus.FAILED,
-                discovered=discovered,
-                attempted=attempted,
-                extracted=extracted,
-                failures=failed,
-                error=str(error),
-            )
-        except BaseException as finalization_error:
-            error.add_note(f"Failed to finalize extraction run {run_id}: {finalization_error!r}")
+        _fail_run(
+            database,
+            run_id,
+            error,
+            discovered=discovered,
+            attempted=attempted,
+            extracted=extracted,
+            failures=failed,
+        )
         raise
 
 
@@ -342,8 +330,7 @@ def _extract_resources[Resource, Dump, Detail](
     details: list[Detail] = []
     failures: list[Failure] = []
 
-    executor = ThreadPoolExecutor(max_workers=workers, thread_name_prefix=thread_name_prefix)
-    try:
+    with _thread_pool(workers, thread_name_prefix) as executor:
         futures: dict[Future[Dump], Resource] = {
             executor.submit(dump, game_root, name(resource)): resource for resource in resources
         }
@@ -356,12 +343,7 @@ def _extract_resources[Resource, Dump, Detail](
                 failures.append((name(resource), str(error)))
                 failed += 1
 
-            if len(details) + len(failures) >= _WRITE_BATCH_SIZE:
-                save(details, failures)
-                committed(len(details), len(failures))
-                details.clear()
-                failures.clear()
-
+            _commit_batch(details, failures, save, committed, full_only=True)
             if progress is not None and (
                 completed == len(resources) or completed % _WRITE_BATCH_SIZE == 0
             ):
@@ -373,12 +355,58 @@ def _extract_resources[Resource, Dump, Detail](
                         failed=failed,
                     )
                 )
+
+    _commit_batch(details, failures, save, committed, full_only=False)
+
+
+@contextmanager
+def _thread_pool(workers: int, thread_name_prefix: str) -> Iterator[ThreadPoolExecutor]:
+    executor = ThreadPoolExecutor(max_workers=workers, thread_name_prefix=thread_name_prefix)
+    try:
+        yield executor
     except BaseException:
         executor.shutdown(wait=False, cancel_futures=True)
         raise
     else:
         executor.shutdown()
 
-    if details or failures:
-        save(details, failures)
-        committed(len(details), len(failures))
+
+def _commit_batch[Detail](
+    details: list[Detail],
+    failures: list[Failure],
+    save: Callable[[Sequence[Detail], Sequence[Failure]], None],
+    committed: CommitCallback,
+    *,
+    full_only: bool,
+) -> None:
+    size = len(details) + len(failures)
+    if not size or (full_only and size < _WRITE_BATCH_SIZE):
+        return
+    save(details, failures)
+    committed(len(details), len(failures))
+    details.clear()
+    failures.clear()
+
+
+def _fail_run(
+    database: PipelineDatabase,
+    run_id: str,
+    error: BaseException,
+    *,
+    discovered: int,
+    attempted: int,
+    extracted: int,
+    failures: int,
+) -> None:
+    try:
+        database.finish_run(
+            run_id,
+            status=RunStatus.FAILED,
+            discovered=discovered,
+            attempted=attempted,
+            extracted=extracted,
+            failures=failures,
+            error=str(error),
+        )
+    except BaseException as finalization_error:
+        error.add_note(f"Failed to finalize extraction run {run_id}: {finalization_error!r}")

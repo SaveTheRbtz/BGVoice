@@ -12,7 +12,13 @@ from connectrpc.request import RequestContext
 from google.protobuf.message import Message
 
 from bgvoice.database import PipelineDatabase
-from bgvoice.models import PortraitImage, ResourceSource, RunKind, RunStatus, SourceKind
+from bgvoice.model_types import (
+    PortraitImage,
+    ResourceSource,
+    RunKind,
+    RunStatus,
+    SourceKind,
+)
 from bgvoice.reader import PipelineReader
 from bgvoice.v1 import pipeline_pb2 as pb
 from bgvoice.web_contract import Collection, resource_name

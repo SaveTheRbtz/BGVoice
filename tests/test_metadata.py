@@ -13,7 +13,7 @@ from bgvoice.metadata import (
     parse_2da,
     parse_ids,
 )
-from bgvoice.models import (
+from bgvoice.model_types import (
     CampaignResourceKind,
     CharacterResourceRole,
     HappinessAlignment,

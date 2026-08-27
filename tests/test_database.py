@@ -10,8 +10,59 @@ from lancedb.index import FTS
 from lancedb.pydantic import LanceModel
 from pydantic import ValidationError
 
-from bgvoice.database import (
-    TABLE_INDEXES,
+from bgvoice.character_models import (
+    CharacterExtraction,
+    CharacterSound,
+)
+from bgvoice.database import PipelineDatabase
+from bgvoice.dialogue_models import (
+    DialogueExtraction,
+    DlgDump,
+)
+from bgvoice.metadata_models import (
+    BanterTimingSettings,
+    CampaignCalendarDefinition,
+    CampaignDefinition,
+    CampaignResourceBinding,
+    CharacterResourceLink,
+    ClassTextRow,
+    EngineString,
+    FavoredEnemyDefinition,
+    HappinessRule,
+    IdentifierDefinition,
+    InteractionRule,
+    KitDefinition,
+    MetadataExtraction,
+    MonthDefinition,
+    RaceTextRow,
+    SoundsetLine,
+    SoundSlotGroup,
+    SoundSlotSuffix,
+)
+from bgvoice.model_types import (
+    BIOGRAPHY_SOUND_SLOT_ID,
+    AlignmentId,
+    CampaignResourceKind,
+    CharacterResourceRole,
+    ClassId,
+    ClassTextKitId,
+    DetailStatus,
+    ExtractionState,
+    HappinessAlignment,
+    IdentifierKind,
+    InteractionKind,
+    KitIdsValue,
+    KitListRowId,
+    PortraitImage,
+    RaceId,
+    ResourceSource,
+    ResourceTargetType,
+    RunKind,
+    RunStatus,
+    SoundSlotId,
+    SourceKind,
+)
+from bgvoice.storage_records import (
     BanterTimingSettingsRecord,
     CampaignCalendarRecord,
     CampaignDefinitionRecord,
@@ -32,7 +83,6 @@ from bgvoice.database import (
     InteractionRuleRecord,
     KitDefinitionRecord,
     MonthDefinitionRecord,
-    PipelineDatabase,
     PortraitImageRecord,
     RaceTextRecord,
     SoundsetLineRecord,
@@ -40,51 +90,7 @@ from bgvoice.database import (
     SoundSlotSuffixRecord,
     VoiceResourceRecord,
 )
-from bgvoice.models import (
-    BIOGRAPHY_SOUND_SLOT_ID,
-    AlignmentId,
-    BanterTimingSettings,
-    CampaignCalendarDefinition,
-    CampaignDefinition,
-    CampaignResourceBinding,
-    CampaignResourceKind,
-    CharacterExtraction,
-    CharacterResourceLink,
-    CharacterResourceRole,
-    CharacterSound,
-    ClassId,
-    ClassTextKitId,
-    ClassTextRow,
-    DetailStatus,
-    DialogueExtraction,
-    DlgDump,
-    EngineString,
-    ExtractionState,
-    FavoredEnemyDefinition,
-    HappinessAlignment,
-    HappinessRule,
-    IdentifierDefinition,
-    IdentifierKind,
-    InteractionKind,
-    InteractionRule,
-    KitDefinition,
-    KitIdsValue,
-    KitListRowId,
-    MetadataExtraction,
-    MonthDefinition,
-    PortraitImage,
-    RaceId,
-    RaceTextRow,
-    ResourceSource,
-    ResourceTargetType,
-    RunKind,
-    RunStatus,
-    SoundsetLine,
-    SoundSlotGroup,
-    SoundSlotId,
-    SoundSlotSuffix,
-    SourceKind,
-)
+from bgvoice.storage_schema import TABLE_INDEXES
 from tests.factories import make_dialogue_dump, make_dialogue_resource, make_dump, make_resource
 
 

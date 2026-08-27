@@ -35,6 +35,22 @@ Generated files under `frontend/src/gen` and `src/bgvoice/v1` are committed and 
 hand. The authored pipeline models remain the source of truth for extraction and LanceDB storage;
 the generated models own the service boundary shared by the Python backend and TypeScript UI.
 
+### Code layout
+
+- `model_types.py` owns shared engine and pipeline primitives; the character, dialogue, metadata,
+  and pipeline model modules own their respective validated domain objects.
+- `storage_records.py` and `storage_schema.py` define persistence. `database.py` is the single-writer
+  repository; `record_builders.py` projects extracted data and `attribution.py` groups voices.
+- `reader.py` coordinates read-only queries using focused query, metadata, view, statistics, and
+  response-model modules. It does not depend on the writer repository.
+- `web_service.py` implements the Connect contract; `web_query.py` owns request semantics and
+  `web_resources.py` maps typed reader rows to transport resources.
+- Frontend page modules own their API calls. Shared routing, filtering, browsing, and resource UI
+  live in correspondingly named modules rather than an application-wide state facade.
+
+Dependencies flow from domain models to storage, then to the repository/reader and API. The module
+graph is intentionally acyclic.
+
 ## Pipeline
 
 Run the stages in order:
@@ -120,6 +136,9 @@ display resolved race, class, gender, alignment, allegiance, animation, and kit 
 retaining their raw engine IDs.
 
 ## Quality checks
+
+Ruff and ESLint enforce a cyclomatic-complexity ceiling of 15. The ceiling is a guardrail, not a
+target: cohesive local code is preferred over one-use helpers created only to lower a score.
 
 ```powershell
 uv run ruff format --check .

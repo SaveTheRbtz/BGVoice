@@ -6,12 +6,14 @@ import pytest
 
 import bgvoice.__main__ as cli
 from bgvoice.database import PipelineDatabase
-from bgvoice.models import (
-    ExtractionProgress,
-    ExtractionSummary,
+from bgvoice.model_types import (
     RunKind,
     RunStatus,
     TerminalRunStatus,
+)
+from bgvoice.pipeline_models import (
+    ExtractionProgress,
+    ExtractionSummary,
 )
 
 

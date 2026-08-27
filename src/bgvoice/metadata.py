@@ -24,43 +24,45 @@ column semantics are documented by IESDP:
 """
 
 import re
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
 from bgvoice.iecli import MetadataIeCliClient
-from bgvoice.models import (
+from bgvoice.metadata_models import (
     BanterTimingSettings,
     CampaignCalendarDefinition,
     CampaignDefinition,
     CampaignResourceBinding,
-    CampaignResourceKind,
     CharacterResourceLink,
-    CharacterResourceRole,
-    ClassId,
-    ClassTextKitId,
     ClassTextRow,
     EngineString,
     FavoredEnemyDefinition,
-    HappinessAlignment,
     HappinessRule,
     IdentifierDefinition,
-    IdentifierKind,
-    InteractionKind,
     InteractionRule,
     KitDefinition,
-    KitIdsValue,
-    KitListRowId,
     MetadataExtraction,
     MonthDefinition,
-    RaceId,
     RaceTextRow,
-    ResourceTargetType,
     SoundsetLine,
     SoundSlotGroup,
-    SoundSlotId,
     SoundSlotSuffix,
+)
+from bgvoice.model_types import (
+    CampaignResourceKind,
+    CharacterResourceRole,
+    ClassId,
+    ClassTextKitId,
+    HappinessAlignment,
+    IdentifierKind,
+    InteractionKind,
+    KitIdsValue,
+    KitListRowId,
+    RaceId,
+    ResourceTargetType,
+    SoundSlotId,
     class_text_kit_id_from_kit_ids,
 )
 
@@ -157,6 +159,97 @@ class TwoDaTable:
     rows: tuple[TwoDaRow, ...]
 
 
+def parse_ids(
+    text: str,
+    *,
+    kind: IdentifierKind,
+    source_resource: str,
+) -> list[IdentifierDefinition]:
+    """Parse decimal/hex IDS mappings and group aliases by value in source order."""
+    grouped: dict[int, tuple[int, list[str]]] = {}
+    mapping_ordinal = 0
+    for line in text.lstrip("\ufeff").splitlines():
+        match = _IDS_MAPPING.match(line)
+        if match is None:
+            continue
+        value = _parse_uint(match.group(1), field="IDS value")
+        symbol = match.group(2)
+        if value not in grouped:
+            grouped[value] = (mapping_ordinal, [])
+        grouped[value][1].append(symbol)
+        mapping_ordinal += 1
+
+    return [
+        IdentifierDefinition(
+            kind=kind,
+            value=value,
+            source_resource=source_resource,
+            ordinal=ordinal,
+            symbols=symbols,
+        )
+        for value, (ordinal, symbols) in grouped.items()
+    ]
+
+
+def parse_2da(text: str, *, source_resource: str) -> TwoDaTable:
+    """Parse 2DA text positionally, retaining duplicate column names and row order."""
+    lines = [
+        line.strip()
+        for line in text.lstrip("\ufeff").splitlines()
+        if line.strip() and not line.lstrip().startswith("//")
+    ]
+    assert len(lines) >= 3, f"{source_resource} is missing its 2DA header"
+    assert tuple(token.upper() for token in _tokens(lines[0])) == (
+        "2DA",
+        "V1.0",
+    ), f"{source_resource} does not begin with a 2DA V1.0 header"
+    default_tokens = _tokens(lines[1])
+    assert len(default_tokens) == 1, f"{source_resource} has an invalid 2DA default value line"
+    columns = _tokens(lines[2])
+    assert columns, f"{source_resource} has no 2DA columns"
+    default = default_tokens[0]
+    rows = tuple(
+        _parse_2da_row(line, ordinal, columns, default, source_resource)
+        for ordinal, line in enumerate(lines[3:])
+    )
+    return TwoDaTable(source_resource, default, columns, rows)
+
+
+def _parse_2da_row(
+    line: str,
+    ordinal: int,
+    columns: tuple[str, ...],
+    default: str,
+    source_resource: str,
+) -> TwoDaRow:
+    tokens = _tokens(line)
+    assert tokens and tokens[0], f"{source_resource} row {ordinal} is missing its row label"
+    values = tokens[1:]
+    assert len(values) <= len(columns), (
+        f"{source_resource} row {ordinal} has {len(values)} cells; expected at most {len(columns)}"
+    )
+    padded_values = values + (default,) * (len(columns) - len(values))
+    return TwoDaRow(ordinal, tokens[0], padded_values)
+
+
+@dataclass(slots=True)
+class _MetadataResources:
+    client: MetadataIeCliClient
+    game_root: Path
+    text_by_name: dict[str, str]
+
+    def text(self, resource_name: str) -> str:
+        canonical_name = resource_name.upper()
+        if canonical_name not in self.text_by_name:
+            self.text_by_name[canonical_name] = self.client.read_text_resource(
+                self.game_root, canonical_name
+            )
+        return self.text_by_name[canonical_name]
+
+    def table(self, resource_name: str) -> TwoDaTable:
+        return parse_2da(self.text(resource_name), source_resource=resource_name)
+
+
 @dataclass(frozen=True, slots=True)
 class _RawRaceText:
     source_resource: str
@@ -246,68 +339,13 @@ class _RawCalendar:
     special_format_strref: int
 
 
-def parse_ids(
-    text: str,
-    *,
-    kind: IdentifierKind,
-    source_resource: str,
-) -> list[IdentifierDefinition]:
-    """Parse decimal/hex IDS mappings and group aliases by value in source order."""
-    grouped: dict[int, tuple[int, list[str]]] = {}
-    mapping_ordinal = 0
-    for line in text.lstrip("\ufeff").splitlines():
-        match = _IDS_MAPPING.match(line)
-        if match is None:
-            continue
-        value = _parse_uint(match.group(1), field="IDS value")
-        symbol = match.group(2)
-        if value not in grouped:
-            grouped[value] = (mapping_ordinal, [])
-        grouped[value][1].append(symbol)
-        mapping_ordinal += 1
-
-    return [
-        IdentifierDefinition(
-            kind=kind,
-            value=value,
-            source_resource=source_resource,
-            ordinal=ordinal,
-            symbols=symbols,
-        )
-        for value, (ordinal, symbols) in grouped.items()
-    ]
-
-
-def parse_2da(text: str, *, source_resource: str) -> TwoDaTable:
-    """Parse 2DA text positionally, retaining duplicate column names and row order."""
-    lines = [
-        line.strip()
-        for line in text.lstrip("\ufeff").splitlines()
-        if line.strip() and not line.lstrip().startswith("//")
-    ]
-    assert len(lines) >= 3, f"{source_resource} is missing its 2DA header"
-    assert tuple(token.upper() for token in _tokens(lines[0])) == (
-        "2DA",
-        "V1.0",
-    ), f"{source_resource} does not begin with a 2DA V1.0 header"
-
-    default_tokens = _tokens(lines[1])
-    assert len(default_tokens) == 1, f"{source_resource} has an invalid 2DA default value line"
-    columns = _tokens(lines[2])
-    assert columns, f"{source_resource} has no 2DA columns"
-
-    rows: list[TwoDaRow] = []
-    for ordinal, line in enumerate(lines[3:]):
-        tokens = _tokens(line)
-        assert tokens and tokens[0], f"{source_resource} row {ordinal} is missing its row label"
-        values = tokens[1:]
-        assert len(values) <= len(columns), (
-            f"{source_resource} row {ordinal} has {len(values)} cells; expected at most "
-            f"{len(columns)}"
-        )
-        padded_values = values + (default_tokens[0],) * (len(columns) - len(values))
-        rows.append(TwoDaRow(ordinal, tokens[0], padded_values))
-    return TwoDaTable(source_resource, default_tokens[0], columns, tuple(rows))
+@dataclass(frozen=True, slots=True)
+class _CampaignMetadata:
+    race_rows: list[_RawRaceText]
+    class_rows: list[_RawClassText]
+    character_links: list[CharacterResourceLink]
+    interactions: list[InteractionRule]
+    calendars: list[_RawCalendar]
 
 
 def build_metadata(
@@ -318,128 +356,124 @@ def build_metadata(
 ) -> MetadataExtraction:
     """Read effective metadata resources and resolve their unique TLK references."""
     assert workers >= 1, "workers must be at least 1"
-    root = game_root.expanduser().resolve()
-    resources: dict[str, str] = {}
-
-    def read(resource_name: str) -> str:
-        canonical_name = resource_name.upper()
-        if canonical_name not in resources:
-            resources[canonical_name] = client.read_text_resource(root, canonical_name)
-        return resources[canonical_name]
-
+    resources = _MetadataResources(client, game_root.expanduser().resolve(), {})
     identifiers = [
         definition
         for kind, resource_name in _IDENTIFIER_RESOURCES
         for definition in parse_ids(
-            read(resource_name),
+            resources.text(resource_name),
             kind=kind,
             source_resource=resource_name,
         )
     ]
 
-    campaign_table = parse_2da(read("CAMPAIGN.2DA"), source_resource="CAMPAIGN.2DA")
-    campaigns, bindings = _project_campaigns(campaign_table)
+    campaigns, bindings = _project_campaigns(resources.table("CAMPAIGN.2DA"))
+    campaign = _project_campaign_metadata(resources, bindings)
+    raw_kits = _project_kitlist(resources.table("KITLIST.2DA"))
+    raw_soundset_lines = _project_soundset_lines(resources.table("CHARSND.2DA"))
+    sound_slot_suffixes = _project_sound_slot_suffixes(resources.table("CSOUND.2DA"))
+    raw_engine_strings = _project_engine_strings(resources.table("ENGINEST.2DA"))
+    raw_months = _project_months(resources.table("MONTHS.2DA"))
+    sound_slot_groups = _project_sound_slot_groups(resources.table("SPEECH.2DA"))
+    raw_favored_enemies = _project_favored_enemies(resources.table("HATERACE.2DA"))
+    happiness_rules = _project_happiness_rules(resources.table("HAPPY.2DA"))
+    banter_timing = _project_banter_timing(resources.table("BANTTIMG.2DA"))
 
-    raw_race_rows: list[_RawRaceText] = []
-    raw_class_rows: list[_RawClassText] = []
-    character_resource_links: list[CharacterResourceLink] = []
-    interaction_rules: list[InteractionRule] = []
-    raw_calendars: list[_RawCalendar] = []
-    for resource_resref in _ordered_bound_resources(bindings, CampaignResourceKind.RACE_TEXT):
-        resource_name = f"{resource_resref}.2DA"
-        raw_race_rows.extend(
-            _project_race_text(parse_2da(read(resource_name), source_resource=resource_name))
-        )
-    for resource_resref in _ordered_bound_resources(bindings, CampaignResourceKind.CLASS_TEXT):
-        resource_name = f"{resource_resref}.2DA"
-        raw_class_rows.extend(
-            _project_class_text(parse_2da(read(resource_name), source_resource=resource_name))
-        )
-    for resource_resref in _ordered_bound_resources(
-        bindings, CampaignResourceKind.BANTER_DIALOGUES
-    ):
-        resource_name = f"{resource_resref}.2DA"
-        character_resource_links.extend(
-            _project_banter_links(parse_2da(read(resource_name), source_resource=resource_name))
-        )
-    for resource_resref in _ordered_bound_resources(bindings, CampaignResourceKind.PARTY_DIALOGUES):
-        resource_name = f"{resource_resref}.2DA"
-        character_resource_links.extend(
-            _project_party_dialogue_links(
-                parse_2da(read(resource_name), source_resource=resource_name)
-            )
-        )
-    for resource_resref in _ordered_bound_resources(bindings, CampaignResourceKind.INTERACTIONS):
-        resource_name = f"{resource_resref}.2DA"
-        interaction_rules.extend(
-            _project_interaction_rules(
-                parse_2da(read(resource_name), source_resource=resource_name)
-            )
-        )
-    for resource_resref in _ordered_bound_resources(bindings, CampaignResourceKind.CALENDAR):
-        resource_name = f"{resource_resref}.2DA"
-        raw_calendars.append(
-            _project_calendar(parse_2da(read(resource_name), source_resource=resource_name))
-        )
-
-    raw_kits = _project_kitlist(parse_2da(read("KITLIST.2DA"), source_resource="KITLIST.2DA"))
-    raw_soundset_lines = _project_soundset_lines(
-        parse_2da(read("CHARSND.2DA"), source_resource="CHARSND.2DA")
-    )
-    sound_slot_suffixes = _project_sound_slot_suffixes(
-        parse_2da(read("CSOUND.2DA"), source_resource="CSOUND.2DA")
-    )
-    raw_engine_strings = _project_engine_strings(
-        parse_2da(read("ENGINEST.2DA"), source_resource="ENGINEST.2DA")
-    )
-    raw_months = _project_months(parse_2da(read("MONTHS.2DA"), source_resource="MONTHS.2DA"))
-    sound_slot_groups = _project_sound_slot_groups(
-        parse_2da(read("SPEECH.2DA"), source_resource="SPEECH.2DA")
-    )
-    raw_favored_enemies = _project_favored_enemies(
-        parse_2da(read("HATERACE.2DA"), source_resource="HATERACE.2DA")
-    )
-    happiness_rules = _project_happiness_rules(
-        parse_2da(read("HAPPY.2DA"), source_resource="HAPPY.2DA")
-    )
-    banter_timing = _project_banter_timing(
-        parse_2da(read("BANTTIMG.2DA"), source_resource="BANTTIMG.2DA")
-    )
     strrefs = sorted(
         _metadata_strrefs(
-            raw_race_rows,
-            raw_class_rows,
+            campaign.race_rows,
+            campaign.class_rows,
             raw_kits,
             raw_soundset_lines,
             raw_engine_strings,
             raw_months,
-            raw_calendars,
+            campaign.calendars,
             raw_favored_enemies,
         )
     )
-    resolved = _resolve_strings(client, root, strrefs, workers=workers)
-
+    resolved = _resolve_strings(client, resources.game_root, strrefs, workers=workers)
     return MetadataExtraction(
-        source_resource_count=len(resources),
+        source_resource_count=len(resources.text_by_name),
         resolved_strref_count=len(resolved),
         identifiers=identifiers,
         campaigns=campaigns,
         campaign_resource_bindings=bindings,
-        character_resource_links=character_resource_links,
-        interaction_rules=interaction_rules,
-        soundset_lines=[_resolve_soundset_line(row, resolved) for row in raw_soundset_lines],
+        character_resource_links=campaign.character_links,
+        interaction_rules=campaign.interactions,
+        soundset_lines=_resolve_rows(raw_soundset_lines, resolved, _resolve_soundset_line),
         sound_slot_suffixes=sound_slot_suffixes,
         sound_slot_groups=sound_slot_groups,
-        favored_enemies=[_resolve_favored_enemy(row, resolved) for row in raw_favored_enemies],
+        favored_enemies=_resolve_rows(raw_favored_enemies, resolved, _resolve_favored_enemy),
         happiness_rules=happiness_rules,
         banter_timing=banter_timing,
-        engine_strings=[_resolve_engine_string(row, resolved) for row in raw_engine_strings],
-        months=[_resolve_month(row, resolved) for row in raw_months],
-        campaign_calendars=[_resolve_calendar(row, resolved) for row in raw_calendars],
-        race_text_rows=[_resolve_race_text(row, resolved) for row in raw_race_rows],
-        class_text_rows=[_resolve_class_text(row, resolved) for row in raw_class_rows],
-        kits=[_resolve_kit(row, resolved) for row in raw_kits],
+        engine_strings=_resolve_rows(raw_engine_strings, resolved, _resolve_engine_string),
+        months=_resolve_rows(raw_months, resolved, _resolve_month),
+        campaign_calendars=_resolve_rows(campaign.calendars, resolved, _resolve_calendar),
+        race_text_rows=_resolve_rows(campaign.race_rows, resolved, _resolve_race_text),
+        class_text_rows=_resolve_rows(campaign.class_rows, resolved, _resolve_class_text),
+        kits=_resolve_rows(raw_kits, resolved, _resolve_kit),
     )
+
+
+def _resolve_rows[Raw, Resolved](
+    rows: Iterable[Raw],
+    text: dict[int, str | None],
+    resolve: Callable[[Raw, dict[int, str | None]], Resolved],
+) -> list[Resolved]:
+    return [resolve(row, text) for row in rows]
+
+
+def _project_campaign_metadata(
+    resources: _MetadataResources,
+    bindings: list[CampaignResourceBinding],
+) -> _CampaignMetadata:
+    return _CampaignMetadata(
+        race_rows=_project_bound(
+            resources, bindings, CampaignResourceKind.RACE_TEXT, _project_race_text
+        ),
+        class_rows=_project_bound(
+            resources, bindings, CampaignResourceKind.CLASS_TEXT, _project_class_text
+        ),
+        character_links=[
+            *_project_bound(
+                resources,
+                bindings,
+                CampaignResourceKind.BANTER_DIALOGUES,
+                _project_banter_links,
+            ),
+            *_project_bound(
+                resources,
+                bindings,
+                CampaignResourceKind.PARTY_DIALOGUES,
+                _project_party_dialogue_links,
+            ),
+        ],
+        interactions=_project_bound(
+            resources,
+            bindings,
+            CampaignResourceKind.INTERACTIONS,
+            _project_interaction_rules,
+        ),
+        calendars=_project_bound(
+            resources,
+            bindings,
+            CampaignResourceKind.CALENDAR,
+            lambda table: [_project_calendar(table)],
+        ),
+    )
+
+
+def _project_bound[Row](
+    resources: _MetadataResources,
+    bindings: Iterable[CampaignResourceBinding],
+    kind: CampaignResourceKind,
+    project: Callable[[TwoDaTable], list[Row]],
+) -> list[Row]:
+    return [
+        row
+        for resource_resref in _ordered_bound_resources(bindings, kind)
+        for row in project(resources.table(f"{resource_resref}.2DA"))
+    ]
 
 
 def _project_campaigns(
@@ -763,7 +797,11 @@ def _project_happiness_rules(table: TwoDaTable) -> list[HappinessRule]:
             source_resource=table.source_resource,
             reputation=int(row.row_name),
             alignment=alignment,
-            happiness=_parse_int(row.values[column]),
+            happiness=(
+                int(row.values[column], 0)
+                if row.values[column].lower().startswith(("0x", "-0x"))
+                else int(row.values[column], 10)
+            ),
         )
         for row in table.rows
         for alignment, column in zip(alignments, columns, strict=True)
@@ -1000,43 +1038,38 @@ def _metadata_strrefs(
     favored_enemies: Iterable[_RawFavoredEnemy],
 ) -> set[int]:
     references: set[int] = set()
+
+    def add(*values: int | None) -> None:
+        references.update(value for value in values if value is not None)
+
     for row in race_rows:
-        references.update(
-            value
-            for value in (
-                row.name_strref,
-                row.description_strref,
-                row.uppercase_name_strref,
-                row.biography_strref,
-            )
-            if value is not None
+        add(
+            row.name_strref,
+            row.description_strref,
+            row.uppercase_name_strref,
+            row.biography_strref,
         )
     for row in class_rows:
-        references.update(
-            value
-            for value in (
-                row.lower_name_strref,
-                row.description_strref,
-                row.mixed_name_strref,
-                row.biography_strref,
-                row.brief_description_strref,
-                row.fallen_notice_strref,
-            )
-            if value is not None
+        add(
+            row.lower_name_strref,
+            row.description_strref,
+            row.mixed_name_strref,
+            row.biography_strref,
+            row.brief_description_strref,
+            row.fallen_notice_strref,
         )
     for row in kits:
-        references.update(
-            value
-            for value in (row.lower_name_strref, row.mixed_name_strref, row.help_strref)
-            if value is not None
-        )
-    references.update(row.strref for row in soundset_lines)
-    references.update(row.strref for row in engine_strings if row.strref is not None)
-    references.update(row.name_strref for row in months)
+        add(row.lower_name_strref, row.mixed_name_strref, row.help_strref)
+    for row in soundset_lines:
+        add(row.strref)
+    for row in engine_strings:
+        add(row.strref)
+    for row in months:
+        add(row.name_strref)
     for row in calendars:
-        references.update((row.normal_format_strref, row.special_format_strref))
+        add(row.normal_format_strref, row.special_format_strref)
     for row in favored_enemies:
-        references.update((row.name_strref, row.help_strref))
+        add(row.name_strref, row.help_strref)
     return references
 
 
@@ -1123,10 +1156,6 @@ def _parse_uint(value: str, *, field: str, maximum: int = 0xFFFF_FFFF) -> int:
     parsed = int(value, 0) if value.lower().startswith("0x") else int(value, 10)
     assert 0 <= parsed <= maximum, f"{field} is outside 0..{maximum}: {value!r}"
     return parsed
-
-
-def _parse_int(value: str) -> int:
-    return int(value, 0) if value.lower().startswith(("0x", "-0x")) else int(value, 10)
 
 
 def _target_resref(value: str) -> str | None:

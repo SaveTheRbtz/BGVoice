@@ -6,7 +6,13 @@ import pytest
 from fastapi.testclient import TestClient
 
 from bgvoice.database import PipelineDatabase
-from bgvoice.models import PortraitImage, ResourceSource, RunKind, RunStatus, SourceKind
+from bgvoice.model_types import (
+    PortraitImage,
+    ResourceSource,
+    RunKind,
+    RunStatus,
+    SourceKind,
+)
 from bgvoice.web import create_app
 from bgvoice.web_contract import INSTALLATION_ID, resource_id
 from tests.test_reader import web_database as web_database

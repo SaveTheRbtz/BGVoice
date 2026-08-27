@@ -11,17 +11,21 @@ import pytest
 from PIL import Image
 
 import bgvoice.pipeline as pipeline
-from bgvoice.database import ExtractionRunRecord, PipelineDatabase
-from bgvoice.models import (
-    BanterTimingSettings,
+from bgvoice.character_models import (
     CharacterExtraction,
     CreDump,
-    CreResource,
+)
+from bgvoice.database import PipelineDatabase
+from bgvoice.dialogue_models import (
     DlgDump,
-    DlgResource,
-    ExtractionProgress,
-    ExtractionSummary,
+)
+from bgvoice.metadata_models import (
+    BanterTimingSettings,
     MetadataExtraction,
+)
+from bgvoice.model_types import (
+    CreResource,
+    DlgResource,
     PortraitImage,
     PortraitResource,
     RunKind,
@@ -33,6 +37,11 @@ from bgvoice.pipeline import (
     extract_metadata,
     extract_portraits,
 )
+from bgvoice.pipeline_models import (
+    ExtractionProgress,
+    ExtractionSummary,
+)
+from bgvoice.storage_records import ExtractionRunRecord
 from tests.factories import (
     make_dialogue_dump,
     make_dialogue_resource,

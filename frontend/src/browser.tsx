@@ -1,19 +1,9 @@
 import type { ReactNode } from "react";
 import type { ListQuery, ListResult } from "./api";
 
-import {
-  countFilters,
-  filterValue,
-  PAGE_SIZES,
-  useBrowser,
-} from "./browser-state";
+import { countFilters, filterValue, PAGE_SIZES } from "./filters";
 import { formatCount } from "./format";
-
-export interface FacetOption {
-  value: string | number;
-  label: string | null;
-  count: number;
-}
+import { useBrowser } from "./use-browser";
 
 export interface Column<Row, Order extends string> {
   label: string;
@@ -88,16 +78,13 @@ export function TableBrowser<Row, Order extends string>({
           onClick={browser.sortByRelevance}
         />
       </div>
-      {(renderFilters != null || activeFilters > 0) && (
-        <div className="filters" aria-label={`${title} filters`}>
-          {renderFilters?.(controls)}
-          {activeFilters > 0 && (
-            <button className="clear-filters" type="button" onClick={browser.reset}>
-              Clear {activeFilters}
-            </button>
-          )}
-        </div>
-      )}
+      <BrowserFilters
+        title={title}
+        count={activeFilters}
+        controls={controls}
+        render={renderFilters}
+        onClear={browser.reset}
+      />
       <div
         className={`table-wrap ${tableClassName} ${loading ? "is-loading" : ""}`}
         aria-busy={loading}
@@ -157,6 +144,26 @@ export function TableBrowser<Row, Order extends string>({
   );
 }
 
+function BrowserFilters({ title, count, controls, render, onClear }: {
+  title: string;
+  count: number;
+  controls: FilterControls;
+  render: ((controls: FilterControls) => ReactNode) | undefined;
+  onClear: () => void;
+}) {
+  if (render == null && count === 0) return null;
+  return (
+    <div className="filters" aria-label={`${title} filters`}>
+      {render?.(controls)}
+      {count > 0 && (
+        <button className="clear-filters" type="button" onClick={onClear}>
+          Clear {count}
+        </button>
+      )}
+    </div>
+  );
+}
+
 export function BrowserHeading({ eyebrow, title, description, loading, count, noun }: {
   eyebrow: string;
   title: string;
@@ -172,7 +179,9 @@ export function BrowserHeading({ eyebrow, title, description, loading, count, no
         <h1>{title}</h1>
         <p>{description}</p>
       </div>
-      <ResultCount loading={loading} count={count} noun={noun} />
+      <div className="result-count" aria-live="polite">
+        {loading ? "Loading…" : `${formatCount(count)} ${noun}`}
+      </div>
     </div>
   );
 }
@@ -212,18 +221,6 @@ export function RelevanceButton({ visible, active, onClick }: {
     >
       Relevance
     </button>
-  );
-}
-
-export function ResultCount({ loading, count, noun }: {
-  loading: boolean;
-  count: number;
-  noun: string;
-}) {
-  return (
-    <div className="result-count" aria-live="polite">
-      {loading ? "Loading…" : `${formatCount(count)} ${noun}`}
-    </div>
   );
 }
 
@@ -277,32 +274,6 @@ export function SelectFilter<Value extends string>({
         <option value="">All</option>
         {values.map((item) => (
           <option key={item} value={item}>{labels[item] ?? item}</option>
-        ))}
-      </select>
-    </label>
-  );
-}
-
-export function FacetFilter({
-  label,
-  value,
-  values,
-  onChange,
-}: {
-  label: string;
-  value: string;
-  values?: readonly FacetOption[];
-  onChange: (value: string) => void;
-}) {
-  return (
-    <label className="filter">
-      <span>{label}</span>
-      <select value={value} onChange={(event) => onChange(event.target.value)}>
-        <option value="">All</option>
-        {values?.map((item) => (
-          <option key={item.value} value={item.value}>
-            {item.label ?? item.value} [{item.value}] · {formatCount(item.count)}
-          </option>
         ))}
       </select>
     </label>
