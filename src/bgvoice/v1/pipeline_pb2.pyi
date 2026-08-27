@@ -12,12 +12,6 @@ from typing import ClassVar as _ClassVar, Optional as _Optional, Union as _Union
 
 DESCRIPTOR: _descriptor.FileDescriptor
 
-class View(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
-    __slots__ = ()
-    VIEW_UNSPECIFIED: _ClassVar[View]
-    VIEW_BASIC: _ClassVar[View]
-    VIEW_FULL: _ClassVar[View]
-
 class SourceKind(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
     SOURCE_KIND_UNSPECIFIED: _ClassVar[SourceKind]
@@ -85,9 +79,6 @@ class RunStatus(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     RUN_STATUS_COMPLETE: _ClassVar[RunStatus]
     RUN_STATUS_COMPLETE_WITH_ERRORS: _ClassVar[RunStatus]
     RUN_STATUS_FAILED: _ClassVar[RunStatus]
-VIEW_UNSPECIFIED: View
-VIEW_BASIC: View
-VIEW_FULL: View
 SOURCE_KIND_UNSPECIFIED: SourceKind
 SOURCE_KIND_OVERRIDE: SourceKind
 SOURCE_KIND_BIF: SourceKind
@@ -142,16 +133,16 @@ class ResourceSource(_message.Message):
     def __init__(self, kind: _Optional[_Union[SourceKind, str]] = ..., path: _Optional[str] = ...) -> None: ...
 
 class ExtractionState(_message.Message):
-    __slots__ = ("status", "error", "updated_at", "run")
+    __slots__ = ("status", "error", "updated_at", "extraction_run")
     STATUS_FIELD_NUMBER: _ClassVar[int]
     ERROR_FIELD_NUMBER: _ClassVar[int]
     UPDATED_AT_FIELD_NUMBER: _ClassVar[int]
-    RUN_FIELD_NUMBER: _ClassVar[int]
+    EXTRACTION_RUN_FIELD_NUMBER: _ClassVar[int]
     status: DetailStatus
     error: str
     updated_at: _timestamp_pb2.Timestamp
-    run: str
-    def __init__(self, status: _Optional[_Union[DetailStatus, str]] = ..., error: _Optional[str] = ..., updated_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., run: _Optional[str] = ...) -> None: ...
+    extraction_run: str
+    def __init__(self, status: _Optional[_Union[DetailStatus, str]] = ..., error: _Optional[str] = ..., updated_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., extraction_run: _Optional[str] = ...) -> None: ...
 
 class PipelineSummary(_message.Message):
     __slots__ = ("voices", "characters", "dialogues", "dialogue_lines", "character_sounds", "dialogue_transitions", "races", "character_classes", "kits", "identifier_definitions", "matched_characters", "partially_matched_characters", "missing_dialogue_characters", "unattributed_dialogues", "unattributed_dialogue_lines")
@@ -206,16 +197,14 @@ class Installation(_message.Message):
     def __init__(self, name: _Optional[str] = ..., display_name: _Optional[str] = ..., database_path: _Optional[str] = ..., database_size: _Optional[int] = ..., attribution_publication: _Optional[_Union[AttributionPublicationStatus, str]] = ..., attribution_completed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., summary: _Optional[_Union[PipelineSummary, _Mapping]] = ...) -> None: ...
 
 class CharacterReference(_message.Message):
-    __slots__ = ("name", "engine_resource_name", "display_name", "npc_line_count")
+    __slots__ = ("name", "engine_resource_name", "npc_line_count")
     NAME_FIELD_NUMBER: _ClassVar[int]
     ENGINE_RESOURCE_NAME_FIELD_NUMBER: _ClassVar[int]
-    DISPLAY_NAME_FIELD_NUMBER: _ClassVar[int]
     NPC_LINE_COUNT_FIELD_NUMBER: _ClassVar[int]
     name: str
     engine_resource_name: str
-    display_name: str
     npc_line_count: int
-    def __init__(self, name: _Optional[str] = ..., engine_resource_name: _Optional[str] = ..., display_name: _Optional[str] = ..., npc_line_count: _Optional[int] = ...) -> None: ...
+    def __init__(self, name: _Optional[str] = ..., engine_resource_name: _Optional[str] = ..., npc_line_count: _Optional[int] = ...) -> None: ...
 
 class DialogueReference(_message.Message):
     __slots__ = ("name", "engine_resource_name", "npc_line_count")
@@ -228,32 +217,26 @@ class DialogueReference(_message.Message):
     def __init__(self, name: _Optional[str] = ..., engine_resource_name: _Optional[str] = ..., npc_line_count: _Optional[int] = ...) -> None: ...
 
 class Voice(_message.Message):
-    __slots__ = ("name", "voice_id", "display_name", "prompt", "characters", "dialogues", "portrait", "character_count", "dialogue_count", "npc_line_count", "serialized_size", "biography")
+    __slots__ = ("name", "display_name", "prompt", "characters", "dialogues", "portrait", "npc_line_count", "serialized_size", "biography")
     NAME_FIELD_NUMBER: _ClassVar[int]
-    VOICE_ID_FIELD_NUMBER: _ClassVar[int]
     DISPLAY_NAME_FIELD_NUMBER: _ClassVar[int]
     PROMPT_FIELD_NUMBER: _ClassVar[int]
     CHARACTERS_FIELD_NUMBER: _ClassVar[int]
     DIALOGUES_FIELD_NUMBER: _ClassVar[int]
     PORTRAIT_FIELD_NUMBER: _ClassVar[int]
-    CHARACTER_COUNT_FIELD_NUMBER: _ClassVar[int]
-    DIALOGUE_COUNT_FIELD_NUMBER: _ClassVar[int]
     NPC_LINE_COUNT_FIELD_NUMBER: _ClassVar[int]
     SERIALIZED_SIZE_FIELD_NUMBER: _ClassVar[int]
     BIOGRAPHY_FIELD_NUMBER: _ClassVar[int]
     name: str
-    voice_id: str
     display_name: str
     prompt: str
     characters: _containers.RepeatedCompositeFieldContainer[CharacterReference]
     dialogues: _containers.RepeatedCompositeFieldContainer[DialogueReference]
     portrait: str
-    character_count: int
-    dialogue_count: int
     npc_line_count: int
     serialized_size: int
     biography: str
-    def __init__(self, name: _Optional[str] = ..., voice_id: _Optional[str] = ..., display_name: _Optional[str] = ..., prompt: _Optional[str] = ..., characters: _Optional[_Iterable[_Union[CharacterReference, _Mapping]]] = ..., dialogues: _Optional[_Iterable[_Union[DialogueReference, _Mapping]]] = ..., portrait: _Optional[str] = ..., character_count: _Optional[int] = ..., dialogue_count: _Optional[int] = ..., npc_line_count: _Optional[int] = ..., serialized_size: _Optional[int] = ..., biography: _Optional[str] = ...) -> None: ...
+    def __init__(self, name: _Optional[str] = ..., display_name: _Optional[str] = ..., prompt: _Optional[str] = ..., characters: _Optional[_Iterable[_Union[CharacterReference, _Mapping]]] = ..., dialogues: _Optional[_Iterable[_Union[DialogueReference, _Mapping]]] = ..., portrait: _Optional[str] = ..., npc_line_count: _Optional[int] = ..., serialized_size: _Optional[int] = ..., biography: _Optional[str] = ...) -> None: ...
 
 class CharacterDialogueSummary(_message.Message):
     __slots__ = ("declared_dialogue_count", "resolved_dialogue_count", "dialogue_line_count", "npc_line_count", "player_line_count", "journal_line_count", "state_count", "transition_count", "serialized_size")
@@ -557,30 +540,6 @@ class DialogueTransition(_message.Message):
     next_dialogue: str
     def __init__(self, name: _Optional[str] = ..., dialogue: _Optional[str] = ..., dialogue_resref: _Optional[str] = ..., source_kind: _Optional[_Union[SourceKind, str]] = ..., state_index: _Optional[int] = ..., transition_index: _Optional[int] = ..., flags_raw: _Optional[int] = ..., flags_decoded: _Optional[_Iterable[str]] = ..., trigger_index: _Optional[int] = ..., trigger_text: _Optional[str] = ..., action_index: _Optional[int] = ..., action_text: _Optional[str] = ..., next_dialogue_resref: _Optional[str] = ..., next_state_index: _Optional[int] = ..., terminates_dialogue: _Optional[bool] = ..., serialized_size: _Optional[int] = ..., next_dialogue: _Optional[str] = ...) -> None: ...
 
-class Portrait(_message.Message):
-    __slots__ = ("name", "resref", "source", "width", "height", "media_type")
-    NAME_FIELD_NUMBER: _ClassVar[int]
-    RESREF_FIELD_NUMBER: _ClassVar[int]
-    SOURCE_FIELD_NUMBER: _ClassVar[int]
-    WIDTH_FIELD_NUMBER: _ClassVar[int]
-    HEIGHT_FIELD_NUMBER: _ClassVar[int]
-    MEDIA_TYPE_FIELD_NUMBER: _ClassVar[int]
-    name: str
-    resref: str
-    source: ResourceSource
-    width: int
-    height: int
-    media_type: str
-    def __init__(self, name: _Optional[str] = ..., resref: _Optional[str] = ..., source: _Optional[_Union[ResourceSource, _Mapping]] = ..., width: _Optional[int] = ..., height: _Optional[int] = ..., media_type: _Optional[str] = ...) -> None: ...
-
-class PortraitContent(_message.Message):
-    __slots__ = ("portrait", "png")
-    PORTRAIT_FIELD_NUMBER: _ClassVar[int]
-    PNG_FIELD_NUMBER: _ClassVar[int]
-    portrait: str
-    png: bytes
-    def __init__(self, portrait: _Optional[str] = ..., png: _Optional[bytes] = ...) -> None: ...
-
 class RaceText(_message.Message):
     __slots__ = ("source_resource", "campaigns", "row_name", "name_strref", "display_name", "description_strref", "description", "uppercase_name_strref", "uppercase_name", "biography_strref", "biography")
     SOURCE_RESOURCE_FIELD_NUMBER: _ClassVar[int]
@@ -723,18 +682,6 @@ class IdentifierDefinition(_message.Message):
     display_name: str
     def __init__(self, name: _Optional[str] = ..., kind: _Optional[_Union[IdentifierKind, str]] = ..., value: _Optional[int] = ..., symbols: _Optional[_Iterable[str]] = ..., source_resource: _Optional[str] = ..., display_name: _Optional[str] = ...) -> None: ...
 
-class Campaign(_message.Message):
-    __slots__ = ("name", "campaign_id", "ordinal", "display_name")
-    NAME_FIELD_NUMBER: _ClassVar[int]
-    CAMPAIGN_ID_FIELD_NUMBER: _ClassVar[int]
-    ORDINAL_FIELD_NUMBER: _ClassVar[int]
-    DISPLAY_NAME_FIELD_NUMBER: _ClassVar[int]
-    name: str
-    campaign_id: str
-    ordinal: int
-    display_name: str
-    def __init__(self, name: _Optional[str] = ..., campaign_id: _Optional[str] = ..., ordinal: _Optional[int] = ..., display_name: _Optional[str] = ...) -> None: ...
-
 class ExtractionRun(_message.Message):
     __slots__ = ("name", "run_id", "run_kind", "started_at", "completed_at", "status", "resources_discovered", "details_attempted", "details_extracted", "failures", "error")
     NAME_FIELD_NUMBER: _ClassVar[int]
@@ -768,20 +715,18 @@ class GetInstallationRequest(_message.Message):
     def __init__(self, name: _Optional[str] = ...) -> None: ...
 
 class ListVoicesRequest(_message.Message):
-    __slots__ = ("parent", "page_size", "page_token", "filter", "order_by", "view")
+    __slots__ = ("parent", "page_size", "page_token", "filter", "order_by")
     PARENT_FIELD_NUMBER: _ClassVar[int]
     PAGE_SIZE_FIELD_NUMBER: _ClassVar[int]
     PAGE_TOKEN_FIELD_NUMBER: _ClassVar[int]
     FILTER_FIELD_NUMBER: _ClassVar[int]
     ORDER_BY_FIELD_NUMBER: _ClassVar[int]
-    VIEW_FIELD_NUMBER: _ClassVar[int]
     parent: str
     page_size: int
     page_token: str
     filter: str
     order_by: str
-    view: View
-    def __init__(self, parent: _Optional[str] = ..., page_size: _Optional[int] = ..., page_token: _Optional[str] = ..., filter: _Optional[str] = ..., order_by: _Optional[str] = ..., view: _Optional[_Union[View, str]] = ...) -> None: ...
+    def __init__(self, parent: _Optional[str] = ..., page_size: _Optional[int] = ..., page_token: _Optional[str] = ..., filter: _Optional[str] = ..., order_by: _Optional[str] = ...) -> None: ...
 
 class ListVoicesResponse(_message.Message):
     __slots__ = ("voices", "next_page_token", "total_size")
@@ -794,28 +739,24 @@ class ListVoicesResponse(_message.Message):
     def __init__(self, voices: _Optional[_Iterable[_Union[Voice, _Mapping]]] = ..., next_page_token: _Optional[str] = ..., total_size: _Optional[int] = ...) -> None: ...
 
 class GetVoiceRequest(_message.Message):
-    __slots__ = ("name", "view")
+    __slots__ = ("name",)
     NAME_FIELD_NUMBER: _ClassVar[int]
-    VIEW_FIELD_NUMBER: _ClassVar[int]
     name: str
-    view: View
-    def __init__(self, name: _Optional[str] = ..., view: _Optional[_Union[View, str]] = ...) -> None: ...
+    def __init__(self, name: _Optional[str] = ...) -> None: ...
 
 class ListCharactersRequest(_message.Message):
-    __slots__ = ("parent", "page_size", "page_token", "filter", "order_by", "view")
+    __slots__ = ("parent", "page_size", "page_token", "filter", "order_by")
     PARENT_FIELD_NUMBER: _ClassVar[int]
     PAGE_SIZE_FIELD_NUMBER: _ClassVar[int]
     PAGE_TOKEN_FIELD_NUMBER: _ClassVar[int]
     FILTER_FIELD_NUMBER: _ClassVar[int]
     ORDER_BY_FIELD_NUMBER: _ClassVar[int]
-    VIEW_FIELD_NUMBER: _ClassVar[int]
     parent: str
     page_size: int
     page_token: str
     filter: str
     order_by: str
-    view: View
-    def __init__(self, parent: _Optional[str] = ..., page_size: _Optional[int] = ..., page_token: _Optional[str] = ..., filter: _Optional[str] = ..., order_by: _Optional[str] = ..., view: _Optional[_Union[View, str]] = ...) -> None: ...
+    def __init__(self, parent: _Optional[str] = ..., page_size: _Optional[int] = ..., page_token: _Optional[str] = ..., filter: _Optional[str] = ..., order_by: _Optional[str] = ...) -> None: ...
 
 class ListCharactersResponse(_message.Message):
     __slots__ = ("characters", "next_page_token", "total_size")
@@ -828,28 +769,24 @@ class ListCharactersResponse(_message.Message):
     def __init__(self, characters: _Optional[_Iterable[_Union[Character, _Mapping]]] = ..., next_page_token: _Optional[str] = ..., total_size: _Optional[int] = ...) -> None: ...
 
 class GetCharacterRequest(_message.Message):
-    __slots__ = ("name", "view")
+    __slots__ = ("name",)
     NAME_FIELD_NUMBER: _ClassVar[int]
-    VIEW_FIELD_NUMBER: _ClassVar[int]
     name: str
-    view: View
-    def __init__(self, name: _Optional[str] = ..., view: _Optional[_Union[View, str]] = ...) -> None: ...
+    def __init__(self, name: _Optional[str] = ...) -> None: ...
 
 class ListDialoguesRequest(_message.Message):
-    __slots__ = ("parent", "page_size", "page_token", "filter", "order_by", "view")
+    __slots__ = ("parent", "page_size", "page_token", "filter", "order_by")
     PARENT_FIELD_NUMBER: _ClassVar[int]
     PAGE_SIZE_FIELD_NUMBER: _ClassVar[int]
     PAGE_TOKEN_FIELD_NUMBER: _ClassVar[int]
     FILTER_FIELD_NUMBER: _ClassVar[int]
     ORDER_BY_FIELD_NUMBER: _ClassVar[int]
-    VIEW_FIELD_NUMBER: _ClassVar[int]
     parent: str
     page_size: int
     page_token: str
     filter: str
     order_by: str
-    view: View
-    def __init__(self, parent: _Optional[str] = ..., page_size: _Optional[int] = ..., page_token: _Optional[str] = ..., filter: _Optional[str] = ..., order_by: _Optional[str] = ..., view: _Optional[_Union[View, str]] = ...) -> None: ...
+    def __init__(self, parent: _Optional[str] = ..., page_size: _Optional[int] = ..., page_token: _Optional[str] = ..., filter: _Optional[str] = ..., order_by: _Optional[str] = ...) -> None: ...
 
 class ListDialoguesResponse(_message.Message):
     __slots__ = ("dialogues", "next_page_token", "total_size")
@@ -862,28 +799,24 @@ class ListDialoguesResponse(_message.Message):
     def __init__(self, dialogues: _Optional[_Iterable[_Union[Dialogue, _Mapping]]] = ..., next_page_token: _Optional[str] = ..., total_size: _Optional[int] = ...) -> None: ...
 
 class GetDialogueRequest(_message.Message):
-    __slots__ = ("name", "view")
+    __slots__ = ("name",)
     NAME_FIELD_NUMBER: _ClassVar[int]
-    VIEW_FIELD_NUMBER: _ClassVar[int]
     name: str
-    view: View
-    def __init__(self, name: _Optional[str] = ..., view: _Optional[_Union[View, str]] = ...) -> None: ...
+    def __init__(self, name: _Optional[str] = ...) -> None: ...
 
 class ListDialogueLinesRequest(_message.Message):
-    __slots__ = ("parent", "page_size", "page_token", "filter", "order_by", "view")
+    __slots__ = ("parent", "page_size", "page_token", "filter", "order_by")
     PARENT_FIELD_NUMBER: _ClassVar[int]
     PAGE_SIZE_FIELD_NUMBER: _ClassVar[int]
     PAGE_TOKEN_FIELD_NUMBER: _ClassVar[int]
     FILTER_FIELD_NUMBER: _ClassVar[int]
     ORDER_BY_FIELD_NUMBER: _ClassVar[int]
-    VIEW_FIELD_NUMBER: _ClassVar[int]
     parent: str
     page_size: int
     page_token: str
     filter: str
     order_by: str
-    view: View
-    def __init__(self, parent: _Optional[str] = ..., page_size: _Optional[int] = ..., page_token: _Optional[str] = ..., filter: _Optional[str] = ..., order_by: _Optional[str] = ..., view: _Optional[_Union[View, str]] = ...) -> None: ...
+    def __init__(self, parent: _Optional[str] = ..., page_size: _Optional[int] = ..., page_token: _Optional[str] = ..., filter: _Optional[str] = ..., order_by: _Optional[str] = ...) -> None: ...
 
 class ListDialogueLinesResponse(_message.Message):
     __slots__ = ("dialogue_lines", "next_page_token", "total_size")
@@ -895,29 +828,19 @@ class ListDialogueLinesResponse(_message.Message):
     total_size: int
     def __init__(self, dialogue_lines: _Optional[_Iterable[_Union[DialogueLine, _Mapping]]] = ..., next_page_token: _Optional[str] = ..., total_size: _Optional[int] = ...) -> None: ...
 
-class GetDialogueLineRequest(_message.Message):
-    __slots__ = ("name", "view")
-    NAME_FIELD_NUMBER: _ClassVar[int]
-    VIEW_FIELD_NUMBER: _ClassVar[int]
-    name: str
-    view: View
-    def __init__(self, name: _Optional[str] = ..., view: _Optional[_Union[View, str]] = ...) -> None: ...
-
 class ListCharacterSoundsRequest(_message.Message):
-    __slots__ = ("parent", "page_size", "page_token", "filter", "order_by", "view")
+    __slots__ = ("parent", "page_size", "page_token", "filter", "order_by")
     PARENT_FIELD_NUMBER: _ClassVar[int]
     PAGE_SIZE_FIELD_NUMBER: _ClassVar[int]
     PAGE_TOKEN_FIELD_NUMBER: _ClassVar[int]
     FILTER_FIELD_NUMBER: _ClassVar[int]
     ORDER_BY_FIELD_NUMBER: _ClassVar[int]
-    VIEW_FIELD_NUMBER: _ClassVar[int]
     parent: str
     page_size: int
     page_token: str
     filter: str
     order_by: str
-    view: View
-    def __init__(self, parent: _Optional[str] = ..., page_size: _Optional[int] = ..., page_token: _Optional[str] = ..., filter: _Optional[str] = ..., order_by: _Optional[str] = ..., view: _Optional[_Union[View, str]] = ...) -> None: ...
+    def __init__(self, parent: _Optional[str] = ..., page_size: _Optional[int] = ..., page_token: _Optional[str] = ..., filter: _Optional[str] = ..., order_by: _Optional[str] = ...) -> None: ...
 
 class ListCharacterSoundsResponse(_message.Message):
     __slots__ = ("character_sounds", "next_page_token", "total_size")
@@ -929,29 +852,19 @@ class ListCharacterSoundsResponse(_message.Message):
     total_size: int
     def __init__(self, character_sounds: _Optional[_Iterable[_Union[CharacterSound, _Mapping]]] = ..., next_page_token: _Optional[str] = ..., total_size: _Optional[int] = ...) -> None: ...
 
-class GetCharacterSoundRequest(_message.Message):
-    __slots__ = ("name", "view")
-    NAME_FIELD_NUMBER: _ClassVar[int]
-    VIEW_FIELD_NUMBER: _ClassVar[int]
-    name: str
-    view: View
-    def __init__(self, name: _Optional[str] = ..., view: _Optional[_Union[View, str]] = ...) -> None: ...
-
 class ListDialogueTransitionsRequest(_message.Message):
-    __slots__ = ("parent", "page_size", "page_token", "filter", "order_by", "view")
+    __slots__ = ("parent", "page_size", "page_token", "filter", "order_by")
     PARENT_FIELD_NUMBER: _ClassVar[int]
     PAGE_SIZE_FIELD_NUMBER: _ClassVar[int]
     PAGE_TOKEN_FIELD_NUMBER: _ClassVar[int]
     FILTER_FIELD_NUMBER: _ClassVar[int]
     ORDER_BY_FIELD_NUMBER: _ClassVar[int]
-    VIEW_FIELD_NUMBER: _ClassVar[int]
     parent: str
     page_size: int
     page_token: str
     filter: str
     order_by: str
-    view: View
-    def __init__(self, parent: _Optional[str] = ..., page_size: _Optional[int] = ..., page_token: _Optional[str] = ..., filter: _Optional[str] = ..., order_by: _Optional[str] = ..., view: _Optional[_Union[View, str]] = ...) -> None: ...
+    def __init__(self, parent: _Optional[str] = ..., page_size: _Optional[int] = ..., page_token: _Optional[str] = ..., filter: _Optional[str] = ..., order_by: _Optional[str] = ...) -> None: ...
 
 class ListDialogueTransitionsResponse(_message.Message):
     __slots__ = ("dialogue_transitions", "next_page_token", "total_size")
@@ -963,69 +876,19 @@ class ListDialogueTransitionsResponse(_message.Message):
     total_size: int
     def __init__(self, dialogue_transitions: _Optional[_Iterable[_Union[DialogueTransition, _Mapping]]] = ..., next_page_token: _Optional[str] = ..., total_size: _Optional[int] = ...) -> None: ...
 
-class GetDialogueTransitionRequest(_message.Message):
-    __slots__ = ("name", "view")
-    NAME_FIELD_NUMBER: _ClassVar[int]
-    VIEW_FIELD_NUMBER: _ClassVar[int]
-    name: str
-    view: View
-    def __init__(self, name: _Optional[str] = ..., view: _Optional[_Union[View, str]] = ...) -> None: ...
-
-class ListPortraitsRequest(_message.Message):
-    __slots__ = ("parent", "page_size", "page_token", "filter", "order_by", "view")
-    PARENT_FIELD_NUMBER: _ClassVar[int]
-    PAGE_SIZE_FIELD_NUMBER: _ClassVar[int]
-    PAGE_TOKEN_FIELD_NUMBER: _ClassVar[int]
-    FILTER_FIELD_NUMBER: _ClassVar[int]
-    ORDER_BY_FIELD_NUMBER: _ClassVar[int]
-    VIEW_FIELD_NUMBER: _ClassVar[int]
-    parent: str
-    page_size: int
-    page_token: str
-    filter: str
-    order_by: str
-    view: View
-    def __init__(self, parent: _Optional[str] = ..., page_size: _Optional[int] = ..., page_token: _Optional[str] = ..., filter: _Optional[str] = ..., order_by: _Optional[str] = ..., view: _Optional[_Union[View, str]] = ...) -> None: ...
-
-class ListPortraitsResponse(_message.Message):
-    __slots__ = ("portraits", "next_page_token", "total_size")
-    PORTRAITS_FIELD_NUMBER: _ClassVar[int]
-    NEXT_PAGE_TOKEN_FIELD_NUMBER: _ClassVar[int]
-    TOTAL_SIZE_FIELD_NUMBER: _ClassVar[int]
-    portraits: _containers.RepeatedCompositeFieldContainer[Portrait]
-    next_page_token: str
-    total_size: int
-    def __init__(self, portraits: _Optional[_Iterable[_Union[Portrait, _Mapping]]] = ..., next_page_token: _Optional[str] = ..., total_size: _Optional[int] = ...) -> None: ...
-
-class GetPortraitRequest(_message.Message):
-    __slots__ = ("name", "view")
-    NAME_FIELD_NUMBER: _ClassVar[int]
-    VIEW_FIELD_NUMBER: _ClassVar[int]
-    name: str
-    view: View
-    def __init__(self, name: _Optional[str] = ..., view: _Optional[_Union[View, str]] = ...) -> None: ...
-
-class DownloadPortraitRequest(_message.Message):
-    __slots__ = ("name",)
-    NAME_FIELD_NUMBER: _ClassVar[int]
-    name: str
-    def __init__(self, name: _Optional[str] = ...) -> None: ...
-
 class ListRacesRequest(_message.Message):
-    __slots__ = ("parent", "page_size", "page_token", "filter", "order_by", "view")
+    __slots__ = ("parent", "page_size", "page_token", "filter", "order_by")
     PARENT_FIELD_NUMBER: _ClassVar[int]
     PAGE_SIZE_FIELD_NUMBER: _ClassVar[int]
     PAGE_TOKEN_FIELD_NUMBER: _ClassVar[int]
     FILTER_FIELD_NUMBER: _ClassVar[int]
     ORDER_BY_FIELD_NUMBER: _ClassVar[int]
-    VIEW_FIELD_NUMBER: _ClassVar[int]
     parent: str
     page_size: int
     page_token: str
     filter: str
     order_by: str
-    view: View
-    def __init__(self, parent: _Optional[str] = ..., page_size: _Optional[int] = ..., page_token: _Optional[str] = ..., filter: _Optional[str] = ..., order_by: _Optional[str] = ..., view: _Optional[_Union[View, str]] = ...) -> None: ...
+    def __init__(self, parent: _Optional[str] = ..., page_size: _Optional[int] = ..., page_token: _Optional[str] = ..., filter: _Optional[str] = ..., order_by: _Optional[str] = ...) -> None: ...
 
 class ListRacesResponse(_message.Message):
     __slots__ = ("races", "next_page_token", "total_size")
@@ -1037,29 +900,19 @@ class ListRacesResponse(_message.Message):
     total_size: int
     def __init__(self, races: _Optional[_Iterable[_Union[Race, _Mapping]]] = ..., next_page_token: _Optional[str] = ..., total_size: _Optional[int] = ...) -> None: ...
 
-class GetRaceRequest(_message.Message):
-    __slots__ = ("name", "view")
-    NAME_FIELD_NUMBER: _ClassVar[int]
-    VIEW_FIELD_NUMBER: _ClassVar[int]
-    name: str
-    view: View
-    def __init__(self, name: _Optional[str] = ..., view: _Optional[_Union[View, str]] = ...) -> None: ...
-
 class ListCharacterClassesRequest(_message.Message):
-    __slots__ = ("parent", "page_size", "page_token", "filter", "order_by", "view")
+    __slots__ = ("parent", "page_size", "page_token", "filter", "order_by")
     PARENT_FIELD_NUMBER: _ClassVar[int]
     PAGE_SIZE_FIELD_NUMBER: _ClassVar[int]
     PAGE_TOKEN_FIELD_NUMBER: _ClassVar[int]
     FILTER_FIELD_NUMBER: _ClassVar[int]
     ORDER_BY_FIELD_NUMBER: _ClassVar[int]
-    VIEW_FIELD_NUMBER: _ClassVar[int]
     parent: str
     page_size: int
     page_token: str
     filter: str
     order_by: str
-    view: View
-    def __init__(self, parent: _Optional[str] = ..., page_size: _Optional[int] = ..., page_token: _Optional[str] = ..., filter: _Optional[str] = ..., order_by: _Optional[str] = ..., view: _Optional[_Union[View, str]] = ...) -> None: ...
+    def __init__(self, parent: _Optional[str] = ..., page_size: _Optional[int] = ..., page_token: _Optional[str] = ..., filter: _Optional[str] = ..., order_by: _Optional[str] = ...) -> None: ...
 
 class ListCharacterClassesResponse(_message.Message):
     __slots__ = ("character_classes", "next_page_token", "total_size")
@@ -1071,29 +924,19 @@ class ListCharacterClassesResponse(_message.Message):
     total_size: int
     def __init__(self, character_classes: _Optional[_Iterable[_Union[CharacterClass, _Mapping]]] = ..., next_page_token: _Optional[str] = ..., total_size: _Optional[int] = ...) -> None: ...
 
-class GetCharacterClassRequest(_message.Message):
-    __slots__ = ("name", "view")
-    NAME_FIELD_NUMBER: _ClassVar[int]
-    VIEW_FIELD_NUMBER: _ClassVar[int]
-    name: str
-    view: View
-    def __init__(self, name: _Optional[str] = ..., view: _Optional[_Union[View, str]] = ...) -> None: ...
-
 class ListKitsRequest(_message.Message):
-    __slots__ = ("parent", "page_size", "page_token", "filter", "order_by", "view")
+    __slots__ = ("parent", "page_size", "page_token", "filter", "order_by")
     PARENT_FIELD_NUMBER: _ClassVar[int]
     PAGE_SIZE_FIELD_NUMBER: _ClassVar[int]
     PAGE_TOKEN_FIELD_NUMBER: _ClassVar[int]
     FILTER_FIELD_NUMBER: _ClassVar[int]
     ORDER_BY_FIELD_NUMBER: _ClassVar[int]
-    VIEW_FIELD_NUMBER: _ClassVar[int]
     parent: str
     page_size: int
     page_token: str
     filter: str
     order_by: str
-    view: View
-    def __init__(self, parent: _Optional[str] = ..., page_size: _Optional[int] = ..., page_token: _Optional[str] = ..., filter: _Optional[str] = ..., order_by: _Optional[str] = ..., view: _Optional[_Union[View, str]] = ...) -> None: ...
+    def __init__(self, parent: _Optional[str] = ..., page_size: _Optional[int] = ..., page_token: _Optional[str] = ..., filter: _Optional[str] = ..., order_by: _Optional[str] = ...) -> None: ...
 
 class ListKitsResponse(_message.Message):
     __slots__ = ("kits", "next_page_token", "total_size")
@@ -1105,29 +948,19 @@ class ListKitsResponse(_message.Message):
     total_size: int
     def __init__(self, kits: _Optional[_Iterable[_Union[Kit, _Mapping]]] = ..., next_page_token: _Optional[str] = ..., total_size: _Optional[int] = ...) -> None: ...
 
-class GetKitRequest(_message.Message):
-    __slots__ = ("name", "view")
-    NAME_FIELD_NUMBER: _ClassVar[int]
-    VIEW_FIELD_NUMBER: _ClassVar[int]
-    name: str
-    view: View
-    def __init__(self, name: _Optional[str] = ..., view: _Optional[_Union[View, str]] = ...) -> None: ...
-
 class ListIdentifierDefinitionsRequest(_message.Message):
-    __slots__ = ("parent", "page_size", "page_token", "filter", "order_by", "view")
+    __slots__ = ("parent", "page_size", "page_token", "filter", "order_by")
     PARENT_FIELD_NUMBER: _ClassVar[int]
     PAGE_SIZE_FIELD_NUMBER: _ClassVar[int]
     PAGE_TOKEN_FIELD_NUMBER: _ClassVar[int]
     FILTER_FIELD_NUMBER: _ClassVar[int]
     ORDER_BY_FIELD_NUMBER: _ClassVar[int]
-    VIEW_FIELD_NUMBER: _ClassVar[int]
     parent: str
     page_size: int
     page_token: str
     filter: str
     order_by: str
-    view: View
-    def __init__(self, parent: _Optional[str] = ..., page_size: _Optional[int] = ..., page_token: _Optional[str] = ..., filter: _Optional[str] = ..., order_by: _Optional[str] = ..., view: _Optional[_Union[View, str]] = ...) -> None: ...
+    def __init__(self, parent: _Optional[str] = ..., page_size: _Optional[int] = ..., page_token: _Optional[str] = ..., filter: _Optional[str] = ..., order_by: _Optional[str] = ...) -> None: ...
 
 class ListIdentifierDefinitionsResponse(_message.Message):
     __slots__ = ("identifier_definitions", "next_page_token", "total_size")
@@ -1139,63 +972,19 @@ class ListIdentifierDefinitionsResponse(_message.Message):
     total_size: int
     def __init__(self, identifier_definitions: _Optional[_Iterable[_Union[IdentifierDefinition, _Mapping]]] = ..., next_page_token: _Optional[str] = ..., total_size: _Optional[int] = ...) -> None: ...
 
-class GetIdentifierDefinitionRequest(_message.Message):
-    __slots__ = ("name", "view")
-    NAME_FIELD_NUMBER: _ClassVar[int]
-    VIEW_FIELD_NUMBER: _ClassVar[int]
-    name: str
-    view: View
-    def __init__(self, name: _Optional[str] = ..., view: _Optional[_Union[View, str]] = ...) -> None: ...
-
-class ListCampaignsRequest(_message.Message):
-    __slots__ = ("parent", "page_size", "page_token", "filter", "order_by", "view")
-    PARENT_FIELD_NUMBER: _ClassVar[int]
-    PAGE_SIZE_FIELD_NUMBER: _ClassVar[int]
-    PAGE_TOKEN_FIELD_NUMBER: _ClassVar[int]
-    FILTER_FIELD_NUMBER: _ClassVar[int]
-    ORDER_BY_FIELD_NUMBER: _ClassVar[int]
-    VIEW_FIELD_NUMBER: _ClassVar[int]
-    parent: str
-    page_size: int
-    page_token: str
-    filter: str
-    order_by: str
-    view: View
-    def __init__(self, parent: _Optional[str] = ..., page_size: _Optional[int] = ..., page_token: _Optional[str] = ..., filter: _Optional[str] = ..., order_by: _Optional[str] = ..., view: _Optional[_Union[View, str]] = ...) -> None: ...
-
-class ListCampaignsResponse(_message.Message):
-    __slots__ = ("campaigns", "next_page_token", "total_size")
-    CAMPAIGNS_FIELD_NUMBER: _ClassVar[int]
-    NEXT_PAGE_TOKEN_FIELD_NUMBER: _ClassVar[int]
-    TOTAL_SIZE_FIELD_NUMBER: _ClassVar[int]
-    campaigns: _containers.RepeatedCompositeFieldContainer[Campaign]
-    next_page_token: str
-    total_size: int
-    def __init__(self, campaigns: _Optional[_Iterable[_Union[Campaign, _Mapping]]] = ..., next_page_token: _Optional[str] = ..., total_size: _Optional[int] = ...) -> None: ...
-
-class GetCampaignRequest(_message.Message):
-    __slots__ = ("name", "view")
-    NAME_FIELD_NUMBER: _ClassVar[int]
-    VIEW_FIELD_NUMBER: _ClassVar[int]
-    name: str
-    view: View
-    def __init__(self, name: _Optional[str] = ..., view: _Optional[_Union[View, str]] = ...) -> None: ...
-
 class ListExtractionRunsRequest(_message.Message):
-    __slots__ = ("parent", "page_size", "page_token", "filter", "order_by", "view")
+    __slots__ = ("parent", "page_size", "page_token", "filter", "order_by")
     PARENT_FIELD_NUMBER: _ClassVar[int]
     PAGE_SIZE_FIELD_NUMBER: _ClassVar[int]
     PAGE_TOKEN_FIELD_NUMBER: _ClassVar[int]
     FILTER_FIELD_NUMBER: _ClassVar[int]
     ORDER_BY_FIELD_NUMBER: _ClassVar[int]
-    VIEW_FIELD_NUMBER: _ClassVar[int]
     parent: str
     page_size: int
     page_token: str
     filter: str
     order_by: str
-    view: View
-    def __init__(self, parent: _Optional[str] = ..., page_size: _Optional[int] = ..., page_token: _Optional[str] = ..., filter: _Optional[str] = ..., order_by: _Optional[str] = ..., view: _Optional[_Union[View, str]] = ...) -> None: ...
+    def __init__(self, parent: _Optional[str] = ..., page_size: _Optional[int] = ..., page_token: _Optional[str] = ..., filter: _Optional[str] = ..., order_by: _Optional[str] = ...) -> None: ...
 
 class ListExtractionRunsResponse(_message.Message):
     __slots__ = ("extraction_runs", "next_page_token", "total_size")
@@ -1206,11 +995,3 @@ class ListExtractionRunsResponse(_message.Message):
     next_page_token: str
     total_size: int
     def __init__(self, extraction_runs: _Optional[_Iterable[_Union[ExtractionRun, _Mapping]]] = ..., next_page_token: _Optional[str] = ..., total_size: _Optional[int] = ...) -> None: ...
-
-class GetExtractionRunRequest(_message.Message):
-    __slots__ = ("name", "view")
-    NAME_FIELD_NUMBER: _ClassVar[int]
-    VIEW_FIELD_NUMBER: _ClassVar[int]
-    name: str
-    view: View
-    def __init__(self, name: _Optional[str] = ..., view: _Optional[_Union[View, str]] = ...) -> None: ...

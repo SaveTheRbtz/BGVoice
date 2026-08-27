@@ -65,13 +65,6 @@ async def test_stats_report_the_published_pipeline_generation(
     assert stats.attribution_completed_at is not None
     assert (stats.dialogues_attributed, stats.dialogues_unattributed) == (2, 1)
     assert (stats.attributed_dialogue_lines, stats.unattributed_dialogue_lines) == (4, 4)
-    assert [run.run_kind for run in stats.latest_runs] == [
-        "attribution",
-        "portraits",
-        "dialogues",
-        "characters",
-        "metadata",
-    ]
 
 
 @pytest.mark.anyio

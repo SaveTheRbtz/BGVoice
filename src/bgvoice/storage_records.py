@@ -333,7 +333,7 @@ class DialogueTransitionRecord(_Record):
 
 
 class ExtractionRunRecord(_Record):
-    """Durable lifecycle record for one inventory and detail extraction run."""
+    """Durable lifecycle record for one pipeline stage attempt."""
 
     id: str = Field(min_length=1)
     run_kind: RunKind = Field(strict=False)

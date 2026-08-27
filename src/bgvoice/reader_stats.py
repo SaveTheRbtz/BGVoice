@@ -11,7 +11,7 @@ from bgvoice.model_types import (
     IdentifierKind,
 )
 from bgvoice.reader_metadata import MetadataSnapshot
-from bgvoice.reader_models import SIMPLE_IDENTIFIER_KINDS, ExtractionRunSummary, PipelineStats
+from bgvoice.reader_models import SIMPLE_IDENTIFIER_KINDS, PipelineStats
 from bgvoice.storage_records import (
     CharacterAttributionRecord,
     CharacterRecord,
@@ -88,7 +88,6 @@ def pipeline_stats(
     path: Path,
     characters: list[CharacterRecord],
     dialogues: list[DialogueRecord],
-    latest_runs: list[ExtractionRunRecord],
     metadata: MetadataSnapshot,
     attribution: AttributionSnapshot,
     tables: StatsTableCounts,
@@ -135,9 +134,6 @@ def pipeline_stats(
         dialogues_unattributed=dialogue.unattributed,
         attributed_dialogue_lines=dialogue.attributed_lines,
         unattributed_dialogue_lines=dialogue.unattributed_lines,
-        latest_runs=[
-            ExtractionRunSummary.model_validate(run, from_attributes=True) for run in latest_runs
-        ],
     )
 
 

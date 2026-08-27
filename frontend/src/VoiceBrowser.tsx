@@ -25,20 +25,20 @@ import {
 import { errorMessage, useBrowser } from "./use-browser";
 
 export interface VoiceBrowserProps {
-  voiceId: string | null;
+  voiceName: string | null;
 }
 
 type VoiceDetailState =
   | { name: string; voice: Voice; error?: never }
   | { name: string; voice?: never; error: string };
 
-export function VoiceBrowser({ voiceId }: VoiceBrowserProps) {
+export function VoiceBrowser({ voiceName }: VoiceBrowserProps) {
   const browser = useBrowser<Voice>("npc_line_count desc", listVoices);
   const { query, result, loading } = browser;
-  const listed = voiceId == null
+  const listed = voiceName == null
     ? null
-    : result.items.find((voice) => voice.name === voiceId) ?? null;
-  const selected = useVoiceSelection(voiceId, listed);
+    : result.items.find((voice) => voice.name === voiceName) ?? null;
+  const selected = useVoiceSelection(voiceName, listed);
   const search = listSearch(query, "npc_line_count desc");
 
   return (
@@ -57,7 +57,7 @@ export function VoiceBrowser({ voiceId }: VoiceBrowserProps) {
         <VoiceList browser={browser} selected={selected.voice} search={search} />
         <VoiceDetail
           voice={selected.voice}
-          requestedId={voiceId}
+          requestedName={voiceName}
           error={selected.error}
           search={search}
         />
@@ -67,23 +67,23 @@ export function VoiceBrowser({ voiceId }: VoiceBrowserProps) {
 }
 
 function useVoiceSelection(
-  voiceId: string | null,
+  voiceName: string | null,
   listed: Voice | null,
 ): { voice: Voice | null; error: string | null } {
   const [detail, setDetail] = useState<VoiceDetailState | null>(null);
   useEffect(() => {
-    if (voiceId == null || listed != null) return undefined;
+    if (voiceName == null || listed != null) return undefined;
     const controller = new AbortController();
-    getVoice(voiceId, controller.signal)
-      .then((voice) => setDetail({ name: voiceId, voice }))
+    getVoice(voiceName, controller.signal)
+      .then((voice) => setDetail({ name: voiceName, voice }))
       .catch((reason: unknown) => {
-        if (!controller.signal.aborted) setDetail({ name: voiceId, error: errorMessage(reason) });
+        if (!controller.signal.aborted) setDetail({ name: voiceName, error: errorMessage(reason) });
       });
     return () => controller.abort();
-  }, [listed, voiceId]);
+  }, [listed, voiceName]);
 
   if (listed != null) return { voice: listed, error: null };
-  if (detail?.name !== voiceId) return { voice: null, error: null };
+  if (detail?.name !== voiceName) return { voice: null, error: null };
   return { voice: detail.voice ?? null, error: detail.error ?? null };
 }
 
@@ -173,7 +173,7 @@ function VoiceCard({ voice, selected, search = "" }: {
         <strong>{voice.displayName}</strong>
         <span className="voice-prompt-preview">{voice.prompt}</span>
         <span className="voice-card-metrics">
-          {formatCount(Number(voice.npcLineCount))} NPC lines · {formatCount(voice.characterCount)} characters
+          {formatCount(Number(voice.npcLineCount))} NPC lines · {formatCount(voice.characters.length)} characters
         </span>
       </span>
     </a>
@@ -205,16 +205,16 @@ function VoiceAvatar({ voice, size = "large" }: {
   );
 }
 
-function VoiceDetail({ voice, requestedId, error, search = "" }: {
+function VoiceDetail({ voice, requestedName, error, search = "" }: {
   voice: Voice | null;
-  requestedId: string | null;
+  requestedName: string | null;
   error: string | null;
   search?: string;
 }) {
   if (error != null) {
     return <aside className="voice-detail voice-detail-empty"><ErrorBanner message={error} /></aside>;
   }
-  if (voice == null) return <EmptyVoiceDetail loading={requestedId != null} />;
+  if (voice == null) return <EmptyVoiceDetail loading={requestedName != null} />;
   const listHref = voicePath(undefined, search);
   return (
     <aside className="voice-detail">
@@ -229,8 +229,8 @@ function VoiceDetail({ voice, requestedId, error, search = "" }: {
       </header>
       <div className="voice-metrics" aria-label="Voice workload">
         <VoiceMetric label="NPC lines" value={Number(voice.npcLineCount)} primary />
-        <VoiceMetric label="Characters" value={voice.characterCount} />
-        <VoiceMetric label="Dialogues" value={voice.dialogueCount} />
+        <VoiceMetric label="Characters" value={voice.characters.length} />
+        <VoiceMetric label="Dialogues" value={voice.dialogues.length} />
       </div>
       <section className="prompt-card">
         <div>

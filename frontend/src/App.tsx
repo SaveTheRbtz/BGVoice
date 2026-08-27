@@ -188,7 +188,7 @@ function Brand() {
 
 function RouteContent({ route, installation }: { route: AppRoute; installation: Installation | null }) {
   if (route.name === "voices") {
-    return <VoiceBrowser voiceId={route.voiceId} />;
+    return <VoiceBrowser voiceName={route.voiceName} />;
   }
   if (route.name === "characters") {
     return route.resourceName == null

@@ -46,22 +46,21 @@ const installation = create(InstallationSchema, {
 
 const voice = create(VoiceSchema, {
   name: "installations/bg2ee-eet/voices/imoen",
-  voiceId: "imoen",
   displayName: "Imoen",
   prompt: "Warm, quick-witted and mischievous. Keep an easy Amnian cadence.",
   characters: [
-    { name: "installations/bg2ee-eet/characters/IMOEN15.CRE", engineResourceName: "IMOEN15.CRE", npcLineCount: 812n },
-    { name: "installations/bg2ee-eet/characters/IMOEN.CRE", engineResourceName: "IMOEN.CRE", npcLineCount: 6108n },
+    { name: "installations/bg2ee-eet/characters/imoen15-cre-fe85cc5b", engineResourceName: "IMOEN15.CRE", npcLineCount: 812n },
+    { name: "installations/bg2ee-eet/characters/imoen-cre-3768424f", engineResourceName: "IMOEN.CRE", npcLineCount: 6108n },
   ],
   dialogues: [
-    { name: "installations/bg2ee-eet/dialogues/IMOENB.DLG", engineResourceName: "IMOENB.DLG", npcLineCount: 12n },
-    { name: "installations/bg2ee-eet/dialogues/IMOEN2J.DLG", engineResourceName: "IMOEN2J.DLG", npcLineCount: 5758n },
+    { name: "installations/bg2ee-eet/dialogues/imoenb-dlg-e9a04d8e", engineResourceName: "IMOENB.DLG", npcLineCount: 12n },
+    { name: "installations/bg2ee-eet/dialogues/imoen2j-dlg-789f493a", engineResourceName: "IMOEN2J.DLG", npcLineCount: 5758n },
   ],
   npcLineCount: 6108n,
 });
 
 const character = create(CharacterSchema, {
-  name: "installations/bg2ee-eet/characters/IMOEN.CRE",
+  name: "installations/bg2ee-eet/characters/imoen-cre-3768424f",
   engineResourceName: "IMOEN.CRE",
   resref: "IMOEN",
   displayName: "Imoen",
@@ -69,8 +68,8 @@ const character = create(CharacterSchema, {
 });
 
 const line = create(DialogueLineSchema, {
-  name: "installations/bg2ee-eet/dialogueLines/IMOEN2J.DLG:0:0",
-  dialogue: "installations/bg2ee-eet/dialogues/IMOEN2J.DLG",
+  name: "installations/bg2ee-eet/dialogueLines/imoen2j-dlg-0-0-ecdf1e0b",
+  dialogue: "installations/bg2ee-eet/dialogues/imoen2j-dlg-789f493a",
   text: "Heya! It's me, Imoen!",
   tokens: ["PLAYER2", "CHARNAME", "DAY", "PLAYER1", "CHARNAME", "PLAYER2", "CHARNAME", "PLAYER1"],
   stateTriggerIndex: 23,
@@ -105,7 +104,7 @@ describe("application jobs", () => {
       .toEqual(["IMOEN2J × 5,758", "IMOENB × 12"]);
 
     await user.click(screen.getByRole("link", { name: "IMOEN × 6,108" }));
-    await waitFor(() => expect(window.location.pathname).toBe("/characters/IMOEN.CRE"));
+    await waitFor(() => expect(window.location.pathname).toBe("/characters/imoen-cre-3768424f"));
     expect(await screen.findByRole("heading", { name: "Imoen", level: 1 })).toBeTruthy();
     expect(api.getCharacter).toHaveBeenCalledWith(character.name, expect.any(AbortSignal));
   });

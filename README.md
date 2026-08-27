@@ -23,8 +23,8 @@ From the repository root, place `iecli.exe` at
 
 [`proto/bgvoice/v1/pipeline.proto`](proto/bgvoice/v1/pipeline.proto) is the single transport
 contract. Buf generates Protobuf-ES models for React and standard Protobuf, type stubs, Connect,
-and Pydantic v2 models for Python. The remote plugins are pinned in `buf.gen.yaml`; local
-generation uses Buf 1.72.0 and `protoc-gen-pydantic` 0.18.0 on `PATH`:
+and Python models from the same schema. The remote plugins are pinned in `buf.gen.yaml`; local
+generation uses Buf 1.72.0:
 
 ```powershell
 buf lint
@@ -122,10 +122,12 @@ uv run bgvoice web
 ```
 
 Open `http://127.0.0.1:8000`. The server exposes an async, read-only Connect API over committed
-LanceDB table versions, so it can browse while extraction writes new snapshots. The contract uses
-canonical resource names, direct Get methods, cursor-based List methods, one structured `filter`,
-and `order_by`; request-bound cursors remain stable across local server restarts, while UI routes
-remain separate, human-facing links. Voices are the first workspace and link to their characters,
+LanceDB table versions, so it can browse while extraction commits updates. The contract uses
+canonical resource names, direct Get methods for routed details, cursor-based List methods, and
+`order_by`. Its intentionally small filter grammar accepts `search(<JSON string>)` and unique
+resource-specific `field = <JSON scalar>` clauses joined by uppercase ` AND `; malformed or
+unknown clauses are invalid arguments. Request-bound cursors remain stable across local server
+restarts, while UI routes remain separate, human-facing links. Voices are the first workspace and link to their characters,
 dialogues, selected biography sounds, and stored PNG portraits. Dialogue resources, lines,
 transitions, CRE sounds, engine definitions, and extraction runs each have a focused routed view.
 
@@ -165,7 +167,6 @@ pnpm build
 - [LanceDB Python API](https://lancedb.github.io/lancedb/python/python/)
 - [LanceDB full-text search](https://docs.lancedb.com/search/full-text-search)
 - [Buf code generation](https://buf.build/docs/generate/)
-- [`protoc-gen-pydantic`](https://github.com/cjermain/protoc-gen-pydantic)
 - [Connect for Python](https://connectrpc.com/docs/python/getting-started/)
 - [Connect for Web](https://connectrpc.com/docs/web/getting-started/)
 - [Google API resource design](https://google.aip.dev/121)

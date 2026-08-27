@@ -10,8 +10,6 @@ from typing import TYPE_CHECKING, cast
 
 from connectrpc.code import Code
 from connectrpc.errors import ConnectError
-from lancedb.expr import col, lit
-from pydantic import ValidationError
 
 from bgvoice.model_types import (
     AttributionStatus,
@@ -21,13 +19,6 @@ from bgvoice.model_types import (
     SourceKind,
 )
 from bgvoice.reader import PipelineReader
-from bgvoice.reader_metadata import (
-    class_rows,
-    identifier_symbols,
-    kit_rows,
-    race_rows,
-    sound_slot_group_names,
-)
 from bgvoice.reader_models import (
     CharacterQuery,
     CharacterRow,
@@ -50,27 +41,17 @@ from bgvoice.reader_models import (
     VoiceQuery,
     VoiceRow,
 )
-from bgvoice.reader_views import dialogue_line_row, transition_row
 from bgvoice.storage_records import (
-    CampaignDefinitionRecord,
     CharacterRecord,
-    CharacterSoundRecord,
-    DialogueLineRecord,
     DialogueRecord,
-    DialogueTransitionRecord,
     ExtractionRunRecord,
-    IdentifierDefinitionRecord,
-    KitDefinitionRecord,
-    PortraitImageRecord,
-    SoundSlotGroupRecord,
 )
 from bgvoice.v1 import pipeline_connect
 from bgvoice.v1 import pipeline_pb2 as pb
 from bgvoice.web_contract import (
+    INSTALLATION_NAME,
     Collection,
-    ResourceView,
     decode_page_token,
-    resource_name,
 )
 from bgvoice.web_query import (
     CHARACTER_ORDER,
@@ -78,7 +59,6 @@ from bgvoice.web_query import (
     DEFAULT_PAGE_SIZE,
     DIALOGUE_ORDER,
     IDENTIFIER_ORDER,
-    INSTALLATION_NAME,
     KIT_ORDER,
     LINE_ORDER,
     MAX_PAGE_SIZE,
@@ -93,18 +73,13 @@ from bgvoice.web_query import (
     all_rows,
     next_token,
     parse_order,
-    parse_view,
     read_window,
-    record_by_key,
     resource_key,
     resource_record,
-    validate_parent,
 )
 from bgvoice.web_resources import (
-    PortraitMetadata,
     attribution_publication,
     biography_sounds,
-    campaign,
     character,
     character_class,
     dialogue,
@@ -114,7 +89,6 @@ from bgvoice.web_resources import (
     kit,
     load_portrait_resrefs,
     optional_value,
-    portrait,
     race,
     resolved_character_row,
     resolved_dialogue_row,
@@ -140,7 +114,7 @@ def _invalid_arguments[**P, R](
             return await method(*args, **kwargs)
         except ConnectError:
             raise
-        except (AssertionError, ValidationError, ValueError) as error:
+        except (AssertionError, ValueError) as error:
             raise ConnectError(Code.INVALID_ARGUMENT, str(error)) from error
 
     return checked
@@ -161,12 +135,10 @@ class PipelineService(pipeline_connect.PipelineService):
         page_token: str,
         request_filter: str,
         order_by: str,
-        view: pb.View,
     ) -> ListPage:
-        validate_parent(parent)
+        assert parent == INSTALLATION_NAME, f"parent must be {INSTALLATION_NAME!r}"
         assert page_size >= 0, "page_size must not be negative"
         size = min(page_size or DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE)
-        resource_view = parse_view(view, default=ResourceView.BASIC)
         offset = 0
         if page_token:
             offset = decode_page_token(
@@ -174,10 +146,8 @@ class PipelineService(pipeline_connect.PipelineService):
                 collection,
                 filter=request_filter,
                 order_by=order_by,
-                view=resource_view,
-                page_size=size,
             )
-        return ListPage(size=size, offset=offset, view=resource_view)
+        return ListPage(size=size, offset=offset)
 
     @_invalid_arguments
     async def get_installation(
@@ -234,7 +204,6 @@ class PipelineService(pipeline_connect.PipelineService):
             page_token=request.page_token,
             request_filter=request.filter,
             order_by=request.order_by,
-            view=request.view,
         )
         filters = Filter.parse(request.filter)
         filters.finish()
@@ -287,8 +256,6 @@ class PipelineService(pipeline_connect.PipelineService):
         request: pb.GetVoiceRequest,
         _ctx: RequestContext[pb.GetVoiceRequest, pb.Voice],
     ) -> pb.Voice:
-        parse_view(request.view, default=ResourceView.FULL)
-
         reader = self.reader()
         voice_id = await resource_key(
             reader.voices_table,
@@ -333,7 +300,6 @@ class PipelineService(pipeline_connect.PipelineService):
             page_token=request.page_token,
             request_filter=request.filter,
             order_by=request.order_by,
-            view=request.view,
         )
         filters = Filter.parse(request.filter)
         sort, direction = parse_order(request.order_by, CHARACTER_ORDER)
@@ -370,7 +336,6 @@ class PipelineService(pipeline_connect.PipelineService):
                     records[row.resource_name],
                     portrait_resrefs,
                     optional_value(biographies, row.resource_name),
-                    full=page.view is ResourceView.FULL,
                 )
                 for row in rows
             ],
@@ -391,8 +356,6 @@ class PipelineService(pipeline_connect.PipelineService):
         request: pb.GetCharacterRequest,
         _ctx: RequestContext[pb.GetCharacterRequest, pb.Character],
     ) -> pb.Character:
-        view = parse_view(request.view, default=ResourceView.FULL)
-
         reader = self.reader()
         record = await resource_record(
             reader.characters_table,
@@ -411,7 +374,6 @@ class PipelineService(pipeline_connect.PipelineService):
             record,
             portrait_resrefs,
             optional_value(biographies, record.resource_name),
-            full=view is ResourceView.FULL,
         )
 
     @_invalid_arguments
@@ -427,7 +389,6 @@ class PipelineService(pipeline_connect.PipelineService):
             page_token=request.page_token,
             request_filter=request.filter,
             order_by=request.order_by,
-            view=request.view,
         )
         filters = Filter.parse(request.filter)
         sort, direction = parse_order(request.order_by, DIALOGUE_ORDER)
@@ -449,14 +410,7 @@ class PipelineService(pipeline_connect.PipelineService):
         rows, total = await read_window(page.offset, page.size, load)
         records = await selected_dialogues(self.reader(), [row.resource_name for row in rows])
         return pb.ListDialoguesResponse(
-            dialogues=[
-                dialogue(
-                    row,
-                    records[row.resource_name],
-                    full=page.view is ResourceView.FULL,
-                )
-                for row in rows
-            ],
+            dialogues=[dialogue(row, records[row.resource_name]) for row in rows],
             next_page_token=next_token(
                 Collection.DIALOGUES,
                 request.filter,
@@ -474,8 +428,6 @@ class PipelineService(pipeline_connect.PipelineService):
         request: pb.GetDialogueRequest,
         _ctx: RequestContext[pb.GetDialogueRequest, pb.Dialogue],
     ) -> pb.Dialogue:
-        view = parse_view(request.view, default=ResourceView.FULL)
-
         reader = self.reader()
         record = await resource_record(
             reader.dialogues_table,
@@ -485,11 +437,7 @@ class PipelineService(pipeline_connect.PipelineService):
             request.name,
         )
         row = await resolved_dialogue_row(reader, record)
-        return dialogue(
-            row,
-            record,
-            full=view is ResourceView.FULL,
-        )
+        return dialogue(row, record)
 
     @_invalid_arguments
     async def list_dialogue_lines(
@@ -504,7 +452,6 @@ class PipelineService(pipeline_connect.PipelineService):
             page_token=request.page_token,
             request_filter=request.filter,
             order_by=request.order_by,
-            view=request.view,
         )
         filters = Filter.parse(request.filter)
         sort, direction = parse_order(request.order_by, LINE_ORDER)
@@ -538,38 +485,6 @@ class PipelineService(pipeline_connect.PipelineService):
         )
 
     @_invalid_arguments
-    async def get_dialogue_line(
-        self,
-        request: pb.GetDialogueLineRequest,
-        _ctx: RequestContext[pb.GetDialogueLineRequest, pb.DialogueLine],
-    ) -> pb.DialogueLine:
-        parse_view(request.view, default=ResourceView.FULL)
-        reader = self.reader()
-        record = await resource_record(
-            reader.lines_table,
-            DialogueLineRecord,
-            "id",
-            Collection.DIALOGUE_LINES,
-            request.name,
-        )
-        dialogue, attribution = await asyncio.gather(
-            record_by_key(
-                reader.dialogues_table,
-                DialogueRecord,
-                "resource_name",
-                record.dialogue_resource_name,
-            ),
-            reader.attribution_snapshot(),
-        )
-        return dialogue_line(
-            dialogue_line_row(
-                record,
-                dialogue,
-                attribution.character_count_by_dialogue[record.dialogue_resource_name.casefold()],
-            )
-        )
-
-    @_invalid_arguments
     async def list_character_sounds(
         self,
         request: pb.ListCharacterSoundsRequest,
@@ -582,7 +497,6 @@ class PipelineService(pipeline_connect.PipelineService):
             page_token=request.page_token,
             request_filter=request.filter,
             order_by=request.order_by,
-            view=request.view,
         )
         filters = Filter.parse(request.filter)
         sort, direction = parse_order(request.order_by, SOUND_ORDER)
@@ -614,54 +528,6 @@ class PipelineService(pipeline_connect.PipelineService):
         )
 
     @_invalid_arguments
-    async def get_character_sound(
-        self,
-        request: pb.GetCharacterSoundRequest,
-        _ctx: RequestContext[pb.GetCharacterSoundRequest, pb.CharacterSound],
-    ) -> pb.CharacterSound:
-        parse_view(request.view, default=ResourceView.FULL)
-        reader = self.reader()
-        record = await resource_record(
-            reader.character_sounds_table,
-            CharacterSoundRecord,
-            "id",
-            Collection.CHARACTER_SOUNDS,
-            request.name,
-        )
-        character, identifiers, groups = await asyncio.gather(
-            record_by_key(
-                reader.characters_table,
-                CharacterRecord,
-                "resource_name",
-                record.character_resource_name,
-            ),
-            reader.identifiers_table.query()
-            .where(
-                (col("kind") == lit(IdentifierKind.SOUND_SLOT.value))
-                & (col("value") == lit(record.slot_id))
-            )
-            .to_pydantic(IdentifierDefinitionRecord),
-            reader.sound_slot_groups_table.query().to_pydantic(SoundSlotGroupRecord),
-        )
-        assert character.detail is not None, "character sound belongs to an unavailable CRE"
-        typed_identifiers = cast(list[IdentifierDefinitionRecord], identifiers)
-        typed_groups = cast(list[SoundSlotGroupRecord], groups)
-        symbols = identifier_symbols(typed_identifiers)
-        return sound(
-            SoundRow(
-                key=record.id,
-                character_resource_name=record.character_resource_name,
-                character_name=character.detail.display_name,
-                slot_id=record.slot_id,
-                slot_symbols=list(symbols.get((IdentifierKind.SOUND_SLOT, record.slot_id), ())),
-                slot_groups=sound_slot_group_names(typed_groups, record.slot_id),
-                strref=record.strref,
-                text=record.text,
-                serialized_size=record.serialized_size,
-            )
-        )
-
-    @_invalid_arguments
     async def list_dialogue_transitions(
         self,
         request: pb.ListDialogueTransitionsRequest,
@@ -677,7 +543,6 @@ class PipelineService(pipeline_connect.PipelineService):
             page_token=request.page_token,
             request_filter=request.filter,
             order_by=request.order_by,
-            view=request.view,
         )
         filters = Filter.parse(request.filter)
         sort, direction = parse_order(request.order_by, TRANSITION_ORDER)
@@ -709,140 +574,6 @@ class PipelineService(pipeline_connect.PipelineService):
         )
 
     @_invalid_arguments
-    async def get_dialogue_transition(
-        self,
-        request: pb.GetDialogueTransitionRequest,
-        _ctx: RequestContext[pb.GetDialogueTransitionRequest, pb.DialogueTransition],
-    ) -> pb.DialogueTransition:
-        parse_view(request.view, default=ResourceView.FULL)
-        reader = self.reader()
-        record = await resource_record(
-            reader.transitions_table,
-            DialogueTransitionRecord,
-            "id",
-            Collection.DIALOGUE_TRANSITIONS,
-            request.name,
-        )
-        dialogue = await record_by_key(
-            reader.dialogues_table,
-            DialogueRecord,
-            "resource_name",
-            record.dialogue_resource_name,
-        )
-        return transition(transition_row(record, dialogue))
-
-    @_invalid_arguments
-    async def list_portraits(
-        self,
-        request: pb.ListPortraitsRequest,
-        _ctx: RequestContext[pb.ListPortraitsRequest, pb.ListPortraitsResponse],
-    ) -> pb.ListPortraitsResponse:
-        page = self._page(
-            Collection.PORTRAITS,
-            parent=request.parent,
-            page_size=request.page_size,
-            page_token=request.page_token,
-            request_filter=request.filter,
-            order_by=request.order_by,
-            view=request.view,
-        )
-        filters = Filter.parse(request.filter)
-        filters.finish()
-        sort, direction = parse_order(
-            request.order_by,
-            {
-                "resref": "resref",
-                "source_kind": "source_kind",
-                "width": "width",
-                "height": "height",
-            },
-        )
-        rows = cast(
-            list[PortraitMetadata],
-            await self.reader()
-            .portrait_images_table.query()
-            .select(list(PortraitMetadata.model_fields))
-            .to_pydantic(PortraitMetadata),
-        )
-        if filters.search is not None:
-            search = filters.search.casefold()
-            rows = [
-                row
-                for row in rows
-                if search in " ".join((row.resref, row.source.kind, row.source.path)).casefold()
-            ]
-        field_name = sort or "resref"
-        rows.sort(
-            key=lambda row: (
-                row.resref.casefold()
-                if field_name == "resref"
-                else row.source.kind
-                if field_name == "source_kind"
-                else row.width
-                if field_name == "width"
-                else row.height
-            ),
-            reverse=direction == "desc",
-        )
-        total = len(rows)
-        selected = rows[page.offset : page.offset + page.size]
-        return pb.ListPortraitsResponse(
-            portraits=[portrait(row) for row in selected],
-            next_page_token=next_token(
-                Collection.PORTRAITS,
-                request.filter,
-                request.order_by,
-                page,
-                len(selected),
-                total,
-            ),
-            total_size=total,
-        )
-
-    @_invalid_arguments
-    async def get_portrait(
-        self,
-        request: pb.GetPortraitRequest,
-        _ctx: RequestContext[pb.GetPortraitRequest, pb.Portrait],
-    ) -> pb.Portrait:
-        parse_view(request.view, default=ResourceView.FULL)
-        reader = self.reader()
-        resref = await resource_key(
-            reader.portrait_images_table,
-            "resref",
-            Collection.PORTRAITS,
-            request.name,
-        )
-        rows = cast(
-            list[PortraitMetadata],
-            await reader.portrait_images_table.query()
-            .where(col("resref") == lit(resref))
-            .select(list(PortraitMetadata.model_fields))
-            .limit(2)
-            .to_pydantic(PortraitMetadata),
-        )
-        assert len(rows) == 1, f"duplicate portrait resref: {resref!r}"
-        return portrait(rows[0])
-
-    @_invalid_arguments
-    async def download_portrait(
-        self,
-        request: pb.DownloadPortraitRequest,
-        _ctx: RequestContext[pb.DownloadPortraitRequest, pb.PortraitContent],
-    ) -> pb.PortraitContent:
-        row = await resource_record(
-            self.reader().portrait_images_table,
-            PortraitImageRecord,
-            "resref",
-            Collection.PORTRAITS,
-            request.name,
-        )
-        return pb.PortraitContent(
-            portrait=resource_name(Collection.PORTRAITS, row.resref),
-            png=row.png,
-        )
-
-    @_invalid_arguments
     async def list_races(
         self,
         request: pb.ListRacesRequest,
@@ -855,7 +586,6 @@ class PipelineService(pipeline_connect.PipelineService):
             page_token=request.page_token,
             request_filter=request.filter,
             order_by=request.order_by,
-            view=request.view,
         )
         filters = Filter.parse(request.filter)
         sort, direction = parse_order(request.order_by, RACE_ORDER)
@@ -901,7 +631,7 @@ class PipelineService(pipeline_connect.PipelineService):
         total = len(resources)
         selected = resources[page.offset : page.offset + page.size]
         return pb.ListRacesResponse(
-            races=[race(rows, full=page.view is ResourceView.FULL) for rows in selected],
+            races=[race(rows) for rows in selected],
             next_page_token=next_token(
                 Collection.RACES,
                 request.filter,
@@ -912,22 +642,6 @@ class PipelineService(pipeline_connect.PipelineService):
             ),
             total_size=total,
         )
-
-    @_invalid_arguments
-    async def get_race(
-        self,
-        request: pb.GetRaceRequest,
-        _ctx: RequestContext[pb.GetRaceRequest, pb.Race],
-    ) -> pb.Race:
-        view = parse_view(request.view, default=ResourceView.FULL)
-        rows = race_rows(await self.reader().metadata_snapshot())
-        groups: dict[int, list[RaceRow]] = {}
-        for row in rows:
-            groups.setdefault(row.race_id, []).append(row)
-        for race_id, rows in groups.items():
-            if resource_name(Collection.RACES, str(race_id)) == request.name:
-                return race(rows, full=view is ResourceView.FULL)
-        raise ConnectError(Code.NOT_FOUND, f"resource not found: {request.name}")
 
     @_invalid_arguments
     async def list_character_classes(
@@ -945,7 +659,6 @@ class PipelineService(pipeline_connect.PipelineService):
             page_token=request.page_token,
             request_filter=request.filter,
             order_by=request.order_by,
-            view=request.view,
         )
         filters = Filter.parse(request.filter)
         sort, direction = parse_order(request.order_by, CLASS_ORDER)
@@ -990,9 +703,7 @@ class PipelineService(pipeline_connect.PipelineService):
         total = len(resources)
         selected = resources[page.offset : page.offset + page.size]
         return pb.ListCharacterClassesResponse(
-            character_classes=[
-                character_class(rows, full=page.view is ResourceView.FULL) for rows in selected
-            ],
+            character_classes=[character_class(rows) for rows in selected],
             next_page_token=next_token(
                 Collection.CHARACTER_CLASSES,
                 request.filter,
@@ -1003,22 +714,6 @@ class PipelineService(pipeline_connect.PipelineService):
             ),
             total_size=total,
         )
-
-    @_invalid_arguments
-    async def get_character_class(
-        self,
-        request: pb.GetCharacterClassRequest,
-        _ctx: RequestContext[pb.GetCharacterClassRequest, pb.CharacterClass],
-    ) -> pb.CharacterClass:
-        view = parse_view(request.view, default=ResourceView.FULL)
-        rows = class_rows(await self.reader().metadata_snapshot())
-        groups: dict[int, list[ClassRow]] = {}
-        for row in rows:
-            groups.setdefault(row.class_id, []).append(row)
-        for class_id, rows in groups.items():
-            if resource_name(Collection.CHARACTER_CLASSES, str(class_id)) == request.name:
-                return character_class(rows, full=view is ResourceView.FULL)
-        raise ConnectError(Code.NOT_FOUND, f"resource not found: {request.name}")
 
     @_invalid_arguments
     async def list_kits(
@@ -1033,7 +728,6 @@ class PipelineService(pipeline_connect.PipelineService):
             page_token=request.page_token,
             request_filter=request.filter,
             order_by=request.order_by,
-            view=request.view,
         )
         filters = Filter.parse(request.filter)
         sort, direction = parse_order(request.order_by, KIT_ORDER)
@@ -1065,26 +759,6 @@ class PipelineService(pipeline_connect.PipelineService):
         )
 
     @_invalid_arguments
-    async def get_kit(
-        self,
-        request: pb.GetKitRequest,
-        _ctx: RequestContext[pb.GetKitRequest, pb.Kit],
-    ) -> pb.Kit:
-        parse_view(request.view, default=ResourceView.FULL)
-        reader = self.reader()
-        record = await resource_record(
-            reader.kits_table,
-            KitDefinitionRecord,
-            "key",
-            Collection.KITS,
-            request.name,
-        )
-        rows = kit_rows(await reader.metadata_snapshot())
-        row = next((item for item in rows if item.key == record.key), None)
-        assert row is not None, f"indexed kit {record.key!r} is missing from metadata"
-        return kit(row)
-
-    @_invalid_arguments
     async def list_identifier_definitions(
         self,
         request: pb.ListIdentifierDefinitionsRequest,
@@ -1100,7 +774,6 @@ class PipelineService(pipeline_connect.PipelineService):
             page_token=request.page_token,
             request_filter=request.filter,
             order_by=request.order_by,
-            view=request.view,
         )
         filters = Filter.parse(request.filter)
         display_order = request.order_by == "display_name" or request.order_by.startswith(
@@ -1154,94 +827,6 @@ class PipelineService(pipeline_connect.PipelineService):
         )
 
     @_invalid_arguments
-    async def get_identifier_definition(
-        self,
-        request: pb.GetIdentifierDefinitionRequest,
-        _ctx: RequestContext[pb.GetIdentifierDefinitionRequest, pb.IdentifierDefinition],
-    ) -> pb.IdentifierDefinition:
-        parse_view(request.view, default=ResourceView.FULL)
-        record = await resource_record(
-            self.reader().identifiers_table,
-            IdentifierDefinitionRecord,
-            "key",
-            Collection.IDENTIFIER_DEFINITIONS,
-            request.name,
-        )
-        return identifier(IdentifierRow.model_validate(record, from_attributes=True))
-
-    @_invalid_arguments
-    async def list_campaigns(
-        self,
-        request: pb.ListCampaignsRequest,
-        _ctx: RequestContext[pb.ListCampaignsRequest, pb.ListCampaignsResponse],
-    ) -> pb.ListCampaignsResponse:
-        page = self._page(
-            Collection.CAMPAIGNS,
-            parent=request.parent,
-            page_size=request.page_size,
-            page_token=request.page_token,
-            request_filter=request.filter,
-            order_by=request.order_by,
-            view=request.view,
-        )
-        filters = Filter.parse(request.filter)
-        filters.finish()
-        sort, direction = parse_order(
-            request.order_by,
-            {
-                "campaign_id": "campaign_id",
-                "display_name": "campaign_id",
-                "ordinal": "ordinal",
-            },
-        )
-        rows = cast(
-            list[CampaignDefinitionRecord],
-            await self.reader().campaigns_table.query().to_pydantic(CampaignDefinitionRecord),
-        )
-        if filters.search is not None:
-            search = filters.search.casefold()
-            rows = [
-                row
-                for row in rows
-                if search in f"{row.campaign_id} {row.source_resource}".casefold()
-            ]
-        field_name = sort or "ordinal"
-        rows.sort(
-            key=lambda row: row.ordinal if field_name == "ordinal" else row.campaign_id.casefold(),
-            reverse=direction == "desc",
-        )
-        total = len(rows)
-        selected = rows[page.offset : page.offset + page.size]
-        return pb.ListCampaignsResponse(
-            campaigns=[campaign(row) for row in selected],
-            next_page_token=next_token(
-                Collection.CAMPAIGNS,
-                request.filter,
-                request.order_by,
-                page,
-                len(selected),
-                total,
-            ),
-            total_size=total,
-        )
-
-    @_invalid_arguments
-    async def get_campaign(
-        self,
-        request: pb.GetCampaignRequest,
-        _ctx: RequestContext[pb.GetCampaignRequest, pb.Campaign],
-    ) -> pb.Campaign:
-        parse_view(request.view, default=ResourceView.FULL)
-        row = await resource_record(
-            self.reader().campaigns_table,
-            CampaignDefinitionRecord,
-            "campaign_id",
-            Collection.CAMPAIGNS,
-            request.name,
-        )
-        return campaign(row)
-
-    @_invalid_arguments
     async def list_extraction_runs(
         self,
         request: pb.ListExtractionRunsRequest,
@@ -1257,7 +842,6 @@ class PipelineService(pipeline_connect.PipelineService):
             page_token=request.page_token,
             request_filter=request.filter,
             order_by=request.order_by,
-            view=request.view,
         )
         filters = Filter.parse(request.filter)
         filters.finish()
@@ -1307,22 +891,6 @@ class PipelineService(pipeline_connect.PipelineService):
             ),
             total_size=total,
         )
-
-    @_invalid_arguments
-    async def get_extraction_run(
-        self,
-        request: pb.GetExtractionRunRequest,
-        _ctx: RequestContext[pb.GetExtractionRunRequest, pb.ExtractionRun],
-    ) -> pb.ExtractionRun:
-        parse_view(request.view, default=ResourceView.FULL)
-        row = await resource_record(
-            self.reader().runs_table,
-            ExtractionRunRecord,
-            "id",
-            Collection.EXTRACTION_RUNS,
-            request.name,
-        )
-        return extraction_run(row)
 
 
 def _groups[Row, Key: Hashable](

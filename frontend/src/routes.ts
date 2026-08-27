@@ -4,7 +4,7 @@ import type { MouseEvent } from "react";
 import { INSTALLATION_NAME } from "./api";
 
 export type AppRoute =
-  | { name: "voices"; voiceId: string | null }
+  | { name: "voices"; voiceName: string | null }
   | { name: "characters"; resourceName: string | null }
   | { name: "dialogues"; resourceName: string | null }
   | { name: "dialogue-lines" }
@@ -24,7 +24,7 @@ const NOT_FOUND = { name: "not-found" } as const;
 const COLLECTION_ROUTES = {
   voices: (id?: string): AppRoute => ({
     name: "voices",
-    voiceId: id == null ? null : canonicalName("voices", id),
+    voiceName: id == null ? null : canonicalName("voices", id),
   }),
   characters: (id?: string): AppRoute => ({
     name: "characters",
@@ -51,7 +51,7 @@ const DEFINITION_ROUTES = {
 } satisfies Record<string, AppRoute>;
 
 export function routeFromPath(pathname: string = window.location.pathname): AppRoute {
-  const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
+  const segments = pathname.split("/").filter(Boolean);
   if (segments.length === 0) return COLLECTION_ROUTES.voices();
 
   const [collection, resource] = segments;
@@ -83,7 +83,7 @@ export function resourceId(resourceName: string): string {
 function resourcePath(collection: string, name?: string): string {
   return name == null
     ? `/${collection}`
-    : `/${collection}/${encodeURIComponent(resourceId(name))}`;
+    : `/${collection}/${resourceId(name)}`;
 }
 
 function canonicalName(collection: keyof typeof COLLECTION_ROUTES, id: string): string {

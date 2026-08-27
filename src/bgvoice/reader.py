@@ -255,18 +255,9 @@ class PipelineReader:
         return _published_attribution(run, attributions, voices)
 
     async def stats(self) -> PipelineStats:
-        character_rows, dialogue_rows, run_rows, metadata = await asyncio.gather(
+        character_rows, dialogue_rows, metadata = await asyncio.gather(
             self.characters_table.query().to_pydantic(CharacterRecord),
             self.dialogues_table.query().to_pydantic(DialogueRecord),
-            self.runs_table.query()
-            .order_by(
-                [
-                    ColumnOrdering(column_name="started_at", ascending=False, nulls_first=False),
-                    ColumnOrdering(column_name="id", ascending=False, nulls_first=False),
-                ]
-            )
-            .limit(8)
-            .to_pydantic(ExtractionRunRecord),
             self.metadata_snapshot(),
         )
         characters = cast(list[CharacterRecord], character_rows)
@@ -276,7 +267,6 @@ class PipelineReader:
             self.path,
             characters,
             dialogues,
-            cast(list[ExtractionRunRecord], run_rows),
             metadata,
             attribution,
             await self._stats_table_counts(characters, dialogues),

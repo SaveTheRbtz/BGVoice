@@ -18,7 +18,7 @@ from connectrpc.protocol import ProtocolType
 from connectrpc.server import ConnectASGIApplication, ConnectWSGIApplication, Endpoint, EndpointSync
 from pyqwest import Client, SyncClient
 
-from .pipeline_pb2 import Campaign, Character, CharacterClass, CharacterSound, Dialogue, DialogueLine, DialogueTransition, DownloadPortraitRequest, ExtractionRun, GetCampaignRequest, GetCharacterClassRequest, GetCharacterRequest, GetCharacterSoundRequest, GetDialogueLineRequest, GetDialogueRequest, GetDialogueTransitionRequest, GetExtractionRunRequest, GetIdentifierDefinitionRequest, GetInstallationRequest, GetKitRequest, GetPortraitRequest, GetRaceRequest, GetVoiceRequest, IdentifierDefinition, Installation, Kit, ListCampaignsRequest, ListCampaignsResponse, ListCharacterClassesRequest, ListCharacterClassesResponse, ListCharacterSoundsRequest, ListCharacterSoundsResponse, ListCharactersRequest, ListCharactersResponse, ListDialogueLinesRequest, ListDialogueLinesResponse, ListDialogueTransitionsRequest, ListDialogueTransitionsResponse, ListDialoguesRequest, ListDialoguesResponse, ListExtractionRunsRequest, ListExtractionRunsResponse, ListIdentifierDefinitionsRequest, ListIdentifierDefinitionsResponse, ListKitsRequest, ListKitsResponse, ListPortraitsRequest, ListPortraitsResponse, ListRacesRequest, ListRacesResponse, ListVoicesRequest, ListVoicesResponse, Portrait, PortraitContent, Race, Voice
+from .pipeline_pb2 import Character, Dialogue, GetCharacterRequest, GetDialogueRequest, GetInstallationRequest, GetVoiceRequest, Installation, ListCharacterClassesRequest, ListCharacterClassesResponse, ListCharacterSoundsRequest, ListCharacterSoundsResponse, ListCharactersRequest, ListCharactersResponse, ListDialogueLinesRequest, ListDialogueLinesResponse, ListDialogueTransitionsRequest, ListDialogueTransitionsResponse, ListDialoguesRequest, ListDialoguesResponse, ListExtractionRunsRequest, ListExtractionRunsResponse, ListIdentifierDefinitionsRequest, ListIdentifierDefinitionsResponse, ListKitsRequest, ListKitsResponse, ListRacesRequest, ListRacesResponse, ListVoicesRequest, ListVoicesResponse, Voice
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Iterable, Mapping
@@ -59,64 +59,25 @@ class PipelineService(Protocol):
     async def list_dialogue_lines(self, request: ListDialogueLinesRequest, ctx: RequestContext[ListDialogueLinesRequest, ListDialogueLinesResponse]) -> ListDialogueLinesResponse:
         raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
 
-    async def get_dialogue_line(self, request: GetDialogueLineRequest, ctx: RequestContext[GetDialogueLineRequest, DialogueLine]) -> DialogueLine:
-        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
-
     async def list_character_sounds(self, request: ListCharacterSoundsRequest, ctx: RequestContext[ListCharacterSoundsRequest, ListCharacterSoundsResponse]) -> ListCharacterSoundsResponse:
-        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
-
-    async def get_character_sound(self, request: GetCharacterSoundRequest, ctx: RequestContext[GetCharacterSoundRequest, CharacterSound]) -> CharacterSound:
         raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
 
     async def list_dialogue_transitions(self, request: ListDialogueTransitionsRequest, ctx: RequestContext[ListDialogueTransitionsRequest, ListDialogueTransitionsResponse]) -> ListDialogueTransitionsResponse:
         raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
 
-    async def get_dialogue_transition(self, request: GetDialogueTransitionRequest, ctx: RequestContext[GetDialogueTransitionRequest, DialogueTransition]) -> DialogueTransition:
-        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
-
-    async def list_portraits(self, request: ListPortraitsRequest, ctx: RequestContext[ListPortraitsRequest, ListPortraitsResponse]) -> ListPortraitsResponse:
-        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
-
-    async def get_portrait(self, request: GetPortraitRequest, ctx: RequestContext[GetPortraitRequest, Portrait]) -> Portrait:
-        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
-
-    async def download_portrait(self, request: DownloadPortraitRequest, ctx: RequestContext[DownloadPortraitRequest, PortraitContent]) -> PortraitContent:
-        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
-
     async def list_races(self, request: ListRacesRequest, ctx: RequestContext[ListRacesRequest, ListRacesResponse]) -> ListRacesResponse:
-        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
-
-    async def get_race(self, request: GetRaceRequest, ctx: RequestContext[GetRaceRequest, Race]) -> Race:
         raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
 
     async def list_character_classes(self, request: ListCharacterClassesRequest, ctx: RequestContext[ListCharacterClassesRequest, ListCharacterClassesResponse]) -> ListCharacterClassesResponse:
         raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
 
-    async def get_character_class(self, request: GetCharacterClassRequest, ctx: RequestContext[GetCharacterClassRequest, CharacterClass]) -> CharacterClass:
-        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
-
     async def list_kits(self, request: ListKitsRequest, ctx: RequestContext[ListKitsRequest, ListKitsResponse]) -> ListKitsResponse:
-        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
-
-    async def get_kit(self, request: GetKitRequest, ctx: RequestContext[GetKitRequest, Kit]) -> Kit:
         raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
 
     async def list_identifier_definitions(self, request: ListIdentifierDefinitionsRequest, ctx: RequestContext[ListIdentifierDefinitionsRequest, ListIdentifierDefinitionsResponse]) -> ListIdentifierDefinitionsResponse:
         raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
 
-    async def get_identifier_definition(self, request: GetIdentifierDefinitionRequest, ctx: RequestContext[GetIdentifierDefinitionRequest, IdentifierDefinition]) -> IdentifierDefinition:
-        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
-
-    async def list_campaigns(self, request: ListCampaignsRequest, ctx: RequestContext[ListCampaignsRequest, ListCampaignsResponse]) -> ListCampaignsResponse:
-        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
-
-    async def get_campaign(self, request: GetCampaignRequest, ctx: RequestContext[GetCampaignRequest, Campaign]) -> Campaign:
-        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
-
     async def list_extraction_runs(self, request: ListExtractionRunsRequest, ctx: RequestContext[ListExtractionRunsRequest, ListExtractionRunsResponse]) -> ListExtractionRunsResponse:
-        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
-
-    async def get_extraction_run(self, request: GetExtractionRunRequest, ctx: RequestContext[GetExtractionRunRequest, ExtractionRun]) -> ExtractionRun:
         raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
 
 
@@ -213,16 +174,6 @@ class PipelineServiceASGIApplication(ConnectASGIApplication[PipelineService]):
                     ),
                     function=svc.list_dialogue_lines,
                 ),
-                "/bgvoice.v1.PipelineService/GetDialogueLine": Endpoint.unary(
-                    method=MethodInfo(
-                        name="GetDialogueLine",
-                        service_name="bgvoice.v1.PipelineService",
-                        input=GetDialogueLineRequest,
-                        output=DialogueLine,
-                        idempotency_level=IdempotencyLevel.UNKNOWN,
-                    ),
-                    function=svc.get_dialogue_line,
-                ),
                 "/bgvoice.v1.PipelineService/ListCharacterSounds": Endpoint.unary(
                     method=MethodInfo(
                         name="ListCharacterSounds",
@@ -232,16 +183,6 @@ class PipelineServiceASGIApplication(ConnectASGIApplication[PipelineService]):
                         idempotency_level=IdempotencyLevel.UNKNOWN,
                     ),
                     function=svc.list_character_sounds,
-                ),
-                "/bgvoice.v1.PipelineService/GetCharacterSound": Endpoint.unary(
-                    method=MethodInfo(
-                        name="GetCharacterSound",
-                        service_name="bgvoice.v1.PipelineService",
-                        input=GetCharacterSoundRequest,
-                        output=CharacterSound,
-                        idempotency_level=IdempotencyLevel.UNKNOWN,
-                    ),
-                    function=svc.get_character_sound,
                 ),
                 "/bgvoice.v1.PipelineService/ListDialogueTransitions": Endpoint.unary(
                     method=MethodInfo(
@@ -253,46 +194,6 @@ class PipelineServiceASGIApplication(ConnectASGIApplication[PipelineService]):
                     ),
                     function=svc.list_dialogue_transitions,
                 ),
-                "/bgvoice.v1.PipelineService/GetDialogueTransition": Endpoint.unary(
-                    method=MethodInfo(
-                        name="GetDialogueTransition",
-                        service_name="bgvoice.v1.PipelineService",
-                        input=GetDialogueTransitionRequest,
-                        output=DialogueTransition,
-                        idempotency_level=IdempotencyLevel.UNKNOWN,
-                    ),
-                    function=svc.get_dialogue_transition,
-                ),
-                "/bgvoice.v1.PipelineService/ListPortraits": Endpoint.unary(
-                    method=MethodInfo(
-                        name="ListPortraits",
-                        service_name="bgvoice.v1.PipelineService",
-                        input=ListPortraitsRequest,
-                        output=ListPortraitsResponse,
-                        idempotency_level=IdempotencyLevel.UNKNOWN,
-                    ),
-                    function=svc.list_portraits,
-                ),
-                "/bgvoice.v1.PipelineService/GetPortrait": Endpoint.unary(
-                    method=MethodInfo(
-                        name="GetPortrait",
-                        service_name="bgvoice.v1.PipelineService",
-                        input=GetPortraitRequest,
-                        output=Portrait,
-                        idempotency_level=IdempotencyLevel.UNKNOWN,
-                    ),
-                    function=svc.get_portrait,
-                ),
-                "/bgvoice.v1.PipelineService/DownloadPortrait": Endpoint.unary(
-                    method=MethodInfo(
-                        name="DownloadPortrait",
-                        service_name="bgvoice.v1.PipelineService",
-                        input=DownloadPortraitRequest,
-                        output=PortraitContent,
-                        idempotency_level=IdempotencyLevel.UNKNOWN,
-                    ),
-                    function=svc.download_portrait,
-                ),
                 "/bgvoice.v1.PipelineService/ListRaces": Endpoint.unary(
                     method=MethodInfo(
                         name="ListRaces",
@@ -302,16 +203,6 @@ class PipelineServiceASGIApplication(ConnectASGIApplication[PipelineService]):
                         idempotency_level=IdempotencyLevel.UNKNOWN,
                     ),
                     function=svc.list_races,
-                ),
-                "/bgvoice.v1.PipelineService/GetRace": Endpoint.unary(
-                    method=MethodInfo(
-                        name="GetRace",
-                        service_name="bgvoice.v1.PipelineService",
-                        input=GetRaceRequest,
-                        output=Race,
-                        idempotency_level=IdempotencyLevel.UNKNOWN,
-                    ),
-                    function=svc.get_race,
                 ),
                 "/bgvoice.v1.PipelineService/ListCharacterClasses": Endpoint.unary(
                     method=MethodInfo(
@@ -323,16 +214,6 @@ class PipelineServiceASGIApplication(ConnectASGIApplication[PipelineService]):
                     ),
                     function=svc.list_character_classes,
                 ),
-                "/bgvoice.v1.PipelineService/GetCharacterClass": Endpoint.unary(
-                    method=MethodInfo(
-                        name="GetCharacterClass",
-                        service_name="bgvoice.v1.PipelineService",
-                        input=GetCharacterClassRequest,
-                        output=CharacterClass,
-                        idempotency_level=IdempotencyLevel.UNKNOWN,
-                    ),
-                    function=svc.get_character_class,
-                ),
                 "/bgvoice.v1.PipelineService/ListKits": Endpoint.unary(
                     method=MethodInfo(
                         name="ListKits",
@@ -342,16 +223,6 @@ class PipelineServiceASGIApplication(ConnectASGIApplication[PipelineService]):
                         idempotency_level=IdempotencyLevel.UNKNOWN,
                     ),
                     function=svc.list_kits,
-                ),
-                "/bgvoice.v1.PipelineService/GetKit": Endpoint.unary(
-                    method=MethodInfo(
-                        name="GetKit",
-                        service_name="bgvoice.v1.PipelineService",
-                        input=GetKitRequest,
-                        output=Kit,
-                        idempotency_level=IdempotencyLevel.UNKNOWN,
-                    ),
-                    function=svc.get_kit,
                 ),
                 "/bgvoice.v1.PipelineService/ListIdentifierDefinitions": Endpoint.unary(
                     method=MethodInfo(
@@ -363,36 +234,6 @@ class PipelineServiceASGIApplication(ConnectASGIApplication[PipelineService]):
                     ),
                     function=svc.list_identifier_definitions,
                 ),
-                "/bgvoice.v1.PipelineService/GetIdentifierDefinition": Endpoint.unary(
-                    method=MethodInfo(
-                        name="GetIdentifierDefinition",
-                        service_name="bgvoice.v1.PipelineService",
-                        input=GetIdentifierDefinitionRequest,
-                        output=IdentifierDefinition,
-                        idempotency_level=IdempotencyLevel.UNKNOWN,
-                    ),
-                    function=svc.get_identifier_definition,
-                ),
-                "/bgvoice.v1.PipelineService/ListCampaigns": Endpoint.unary(
-                    method=MethodInfo(
-                        name="ListCampaigns",
-                        service_name="bgvoice.v1.PipelineService",
-                        input=ListCampaignsRequest,
-                        output=ListCampaignsResponse,
-                        idempotency_level=IdempotencyLevel.UNKNOWN,
-                    ),
-                    function=svc.list_campaigns,
-                ),
-                "/bgvoice.v1.PipelineService/GetCampaign": Endpoint.unary(
-                    method=MethodInfo(
-                        name="GetCampaign",
-                        service_name="bgvoice.v1.PipelineService",
-                        input=GetCampaignRequest,
-                        output=Campaign,
-                        idempotency_level=IdempotencyLevel.UNKNOWN,
-                    ),
-                    function=svc.get_campaign,
-                ),
                 "/bgvoice.v1.PipelineService/ListExtractionRuns": Endpoint.unary(
                     method=MethodInfo(
                         name="ListExtractionRuns",
@@ -402,16 +243,6 @@ class PipelineServiceASGIApplication(ConnectASGIApplication[PipelineService]):
                         idempotency_level=IdempotencyLevel.UNKNOWN,
                     ),
                     function=svc.list_extraction_runs,
-                ),
-                "/bgvoice.v1.PipelineService/GetExtractionRun": Endpoint.unary(
-                    method=MethodInfo(
-                        name="GetExtractionRun",
-                        service_name="bgvoice.v1.PipelineService",
-                        input=GetExtractionRunRequest,
-                        output=ExtractionRun,
-                        idempotency_level=IdempotencyLevel.UNKNOWN,
-                    ),
-                    function=svc.get_extraction_run,
                 ),
             },
             interceptors=interceptors,
@@ -611,26 +442,6 @@ class PipelineServiceClient(ConnectClient):
             timeout_ms=timeout_ms,
         )
 
-    async def get_dialogue_line(
-        self,
-        request: GetDialogueLineRequest,
-        *,
-        headers: Headers | Mapping[str, str] | None = None, 
-        timeout_ms: int | None = None,
-    ) -> DialogueLine:
-        return await self.execute_unary(
-            request=request,
-            method=MethodInfo(
-                name="GetDialogueLine",
-                service_name="bgvoice.v1.PipelineService",
-                input=GetDialogueLineRequest,
-                output=DialogueLine,
-                idempotency_level=IdempotencyLevel.UNKNOWN,
-            ),
-            headers=headers,
-            timeout_ms=timeout_ms,
-        )
-
     async def list_character_sounds(
         self,
         request: ListCharacterSoundsRequest,
@@ -645,26 +456,6 @@ class PipelineServiceClient(ConnectClient):
                 service_name="bgvoice.v1.PipelineService",
                 input=ListCharacterSoundsRequest,
                 output=ListCharacterSoundsResponse,
-                idempotency_level=IdempotencyLevel.UNKNOWN,
-            ),
-            headers=headers,
-            timeout_ms=timeout_ms,
-        )
-
-    async def get_character_sound(
-        self,
-        request: GetCharacterSoundRequest,
-        *,
-        headers: Headers | Mapping[str, str] | None = None, 
-        timeout_ms: int | None = None,
-    ) -> CharacterSound:
-        return await self.execute_unary(
-            request=request,
-            method=MethodInfo(
-                name="GetCharacterSound",
-                service_name="bgvoice.v1.PipelineService",
-                input=GetCharacterSoundRequest,
-                output=CharacterSound,
                 idempotency_level=IdempotencyLevel.UNKNOWN,
             ),
             headers=headers,
@@ -691,86 +482,6 @@ class PipelineServiceClient(ConnectClient):
             timeout_ms=timeout_ms,
         )
 
-    async def get_dialogue_transition(
-        self,
-        request: GetDialogueTransitionRequest,
-        *,
-        headers: Headers | Mapping[str, str] | None = None, 
-        timeout_ms: int | None = None,
-    ) -> DialogueTransition:
-        return await self.execute_unary(
-            request=request,
-            method=MethodInfo(
-                name="GetDialogueTransition",
-                service_name="bgvoice.v1.PipelineService",
-                input=GetDialogueTransitionRequest,
-                output=DialogueTransition,
-                idempotency_level=IdempotencyLevel.UNKNOWN,
-            ),
-            headers=headers,
-            timeout_ms=timeout_ms,
-        )
-
-    async def list_portraits(
-        self,
-        request: ListPortraitsRequest,
-        *,
-        headers: Headers | Mapping[str, str] | None = None, 
-        timeout_ms: int | None = None,
-    ) -> ListPortraitsResponse:
-        return await self.execute_unary(
-            request=request,
-            method=MethodInfo(
-                name="ListPortraits",
-                service_name="bgvoice.v1.PipelineService",
-                input=ListPortraitsRequest,
-                output=ListPortraitsResponse,
-                idempotency_level=IdempotencyLevel.UNKNOWN,
-            ),
-            headers=headers,
-            timeout_ms=timeout_ms,
-        )
-
-    async def get_portrait(
-        self,
-        request: GetPortraitRequest,
-        *,
-        headers: Headers | Mapping[str, str] | None = None, 
-        timeout_ms: int | None = None,
-    ) -> Portrait:
-        return await self.execute_unary(
-            request=request,
-            method=MethodInfo(
-                name="GetPortrait",
-                service_name="bgvoice.v1.PipelineService",
-                input=GetPortraitRequest,
-                output=Portrait,
-                idempotency_level=IdempotencyLevel.UNKNOWN,
-            ),
-            headers=headers,
-            timeout_ms=timeout_ms,
-        )
-
-    async def download_portrait(
-        self,
-        request: DownloadPortraitRequest,
-        *,
-        headers: Headers | Mapping[str, str] | None = None, 
-        timeout_ms: int | None = None,
-    ) -> PortraitContent:
-        return await self.execute_unary(
-            request=request,
-            method=MethodInfo(
-                name="DownloadPortrait",
-                service_name="bgvoice.v1.PipelineService",
-                input=DownloadPortraitRequest,
-                output=PortraitContent,
-                idempotency_level=IdempotencyLevel.UNKNOWN,
-            ),
-            headers=headers,
-            timeout_ms=timeout_ms,
-        )
-
     async def list_races(
         self,
         request: ListRacesRequest,
@@ -785,26 +496,6 @@ class PipelineServiceClient(ConnectClient):
                 service_name="bgvoice.v1.PipelineService",
                 input=ListRacesRequest,
                 output=ListRacesResponse,
-                idempotency_level=IdempotencyLevel.UNKNOWN,
-            ),
-            headers=headers,
-            timeout_ms=timeout_ms,
-        )
-
-    async def get_race(
-        self,
-        request: GetRaceRequest,
-        *,
-        headers: Headers | Mapping[str, str] | None = None, 
-        timeout_ms: int | None = None,
-    ) -> Race:
-        return await self.execute_unary(
-            request=request,
-            method=MethodInfo(
-                name="GetRace",
-                service_name="bgvoice.v1.PipelineService",
-                input=GetRaceRequest,
-                output=Race,
                 idempotency_level=IdempotencyLevel.UNKNOWN,
             ),
             headers=headers,
@@ -831,26 +522,6 @@ class PipelineServiceClient(ConnectClient):
             timeout_ms=timeout_ms,
         )
 
-    async def get_character_class(
-        self,
-        request: GetCharacterClassRequest,
-        *,
-        headers: Headers | Mapping[str, str] | None = None, 
-        timeout_ms: int | None = None,
-    ) -> CharacterClass:
-        return await self.execute_unary(
-            request=request,
-            method=MethodInfo(
-                name="GetCharacterClass",
-                service_name="bgvoice.v1.PipelineService",
-                input=GetCharacterClassRequest,
-                output=CharacterClass,
-                idempotency_level=IdempotencyLevel.UNKNOWN,
-            ),
-            headers=headers,
-            timeout_ms=timeout_ms,
-        )
-
     async def list_kits(
         self,
         request: ListKitsRequest,
@@ -865,26 +536,6 @@ class PipelineServiceClient(ConnectClient):
                 service_name="bgvoice.v1.PipelineService",
                 input=ListKitsRequest,
                 output=ListKitsResponse,
-                idempotency_level=IdempotencyLevel.UNKNOWN,
-            ),
-            headers=headers,
-            timeout_ms=timeout_ms,
-        )
-
-    async def get_kit(
-        self,
-        request: GetKitRequest,
-        *,
-        headers: Headers | Mapping[str, str] | None = None, 
-        timeout_ms: int | None = None,
-    ) -> Kit:
-        return await self.execute_unary(
-            request=request,
-            method=MethodInfo(
-                name="GetKit",
-                service_name="bgvoice.v1.PipelineService",
-                input=GetKitRequest,
-                output=Kit,
                 idempotency_level=IdempotencyLevel.UNKNOWN,
             ),
             headers=headers,
@@ -911,66 +562,6 @@ class PipelineServiceClient(ConnectClient):
             timeout_ms=timeout_ms,
         )
 
-    async def get_identifier_definition(
-        self,
-        request: GetIdentifierDefinitionRequest,
-        *,
-        headers: Headers | Mapping[str, str] | None = None, 
-        timeout_ms: int | None = None,
-    ) -> IdentifierDefinition:
-        return await self.execute_unary(
-            request=request,
-            method=MethodInfo(
-                name="GetIdentifierDefinition",
-                service_name="bgvoice.v1.PipelineService",
-                input=GetIdentifierDefinitionRequest,
-                output=IdentifierDefinition,
-                idempotency_level=IdempotencyLevel.UNKNOWN,
-            ),
-            headers=headers,
-            timeout_ms=timeout_ms,
-        )
-
-    async def list_campaigns(
-        self,
-        request: ListCampaignsRequest,
-        *,
-        headers: Headers | Mapping[str, str] | None = None, 
-        timeout_ms: int | None = None,
-    ) -> ListCampaignsResponse:
-        return await self.execute_unary(
-            request=request,
-            method=MethodInfo(
-                name="ListCampaigns",
-                service_name="bgvoice.v1.PipelineService",
-                input=ListCampaignsRequest,
-                output=ListCampaignsResponse,
-                idempotency_level=IdempotencyLevel.UNKNOWN,
-            ),
-            headers=headers,
-            timeout_ms=timeout_ms,
-        )
-
-    async def get_campaign(
-        self,
-        request: GetCampaignRequest,
-        *,
-        headers: Headers | Mapping[str, str] | None = None, 
-        timeout_ms: int | None = None,
-    ) -> Campaign:
-        return await self.execute_unary(
-            request=request,
-            method=MethodInfo(
-                name="GetCampaign",
-                service_name="bgvoice.v1.PipelineService",
-                input=GetCampaignRequest,
-                output=Campaign,
-                idempotency_level=IdempotencyLevel.UNKNOWN,
-            ),
-            headers=headers,
-            timeout_ms=timeout_ms,
-        )
-
     async def list_extraction_runs(
         self,
         request: ListExtractionRunsRequest,
@@ -985,26 +576,6 @@ class PipelineServiceClient(ConnectClient):
                 service_name="bgvoice.v1.PipelineService",
                 input=ListExtractionRunsRequest,
                 output=ListExtractionRunsResponse,
-                idempotency_level=IdempotencyLevel.UNKNOWN,
-            ),
-            headers=headers,
-            timeout_ms=timeout_ms,
-        )
-
-    async def get_extraction_run(
-        self,
-        request: GetExtractionRunRequest,
-        *,
-        headers: Headers | Mapping[str, str] | None = None, 
-        timeout_ms: int | None = None,
-    ) -> ExtractionRun:
-        return await self.execute_unary(
-            request=request,
-            method=MethodInfo(
-                name="GetExtractionRun",
-                service_name="bgvoice.v1.PipelineService",
-                input=GetExtractionRunRequest,
-                output=ExtractionRun,
                 idempotency_level=IdempotencyLevel.UNKNOWN,
             ),
             headers=headers,
@@ -1036,64 +607,25 @@ class PipelineServiceSync(Protocol):
     def list_dialogue_lines(self, request: ListDialogueLinesRequest, ctx: RequestContext[ListDialogueLinesRequest, ListDialogueLinesResponse]) -> ListDialogueLinesResponse:
         raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
 
-    def get_dialogue_line(self, request: GetDialogueLineRequest, ctx: RequestContext[GetDialogueLineRequest, DialogueLine]) -> DialogueLine:
-        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
-
     def list_character_sounds(self, request: ListCharacterSoundsRequest, ctx: RequestContext[ListCharacterSoundsRequest, ListCharacterSoundsResponse]) -> ListCharacterSoundsResponse:
-        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
-
-    def get_character_sound(self, request: GetCharacterSoundRequest, ctx: RequestContext[GetCharacterSoundRequest, CharacterSound]) -> CharacterSound:
         raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
 
     def list_dialogue_transitions(self, request: ListDialogueTransitionsRequest, ctx: RequestContext[ListDialogueTransitionsRequest, ListDialogueTransitionsResponse]) -> ListDialogueTransitionsResponse:
         raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
 
-    def get_dialogue_transition(self, request: GetDialogueTransitionRequest, ctx: RequestContext[GetDialogueTransitionRequest, DialogueTransition]) -> DialogueTransition:
-        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
-
-    def list_portraits(self, request: ListPortraitsRequest, ctx: RequestContext[ListPortraitsRequest, ListPortraitsResponse]) -> ListPortraitsResponse:
-        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
-
-    def get_portrait(self, request: GetPortraitRequest, ctx: RequestContext[GetPortraitRequest, Portrait]) -> Portrait:
-        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
-
-    def download_portrait(self, request: DownloadPortraitRequest, ctx: RequestContext[DownloadPortraitRequest, PortraitContent]) -> PortraitContent:
-        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
-
     def list_races(self, request: ListRacesRequest, ctx: RequestContext[ListRacesRequest, ListRacesResponse]) -> ListRacesResponse:
-        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
-
-    def get_race(self, request: GetRaceRequest, ctx: RequestContext[GetRaceRequest, Race]) -> Race:
         raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
 
     def list_character_classes(self, request: ListCharacterClassesRequest, ctx: RequestContext[ListCharacterClassesRequest, ListCharacterClassesResponse]) -> ListCharacterClassesResponse:
         raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
 
-    def get_character_class(self, request: GetCharacterClassRequest, ctx: RequestContext[GetCharacterClassRequest, CharacterClass]) -> CharacterClass:
-        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
-
     def list_kits(self, request: ListKitsRequest, ctx: RequestContext[ListKitsRequest, ListKitsResponse]) -> ListKitsResponse:
-        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
-
-    def get_kit(self, request: GetKitRequest, ctx: RequestContext[GetKitRequest, Kit]) -> Kit:
         raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
 
     def list_identifier_definitions(self, request: ListIdentifierDefinitionsRequest, ctx: RequestContext[ListIdentifierDefinitionsRequest, ListIdentifierDefinitionsResponse]) -> ListIdentifierDefinitionsResponse:
         raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
 
-    def get_identifier_definition(self, request: GetIdentifierDefinitionRequest, ctx: RequestContext[GetIdentifierDefinitionRequest, IdentifierDefinition]) -> IdentifierDefinition:
-        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
-
-    def list_campaigns(self, request: ListCampaignsRequest, ctx: RequestContext[ListCampaignsRequest, ListCampaignsResponse]) -> ListCampaignsResponse:
-        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
-
-    def get_campaign(self, request: GetCampaignRequest, ctx: RequestContext[GetCampaignRequest, Campaign]) -> Campaign:
-        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
-
     def list_extraction_runs(self, request: ListExtractionRunsRequest, ctx: RequestContext[ListExtractionRunsRequest, ListExtractionRunsResponse]) -> ListExtractionRunsResponse:
-        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
-
-    def get_extraction_run(self, request: GetExtractionRunRequest, ctx: RequestContext[GetExtractionRunRequest, ExtractionRun]) -> ExtractionRun:
         raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
 
 
@@ -1188,16 +720,6 @@ class PipelineServiceWSGIApplication(ConnectWSGIApplication):
                     ),
                     function=service.list_dialogue_lines,
                 ),
-                "/bgvoice.v1.PipelineService/GetDialogueLine": EndpointSync.unary(
-                    method=MethodInfo(
-                        name="GetDialogueLine",
-                        service_name="bgvoice.v1.PipelineService",
-                        input=GetDialogueLineRequest,
-                        output=DialogueLine,
-                        idempotency_level=IdempotencyLevel.UNKNOWN,
-                    ),
-                    function=service.get_dialogue_line,
-                ),
                 "/bgvoice.v1.PipelineService/ListCharacterSounds": EndpointSync.unary(
                     method=MethodInfo(
                         name="ListCharacterSounds",
@@ -1207,16 +729,6 @@ class PipelineServiceWSGIApplication(ConnectWSGIApplication):
                         idempotency_level=IdempotencyLevel.UNKNOWN,
                     ),
                     function=service.list_character_sounds,
-                ),
-                "/bgvoice.v1.PipelineService/GetCharacterSound": EndpointSync.unary(
-                    method=MethodInfo(
-                        name="GetCharacterSound",
-                        service_name="bgvoice.v1.PipelineService",
-                        input=GetCharacterSoundRequest,
-                        output=CharacterSound,
-                        idempotency_level=IdempotencyLevel.UNKNOWN,
-                    ),
-                    function=service.get_character_sound,
                 ),
                 "/bgvoice.v1.PipelineService/ListDialogueTransitions": EndpointSync.unary(
                     method=MethodInfo(
@@ -1228,46 +740,6 @@ class PipelineServiceWSGIApplication(ConnectWSGIApplication):
                     ),
                     function=service.list_dialogue_transitions,
                 ),
-                "/bgvoice.v1.PipelineService/GetDialogueTransition": EndpointSync.unary(
-                    method=MethodInfo(
-                        name="GetDialogueTransition",
-                        service_name="bgvoice.v1.PipelineService",
-                        input=GetDialogueTransitionRequest,
-                        output=DialogueTransition,
-                        idempotency_level=IdempotencyLevel.UNKNOWN,
-                    ),
-                    function=service.get_dialogue_transition,
-                ),
-                "/bgvoice.v1.PipelineService/ListPortraits": EndpointSync.unary(
-                    method=MethodInfo(
-                        name="ListPortraits",
-                        service_name="bgvoice.v1.PipelineService",
-                        input=ListPortraitsRequest,
-                        output=ListPortraitsResponse,
-                        idempotency_level=IdempotencyLevel.UNKNOWN,
-                    ),
-                    function=service.list_portraits,
-                ),
-                "/bgvoice.v1.PipelineService/GetPortrait": EndpointSync.unary(
-                    method=MethodInfo(
-                        name="GetPortrait",
-                        service_name="bgvoice.v1.PipelineService",
-                        input=GetPortraitRequest,
-                        output=Portrait,
-                        idempotency_level=IdempotencyLevel.UNKNOWN,
-                    ),
-                    function=service.get_portrait,
-                ),
-                "/bgvoice.v1.PipelineService/DownloadPortrait": EndpointSync.unary(
-                    method=MethodInfo(
-                        name="DownloadPortrait",
-                        service_name="bgvoice.v1.PipelineService",
-                        input=DownloadPortraitRequest,
-                        output=PortraitContent,
-                        idempotency_level=IdempotencyLevel.UNKNOWN,
-                    ),
-                    function=service.download_portrait,
-                ),
                 "/bgvoice.v1.PipelineService/ListRaces": EndpointSync.unary(
                     method=MethodInfo(
                         name="ListRaces",
@@ -1277,16 +749,6 @@ class PipelineServiceWSGIApplication(ConnectWSGIApplication):
                         idempotency_level=IdempotencyLevel.UNKNOWN,
                     ),
                     function=service.list_races,
-                ),
-                "/bgvoice.v1.PipelineService/GetRace": EndpointSync.unary(
-                    method=MethodInfo(
-                        name="GetRace",
-                        service_name="bgvoice.v1.PipelineService",
-                        input=GetRaceRequest,
-                        output=Race,
-                        idempotency_level=IdempotencyLevel.UNKNOWN,
-                    ),
-                    function=service.get_race,
                 ),
                 "/bgvoice.v1.PipelineService/ListCharacterClasses": EndpointSync.unary(
                     method=MethodInfo(
@@ -1298,16 +760,6 @@ class PipelineServiceWSGIApplication(ConnectWSGIApplication):
                     ),
                     function=service.list_character_classes,
                 ),
-                "/bgvoice.v1.PipelineService/GetCharacterClass": EndpointSync.unary(
-                    method=MethodInfo(
-                        name="GetCharacterClass",
-                        service_name="bgvoice.v1.PipelineService",
-                        input=GetCharacterClassRequest,
-                        output=CharacterClass,
-                        idempotency_level=IdempotencyLevel.UNKNOWN,
-                    ),
-                    function=service.get_character_class,
-                ),
                 "/bgvoice.v1.PipelineService/ListKits": EndpointSync.unary(
                     method=MethodInfo(
                         name="ListKits",
@@ -1317,16 +769,6 @@ class PipelineServiceWSGIApplication(ConnectWSGIApplication):
                         idempotency_level=IdempotencyLevel.UNKNOWN,
                     ),
                     function=service.list_kits,
-                ),
-                "/bgvoice.v1.PipelineService/GetKit": EndpointSync.unary(
-                    method=MethodInfo(
-                        name="GetKit",
-                        service_name="bgvoice.v1.PipelineService",
-                        input=GetKitRequest,
-                        output=Kit,
-                        idempotency_level=IdempotencyLevel.UNKNOWN,
-                    ),
-                    function=service.get_kit,
                 ),
                 "/bgvoice.v1.PipelineService/ListIdentifierDefinitions": EndpointSync.unary(
                     method=MethodInfo(
@@ -1338,36 +780,6 @@ class PipelineServiceWSGIApplication(ConnectWSGIApplication):
                     ),
                     function=service.list_identifier_definitions,
                 ),
-                "/bgvoice.v1.PipelineService/GetIdentifierDefinition": EndpointSync.unary(
-                    method=MethodInfo(
-                        name="GetIdentifierDefinition",
-                        service_name="bgvoice.v1.PipelineService",
-                        input=GetIdentifierDefinitionRequest,
-                        output=IdentifierDefinition,
-                        idempotency_level=IdempotencyLevel.UNKNOWN,
-                    ),
-                    function=service.get_identifier_definition,
-                ),
-                "/bgvoice.v1.PipelineService/ListCampaigns": EndpointSync.unary(
-                    method=MethodInfo(
-                        name="ListCampaigns",
-                        service_name="bgvoice.v1.PipelineService",
-                        input=ListCampaignsRequest,
-                        output=ListCampaignsResponse,
-                        idempotency_level=IdempotencyLevel.UNKNOWN,
-                    ),
-                    function=service.list_campaigns,
-                ),
-                "/bgvoice.v1.PipelineService/GetCampaign": EndpointSync.unary(
-                    method=MethodInfo(
-                        name="GetCampaign",
-                        service_name="bgvoice.v1.PipelineService",
-                        input=GetCampaignRequest,
-                        output=Campaign,
-                        idempotency_level=IdempotencyLevel.UNKNOWN,
-                    ),
-                    function=service.get_campaign,
-                ),
                 "/bgvoice.v1.PipelineService/ListExtractionRuns": EndpointSync.unary(
                     method=MethodInfo(
                         name="ListExtractionRuns",
@@ -1377,16 +789,6 @@ class PipelineServiceWSGIApplication(ConnectWSGIApplication):
                         idempotency_level=IdempotencyLevel.UNKNOWN,
                     ),
                     function=service.list_extraction_runs,
-                ),
-                "/bgvoice.v1.PipelineService/GetExtractionRun": EndpointSync.unary(
-                    method=MethodInfo(
-                        name="GetExtractionRun",
-                        service_name="bgvoice.v1.PipelineService",
-                        input=GetExtractionRunRequest,
-                        output=ExtractionRun,
-                        idempotency_level=IdempotencyLevel.UNKNOWN,
-                    ),
-                    function=service.get_extraction_run,
                 ),
             },
             interceptors=interceptors,
@@ -1578,25 +980,6 @@ class PipelineServiceClientSync(ConnectClientSync):
             headers=headers,
             timeout_ms=timeout_ms,
         )
-    def get_dialogue_line(
-        self,
-        request: GetDialogueLineRequest,
-        *,
-        headers: Headers | Mapping[str, str] | None = None, 
-        timeout_ms: int | None = None,
-    ) -> DialogueLine:
-        return self.execute_unary(
-            request=request,
-            method=MethodInfo(
-                name="GetDialogueLine",
-                service_name="bgvoice.v1.PipelineService",
-                input=GetDialogueLineRequest,
-                output=DialogueLine,
-                idempotency_level=IdempotencyLevel.UNKNOWN,
-            ),
-            headers=headers,
-            timeout_ms=timeout_ms,
-        )
     def list_character_sounds(
         self,
         request: ListCharacterSoundsRequest,
@@ -1611,25 +994,6 @@ class PipelineServiceClientSync(ConnectClientSync):
                 service_name="bgvoice.v1.PipelineService",
                 input=ListCharacterSoundsRequest,
                 output=ListCharacterSoundsResponse,
-                idempotency_level=IdempotencyLevel.UNKNOWN,
-            ),
-            headers=headers,
-            timeout_ms=timeout_ms,
-        )
-    def get_character_sound(
-        self,
-        request: GetCharacterSoundRequest,
-        *,
-        headers: Headers | Mapping[str, str] | None = None, 
-        timeout_ms: int | None = None,
-    ) -> CharacterSound:
-        return self.execute_unary(
-            request=request,
-            method=MethodInfo(
-                name="GetCharacterSound",
-                service_name="bgvoice.v1.PipelineService",
-                input=GetCharacterSoundRequest,
-                output=CharacterSound,
                 idempotency_level=IdempotencyLevel.UNKNOWN,
             ),
             headers=headers,
@@ -1654,82 +1018,6 @@ class PipelineServiceClientSync(ConnectClientSync):
             headers=headers,
             timeout_ms=timeout_ms,
         )
-    def get_dialogue_transition(
-        self,
-        request: GetDialogueTransitionRequest,
-        *,
-        headers: Headers | Mapping[str, str] | None = None, 
-        timeout_ms: int | None = None,
-    ) -> DialogueTransition:
-        return self.execute_unary(
-            request=request,
-            method=MethodInfo(
-                name="GetDialogueTransition",
-                service_name="bgvoice.v1.PipelineService",
-                input=GetDialogueTransitionRequest,
-                output=DialogueTransition,
-                idempotency_level=IdempotencyLevel.UNKNOWN,
-            ),
-            headers=headers,
-            timeout_ms=timeout_ms,
-        )
-    def list_portraits(
-        self,
-        request: ListPortraitsRequest,
-        *,
-        headers: Headers | Mapping[str, str] | None = None, 
-        timeout_ms: int | None = None,
-    ) -> ListPortraitsResponse:
-        return self.execute_unary(
-            request=request,
-            method=MethodInfo(
-                name="ListPortraits",
-                service_name="bgvoice.v1.PipelineService",
-                input=ListPortraitsRequest,
-                output=ListPortraitsResponse,
-                idempotency_level=IdempotencyLevel.UNKNOWN,
-            ),
-            headers=headers,
-            timeout_ms=timeout_ms,
-        )
-    def get_portrait(
-        self,
-        request: GetPortraitRequest,
-        *,
-        headers: Headers | Mapping[str, str] | None = None, 
-        timeout_ms: int | None = None,
-    ) -> Portrait:
-        return self.execute_unary(
-            request=request,
-            method=MethodInfo(
-                name="GetPortrait",
-                service_name="bgvoice.v1.PipelineService",
-                input=GetPortraitRequest,
-                output=Portrait,
-                idempotency_level=IdempotencyLevel.UNKNOWN,
-            ),
-            headers=headers,
-            timeout_ms=timeout_ms,
-        )
-    def download_portrait(
-        self,
-        request: DownloadPortraitRequest,
-        *,
-        headers: Headers | Mapping[str, str] | None = None, 
-        timeout_ms: int | None = None,
-    ) -> PortraitContent:
-        return self.execute_unary(
-            request=request,
-            method=MethodInfo(
-                name="DownloadPortrait",
-                service_name="bgvoice.v1.PipelineService",
-                input=DownloadPortraitRequest,
-                output=PortraitContent,
-                idempotency_level=IdempotencyLevel.UNKNOWN,
-            ),
-            headers=headers,
-            timeout_ms=timeout_ms,
-        )
     def list_races(
         self,
         request: ListRacesRequest,
@@ -1744,25 +1032,6 @@ class PipelineServiceClientSync(ConnectClientSync):
                 service_name="bgvoice.v1.PipelineService",
                 input=ListRacesRequest,
                 output=ListRacesResponse,
-                idempotency_level=IdempotencyLevel.UNKNOWN,
-            ),
-            headers=headers,
-            timeout_ms=timeout_ms,
-        )
-    def get_race(
-        self,
-        request: GetRaceRequest,
-        *,
-        headers: Headers | Mapping[str, str] | None = None, 
-        timeout_ms: int | None = None,
-    ) -> Race:
-        return self.execute_unary(
-            request=request,
-            method=MethodInfo(
-                name="GetRace",
-                service_name="bgvoice.v1.PipelineService",
-                input=GetRaceRequest,
-                output=Race,
                 idempotency_level=IdempotencyLevel.UNKNOWN,
             ),
             headers=headers,
@@ -1787,25 +1056,6 @@ class PipelineServiceClientSync(ConnectClientSync):
             headers=headers,
             timeout_ms=timeout_ms,
         )
-    def get_character_class(
-        self,
-        request: GetCharacterClassRequest,
-        *,
-        headers: Headers | Mapping[str, str] | None = None, 
-        timeout_ms: int | None = None,
-    ) -> CharacterClass:
-        return self.execute_unary(
-            request=request,
-            method=MethodInfo(
-                name="GetCharacterClass",
-                service_name="bgvoice.v1.PipelineService",
-                input=GetCharacterClassRequest,
-                output=CharacterClass,
-                idempotency_level=IdempotencyLevel.UNKNOWN,
-            ),
-            headers=headers,
-            timeout_ms=timeout_ms,
-        )
     def list_kits(
         self,
         request: ListKitsRequest,
@@ -1820,25 +1070,6 @@ class PipelineServiceClientSync(ConnectClientSync):
                 service_name="bgvoice.v1.PipelineService",
                 input=ListKitsRequest,
                 output=ListKitsResponse,
-                idempotency_level=IdempotencyLevel.UNKNOWN,
-            ),
-            headers=headers,
-            timeout_ms=timeout_ms,
-        )
-    def get_kit(
-        self,
-        request: GetKitRequest,
-        *,
-        headers: Headers | Mapping[str, str] | None = None, 
-        timeout_ms: int | None = None,
-    ) -> Kit:
-        return self.execute_unary(
-            request=request,
-            method=MethodInfo(
-                name="GetKit",
-                service_name="bgvoice.v1.PipelineService",
-                input=GetKitRequest,
-                output=Kit,
                 idempotency_level=IdempotencyLevel.UNKNOWN,
             ),
             headers=headers,
@@ -1863,63 +1094,6 @@ class PipelineServiceClientSync(ConnectClientSync):
             headers=headers,
             timeout_ms=timeout_ms,
         )
-    def get_identifier_definition(
-        self,
-        request: GetIdentifierDefinitionRequest,
-        *,
-        headers: Headers | Mapping[str, str] | None = None, 
-        timeout_ms: int | None = None,
-    ) -> IdentifierDefinition:
-        return self.execute_unary(
-            request=request,
-            method=MethodInfo(
-                name="GetIdentifierDefinition",
-                service_name="bgvoice.v1.PipelineService",
-                input=GetIdentifierDefinitionRequest,
-                output=IdentifierDefinition,
-                idempotency_level=IdempotencyLevel.UNKNOWN,
-            ),
-            headers=headers,
-            timeout_ms=timeout_ms,
-        )
-    def list_campaigns(
-        self,
-        request: ListCampaignsRequest,
-        *,
-        headers: Headers | Mapping[str, str] | None = None, 
-        timeout_ms: int | None = None,
-    ) -> ListCampaignsResponse:
-        return self.execute_unary(
-            request=request,
-            method=MethodInfo(
-                name="ListCampaigns",
-                service_name="bgvoice.v1.PipelineService",
-                input=ListCampaignsRequest,
-                output=ListCampaignsResponse,
-                idempotency_level=IdempotencyLevel.UNKNOWN,
-            ),
-            headers=headers,
-            timeout_ms=timeout_ms,
-        )
-    def get_campaign(
-        self,
-        request: GetCampaignRequest,
-        *,
-        headers: Headers | Mapping[str, str] | None = None, 
-        timeout_ms: int | None = None,
-    ) -> Campaign:
-        return self.execute_unary(
-            request=request,
-            method=MethodInfo(
-                name="GetCampaign",
-                service_name="bgvoice.v1.PipelineService",
-                input=GetCampaignRequest,
-                output=Campaign,
-                idempotency_level=IdempotencyLevel.UNKNOWN,
-            ),
-            headers=headers,
-            timeout_ms=timeout_ms,
-        )
     def list_extraction_runs(
         self,
         request: ListExtractionRunsRequest,
@@ -1934,25 +1108,6 @@ class PipelineServiceClientSync(ConnectClientSync):
                 service_name="bgvoice.v1.PipelineService",
                 input=ListExtractionRunsRequest,
                 output=ListExtractionRunsResponse,
-                idempotency_level=IdempotencyLevel.UNKNOWN,
-            ),
-            headers=headers,
-            timeout_ms=timeout_ms,
-        )
-    def get_extraction_run(
-        self,
-        request: GetExtractionRunRequest,
-        *,
-        headers: Headers | Mapping[str, str] | None = None, 
-        timeout_ms: int | None = None,
-    ) -> ExtractionRun:
-        return self.execute_unary(
-            request=request,
-            method=MethodInfo(
-                name="GetExtractionRun",
-                service_name="bgvoice.v1.PipelineService",
-                input=GetExtractionRunRequest,
-                output=ExtractionRun,
                 idempotency_level=IdempotencyLevel.UNKNOWN,
             ),
             headers=headers,

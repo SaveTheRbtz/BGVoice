@@ -3,7 +3,6 @@ import { createConnectTransport } from "@connectrpc/connect-web";
 
 import {
   PipelineService,
-  View,
   type Character,
   type CharacterClass,
   type CharacterSound,
@@ -38,13 +37,12 @@ const client = createClient(
   createConnectTransport({ baseUrl: "/connect" }),
 );
 
-function listRequest(query: ListQuery, view = View.BASIC): {
+function listRequest(query: ListQuery): {
   parent: string;
   pageSize: number;
   pageToken: string;
   filter: string;
   orderBy: string;
-  view: View;
 } {
   return {
     parent: INSTALLATION_NAME,
@@ -52,7 +50,6 @@ function listRequest(query: ListQuery, view = View.BASIC): {
     pageToken: query.pageToken ?? "",
     filter: query.filter ?? "",
     orderBy: query.orderBy ?? "",
-    view,
   };
 }
 
@@ -80,31 +77,31 @@ export async function listVoices(
 }
 
 export function getVoice(name: string, signal?: AbortSignal): Promise<Voice> {
-  return client.getVoice({ name, view: View.FULL }, options(signal));
+  return client.getVoice({ name }, options(signal));
 }
 
 export async function listCharacters(
   query: ListQuery,
   signal?: AbortSignal,
 ): Promise<ListResult<Character>> {
-  const response = await client.listCharacters(listRequest(query, View.FULL), options(signal));
+  const response = await client.listCharacters(listRequest(query), options(signal));
   return listResult(response.characters, response);
 }
 
 export function getCharacter(name: string, signal?: AbortSignal): Promise<Character> {
-  return client.getCharacter({ name, view: View.FULL }, options(signal));
+  return client.getCharacter({ name }, options(signal));
 }
 
 export async function listDialogues(
   query: ListQuery,
   signal?: AbortSignal,
 ): Promise<ListResult<Dialogue>> {
-  const response = await client.listDialogues(listRequest(query, View.FULL), options(signal));
+  const response = await client.listDialogues(listRequest(query), options(signal));
   return listResult(response.dialogues, response);
 }
 
 export function getDialogue(name: string, signal?: AbortSignal): Promise<Dialogue> {
-  return client.getDialogue({ name, view: View.FULL }, options(signal));
+  return client.getDialogue({ name }, options(signal));
 }
 
 export async function listDialogueLines(
@@ -135,7 +132,7 @@ export async function listRaces(
   query: ListQuery,
   signal?: AbortSignal,
 ): Promise<ListResult<Race>> {
-  const response = await client.listRaces(listRequest(query, View.FULL), options(signal));
+  const response = await client.listRaces(listRequest(query), options(signal));
   return listResult(response.races, response);
 }
 
@@ -143,7 +140,7 @@ export async function listCharacterClasses(
   query: ListQuery,
   signal?: AbortSignal,
 ): Promise<ListResult<CharacterClass>> {
-  const response = await client.listCharacterClasses(listRequest(query, View.FULL), options(signal));
+  const response = await client.listCharacterClasses(listRequest(query), options(signal));
   return listResult(response.characterClasses, response);
 }
 

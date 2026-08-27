@@ -9,15 +9,17 @@ import { characterPath, dialoguePath, routeFromPath, voicePath } from "./routes"
 import type { AppRoute } from "./routes";
 
 const ROOT = "installations/bg2ee-eet";
+const AERIE = `${ROOT}/characters/aerie-cre-10f6d857`;
+const IMOEN_DIALOGUE = `${ROOT}/dialogues/imoen2j-dlg-789f493a`;
 
 describe("public URL state", () => {
   it("maps every route shape and writes canonical resource paths", () => {
     const routes = [
-      ["/", { name: "voices", voiceId: null }],
-      ["/voices", { name: "voices", voiceId: null }],
-      ["/voices/imoen", { name: "voices", voiceId: `${ROOT}/voices/imoen` }],
-      ["/characters/AERIE.CRE", { name: "characters", resourceName: `${ROOT}/characters/AERIE.CRE` }],
-      ["/dialogues/IMOEN2J.DLG", { name: "dialogues", resourceName: `${ROOT}/dialogues/IMOEN2J.DLG` }],
+      ["/", { name: "voices", voiceName: null }],
+      ["/voices", { name: "voices", voiceName: null }],
+      ["/voices/imoen", { name: "voices", voiceName: `${ROOT}/voices/imoen` }],
+      ["/characters/aerie-cre-10f6d857", { name: "characters", resourceName: AERIE }],
+      ["/dialogues/imoen2j-dlg-789f493a", { name: "dialogues", resourceName: IMOEN_DIALOGUE }],
       ["/dialogue-lines", { name: "dialogue-lines" }],
       ["/definitions/races", { name: "races" }],
       ["/definitions/character-classes", { name: "character-classes" }],
@@ -29,8 +31,8 @@ describe("public URL state", () => {
     const paths = [
       [voicePath(`${ROOT}/voices/imoen`), "/voices/imoen"],
       [voicePath(`${ROOT}/voices/imoen`, "?page_size=50"), "/voices/imoen?page_size=50"],
-      [characterPath(`${ROOT}/characters/AERIE.CRE`), "/characters/AERIE.CRE"],
-      [dialoguePath(`${ROOT}/dialogues/IMOEN2J.DLG`), "/dialogues/IMOEN2J.DLG"],
+      [characterPath(AERIE), "/characters/aerie-cre-10f6d857"],
+      [dialoguePath(IMOEN_DIALOGUE), "/dialogues/imoen2j-dlg-789f493a"],
     ] as const;
     for (const [actual, expected] of paths) expect(actual).toBe(expected);
   });
@@ -40,7 +42,7 @@ describe("public URL state", () => {
       filter: 'search("warm alto") AND source_kind = "override"',
       orderBy: "npc_line_count desc",
       pageSize: 50,
-      pageToken: "eyJvZmZzZXQiOjUwfQ==",
+      pageToken: "AAAAAAAAADKqMMePzBTFkFT7_hv3j31j",
     };
     expect(listQuery(listSearch(query))).toEqual(query);
     expect(listSearch({ ...query, filter: "", pageSize: 25, pageToken: "" }, query.orderBy)).toBe("");

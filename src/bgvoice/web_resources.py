@@ -6,8 +6,6 @@ from datetime import datetime
 from typing import Final, cast
 
 from lancedb.expr import col, lit
-from lancedb.pydantic import LanceModel
-from pydantic import ConfigDict
 
 from bgvoice.model_types import (
     BIOGRAPHY_SOUND_SLOT_ID,
@@ -16,7 +14,6 @@ from bgvoice.model_types import (
     DetailStatus,
     DialogueLineKind,
     IdentifierKind,
-    ResourceSource,
     RunKind,
     RunStatus,
     SourceKind,
@@ -37,27 +34,13 @@ from bgvoice.reader_models import (
 )
 from bgvoice.reader_views import character_row, dialogue_row
 from bgvoice.storage_records import (
-    CampaignDefinitionRecord,
     CharacterAttributionRecord,
     CharacterRecord,
     DialogueRecord,
     ExtractionRunRecord,
-    PortraitImageRecord,
 )
 from bgvoice.v1 import pipeline_pb2 as pb
 from bgvoice.web_contract import Collection, resource_name
-
-
-class PortraitMetadata(LanceModel):
-    """Portrait fields safe to hydrate while browsing; PNG bytes stay in LanceDB."""
-
-    model_config = ConfigDict(strict=True, extra="forbid")
-
-    resref: str
-    source: ResourceSource
-    width: int
-    height: int
-
 
 _SOURCE_KIND: Final[dict[SourceKind, pb.SourceKind]] = {
     SourceKind.OVERRIDE: pb.SOURCE_KIND_OVERRIDE,
@@ -129,7 +112,7 @@ def extraction(record: CharacterRecord | DialogueRecord) -> pb.ExtractionState:
     state = pb.ExtractionState(
         status=_DETAIL_STATUS[record.extraction.status],
         updated_at=timestamp(record.extraction.updated_at),
-        run=resource_name(Collection.EXTRACTION_RUNS, record.extraction.run_id),
+        extraction_run=resource_name(Collection.EXTRACTION_RUNS, record.extraction.run_id),
     )
     if record.extraction.error is not None:
         state.error = record.extraction.error
@@ -171,17 +154,13 @@ def voice(
     }
     message = pb.Voice(
         name=resource_name(Collection.VOICES, row.id),
-        voice_id=row.id,
         display_name=row.display_name,
         prompt=row.prompt,
-        character_count=row.variant_count,
-        dialogue_count=row.dialogue_count,
         npc_line_count=row.npc_line_count,
         serialized_size=row.serialized_size,
     )
 
     for name in row.variant_resource_names:
-        character_detail = characters[name].detail
         dialogue_names = attributions[name.casefold()].resolved_dialogue_resource_names
         npc_lines = sum(
             npc_lines_by_dialogue[dialogue_name.casefold()]
@@ -191,7 +170,6 @@ def voice(
         message.characters.add(
             name=resource_name(Collection.CHARACTERS, name),
             engine_resource_name=name,
-            display_name=name if character_detail is None else character_detail.display_name,
             npc_line_count=npc_lines,
         )
 
@@ -302,19 +280,16 @@ def character(
     record: CharacterRecord,
     portrait_resrefs: frozenset[str],
     biography_sound_id: str | None,
-    *,
-    full: bool,
 ) -> pb.Character:
     message = pb.Character(
         name=resource_name(Collection.CHARACTERS, row.resource_name),
         engine_resource_name=row.resource_name,
         resref=row.resref,
+        display_name=row.display_name or row.resref,
         source=source(record.source.kind, record.source.path),
         extraction=extraction(record),
         dialogue=dialogue_summary(row),
     )
-    if row.display_name is not None:
-        message.display_name = row.display_name
     if row.voice_id is not None:
         message.voice = resource_name(Collection.VOICES, row.voice_id)
     if row.dialog_resref is not None and row.dialogue_status is DetailStatus.COMPLETE:
@@ -328,14 +303,13 @@ def character(
         message.serialized_size = row.serialized_size
     if biography_sound_id is not None:
         message.biography = resource_name(Collection.CHARACTER_SOUNDS, biography_sound_id)
-    if full:
-        detail = character_detail(row, record)
-        if detail is not None:
-            message.detail.CopyFrom(detail)
+    detail = character_detail(row, record)
+    if detail is not None:
+        message.detail.CopyFrom(detail)
     return message
 
 
-def dialogue(row: DialogueRow, record: DialogueRecord, *, full: bool) -> pb.Dialogue:
+def dialogue(row: DialogueRow, record: DialogueRecord) -> pb.Dialogue:
     message = pb.Dialogue(
         name=resource_name(Collection.DIALOGUES, row.resource_name),
         engine_resource_name=row.resource_name,
@@ -346,7 +320,7 @@ def dialogue(row: DialogueRow, record: DialogueRecord, *, full: bool) -> pb.Dial
     )
     if row.serialized_size is not None:
         message.serialized_size = row.serialized_size
-    if full and record.detail is not None:
+    if record.detail is not None:
         detail = record.detail
         message.detail.CopyFrom(
             pb.DialogueDetail(
@@ -427,7 +401,7 @@ def transition(row: TransitionRow) -> pb.DialogueTransition:
     return message
 
 
-def race(rows: Sequence[RaceRow], *, full: bool) -> pb.Race:
+def race(rows: Sequence[RaceRow]) -> pb.Race:
     assert rows, "a race resource needs at least one source row"
     row = next((candidate for candidate in rows if candidate.name is not None), rows[0])
     symbols = _symbols(candidate.symbols for candidate in rows)
@@ -437,8 +411,7 @@ def race(rows: Sequence[RaceRow], *, full: bool) -> pb.Race:
         symbols=symbols,
         display_name=row.name or _identifier_display(symbols, row.race_id),
     )
-    if full:
-        message.texts.extend(filter(None, map(_race_text, rows)))
+    message.texts.extend(filter(None, map(_race_text, rows)))
     return message
 
 
@@ -464,7 +437,7 @@ def _race_text(source: RaceRow) -> pb.RaceText | None:
     return text
 
 
-def character_class(rows: Sequence[ClassRow], *, full: bool) -> pb.CharacterClass:
+def character_class(rows: Sequence[ClassRow]) -> pb.CharacterClass:
     assert rows, "a class resource needs at least one source row"
     row = next(
         (
@@ -482,8 +455,7 @@ def character_class(rows: Sequence[ClassRow], *, full: bool) -> pb.CharacterClas
         symbols=symbols,
         display_name=display_name or _identifier_display(symbols, row.class_id),
     )
-    if full:
-        message.texts.extend(filter(None, map(_character_class_text, rows)))
+    message.texts.extend(filter(None, map(_character_class_text, rows)))
     return message
 
 
@@ -560,26 +532,6 @@ def identifier(row: IdentifierRow) -> pb.IdentifierDefinition:
         symbols=row.symbols,
         source_resource=row.source_resource,
         display_name=(row.symbols[0].replace("_", " ").title() if row.symbols else str(row.value)),
-    )
-
-
-def portrait(row: PortraitMetadata | PortraitImageRecord) -> pb.Portrait:
-    return pb.Portrait(
-        name=resource_name(Collection.PORTRAITS, row.resref),
-        resref=row.resref,
-        source=source(row.source.kind, row.source.path),
-        width=row.width,
-        height=row.height,
-        media_type="image/png",
-    )
-
-
-def campaign(row: CampaignDefinitionRecord) -> pb.Campaign:
-    return pb.Campaign(
-        name=resource_name(Collection.CAMPAIGNS, row.campaign_id),
-        campaign_id=row.campaign_id,
-        ordinal=row.ordinal,
-        display_name=row.campaign_id.replace("_", " ").title(),
     )
 
 

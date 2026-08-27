@@ -7,4 +7,4 @@ Everything except this README is ignored by Git because these are reproducible, 
 artifacts that can be large or contain copyrighted game text. Do not commit them.
 
 The web UI only reads committed LanceDB table versions, so it can browse while extraction writes
-new snapshots. Treat the database as one directory; stop writers before copying or moving it.
+new table versions. Treat the database as one directory; stop writers before copying or moving it.

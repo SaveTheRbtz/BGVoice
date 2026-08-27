@@ -3,18 +3,15 @@
 import base64
 import hashlib
 import re
+import struct
 import unicodedata
 from enum import StrEnum
-from typing import Final, Literal, NewType
-
-from pydantic import BaseModel, ConfigDict, Field
+from typing import Final, Literal
 
 type InstallationId = Literal["bg2ee-eet"]
 
 INSTALLATION_ID: Final[InstallationId] = "bg2ee-eet"
-
-ResourceId = NewType("ResourceId", str)
-ResourceName = NewType("ResourceName", str)
+INSTALLATION_NAME: Final = f"installations/{INSTALLATION_ID}"
 
 
 class Collection(StrEnum):
@@ -29,25 +26,20 @@ class Collection(StrEnum):
     CHARACTER_CLASSES = "characterClasses"
     KITS = "kits"
     IDENTIFIER_DEFINITIONS = "identifierDefinitions"
-    CAMPAIGNS = "campaigns"
     EXTRACTION_RUNS = "extractionRuns"
-
-
-class ResourceView(StrEnum):
-    BASIC = "basic"
-    FULL = "full"
 
 
 _RESOURCE_ID = re.compile(r"^[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 _DIGEST_BYTES = 4
 _MAX_RESOURCE_ID_LENGTH = 63
+_PAGE_TOKEN = struct.Struct(">Q16s")
 
 
-def resource_id(raw: str) -> ResourceId:
+def resource_id(raw: str) -> str:
     """Return a stable RFC-1034 resource ID for an Infinity Engine identifier."""
     canonical = raw.casefold()
     if _RESOURCE_ID.fullmatch(canonical):
-        return ResourceId(canonical)
+        return canonical
 
     ascii_text = unicodedata.normalize("NFKD", canonical).encode("ascii", "ignore").decode()
     normalized = re.sub(r"[^a-z0-9]+", "-", ascii_text.lower()).strip("-")
@@ -57,23 +49,12 @@ def resource_id(raw: str) -> ResourceId:
     digest = hashlib.blake2s(canonical.encode(), digest_size=_DIGEST_BYTES).hexdigest()
     stem_length = _MAX_RESOURCE_ID_LENGTH - len(digest) - 1
     stem = normalized[:stem_length].rstrip("-")
-    return ResourceId(f"{stem}-{digest}")
+    return f"{stem}-{digest}"
 
 
-def resource_name(collection: Collection, raw_id: str) -> ResourceName:
+def resource_name(collection: Collection, raw_id: str) -> str:
     """Return the canonical name of one resource in the EET installation."""
-    return ResourceName(f"installations/{INSTALLATION_ID}/{collection}/{resource_id(raw_id)}")
-
-
-class _PageToken(BaseModel):
-    model_config = ConfigDict(strict=True, extra="forbid")
-
-    collection: Collection
-    filter: str
-    order_by: str
-    view: ResourceView
-    page_size: int = Field(gt=0)
-    offset: int = Field(ge=0)
+    return f"{INSTALLATION_NAME}/{collection}/{resource_id(raw_id)}"
 
 
 def encode_page_token(
@@ -81,22 +62,13 @@ def encode_page_token(
     *,
     filter: str,
     order_by: str,
-    view: ResourceView,
-    page_size: int,
     offset: int,
 ) -> str:
     """Encode a typed, request-bound opaque pagination cursor."""
-    assert page_size > 0, "page-token page size must be positive"
     assert offset >= 0, "page-token offset must not be negative"
-    cursor = _PageToken(
-        collection=collection,
-        filter=filter,
-        order_by=order_by,
-        view=view,
-        page_size=page_size,
-        offset=offset,
+    return _base64url_encode(
+        _PAGE_TOKEN.pack(offset, _request_fingerprint(collection, filter, order_by))
     )
-    return _base64url_encode(cursor.model_dump_json().encode())
 
 
 def decode_page_token(
@@ -105,22 +77,20 @@ def decode_page_token(
     *,
     filter: str,
     order_by: str,
-    view: ResourceView,
-    page_size: int,
 ) -> int:
     """Decode a cursor and require it to match the rest of the List request."""
-    cursor = _PageToken.model_validate_json(_base64url_decode(token))
-    expected = _PageToken(
-        collection=collection,
-        filter=filter,
-        order_by=order_by,
-        view=view,
-        page_size=page_size,
-        offset=cursor.offset,
-    )
-    if cursor != expected:
+    try:
+        offset, fingerprint = _PAGE_TOKEN.unpack(_base64url_decode(token))
+    except struct.error as error:
+        raise ValueError("invalid page token") from error
+    if fingerprint != _request_fingerprint(collection, filter, order_by):
         raise ValueError("page token does not match the request")
-    return cursor.offset
+    return int(offset)
+
+
+def _request_fingerprint(collection: Collection, filter: str, order_by: str) -> bytes:
+    request = "\0".join((collection, filter, order_by)).encode()
+    return hashlib.blake2s(request, digest_size=16).digest()
 
 
 def _base64url_encode(value: bytes) -> str:

@@ -90,7 +90,7 @@ export function PipelinePage({ installation }: { installation: Installation | nu
         rowKey={(run) => run.name}
         eyebrow="RECENT ACTIVITY"
         title="Extraction runs"
-        description="Each independently published stage, newest first."
+        description="Each pipeline stage attempt, newest first."
         noun="runs"
         searchPlaceholder="Search run IDs and stages…"
         className="runs-browser"

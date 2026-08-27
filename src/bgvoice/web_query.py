@@ -10,7 +10,7 @@ from connectrpc.errors import ConnectError
 from lancedb.expr import col, lit
 from lancedb.pydantic import LanceModel
 from lancedb.table import AsyncTable
-from pydantic import TypeAdapter, ValidationError
+from pydantic import TypeAdapter
 
 from bgvoice.reader_models import (
     CharacterSort,
@@ -25,16 +25,8 @@ from bgvoice.reader_models import (
     TransitionSort,
     VoiceSort,
 )
-from bgvoice.v1 import pipeline_pb2 as pb
-from bgvoice.web_contract import (
-    INSTALLATION_ID,
-    Collection,
-    ResourceView,
-    encode_page_token,
-    resource_name,
-)
+from bgvoice.web_contract import Collection, encode_page_token, resource_name
 
-INSTALLATION_NAME: Final = f"installations/{INSTALLATION_ID}"
 DEFAULT_PAGE_SIZE: Final = 25
 READER_PAGE_SIZE: Final = 100
 MAX_PAGE_SIZE: Final = 100
@@ -121,7 +113,6 @@ class ReaderPage[T](Protocol):
 class ListPage:
     size: int
     offset: int
-    view: ResourceView
 
 
 @dataclass(slots=True)
@@ -138,7 +129,7 @@ class Filter:
         for expression in expressions:
             if expression.startswith("search(") and expression.endswith(")"):
                 assert search is None, "filter contains more than one search expression"
-                search = _json_value(_TEXT, expression[7:-1], "search")
+                search = _TEXT.validate_json(expression[7:-1], strict=True)
                 continue
             field_name, separator, value = expression.partition(" = ")
             assert separator, f"unsupported filter expression: {expression!r}"
@@ -161,10 +152,7 @@ class Filter:
         value = self.text(name)
         if value is None:
             return None
-        try:
-            return enum_type(value)
-        except ValueError as error:
-            raise AssertionError(f"invalid {name}: {value!r}") from error
+        return enum_type(value)
 
     def finish(self) -> None:
         assert not self.clauses, f"unsupported filter fields: {', '.join(self.clauses)}"
@@ -172,14 +160,7 @@ class Filter:
     def _value[T](self, name: str, adapter: TypeAdapter[T]) -> T | None:
         if name not in self.clauses:
             return None
-        return _json_value(adapter, self.clauses.pop(name), name)
-
-
-def _json_value[T](adapter: TypeAdapter[T], raw: str, field_name: str) -> T:
-    try:
-        return adapter.validate_json(raw, strict=True)
-    except ValidationError as error:
-        raise AssertionError(f"invalid {field_name}: {raw!r}") from error
+        return adapter.validate_json(self.clauses.pop(name), strict=True)
 
 
 def parse_order[T: str](
@@ -197,20 +178,6 @@ def parse_order[T: str](
         assert parts[1] in {"asc", "desc"}, f"invalid order_by direction: {parts[1]!r}"
         direction = parts[1]
     return aliases[field_name], direction
-
-
-def parse_view(value: pb.View, *, default: ResourceView) -> ResourceView:
-    if value == pb.VIEW_UNSPECIFIED:
-        return default
-    if value == pb.VIEW_BASIC:
-        return ResourceView.BASIC
-    if value == pb.VIEW_FULL:
-        return ResourceView.FULL
-    raise AssertionError(f"unknown view: {value}")
-
-
-def validate_parent(parent: str) -> None:
-    assert parent == INSTALLATION_NAME, f"parent must be {INSTALLATION_NAME!r}"
 
 
 async def read_window[T](
@@ -299,7 +266,5 @@ def next_token(
         collection,
         filter=request_filter,
         order_by=order_by,
-        view=page.view,
-        page_size=page.size,
         offset=next_offset,
     )

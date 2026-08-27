@@ -125,42 +125,24 @@ def test_pipeline_output_is_browsable_over_connect_and_portrait_http(tmp_path: P
 
 
 @pytest.mark.parametrize(
-    ("list_method", "response_field", "get_method", "full_field"),
+    ("list_method", "response_field", "full_field"),
     [
-        ("ListVoices", "voices", "GetVoice", "prompt"),
-        ("ListCharacters", "characters", "GetCharacter", "detail"),
-        ("ListDialogues", "dialogues", "GetDialogue", "detail"),
-        ("ListDialogueLines", "dialogueLines", "GetDialogueLine", "text"),
-        (
-            "ListDialogueTransitions",
-            "dialogueTransitions",
-            "GetDialogueTransition",
-            "flagsRaw",
-        ),
-        ("ListCharacterSounds", "characterSounds", "GetCharacterSound", "text"),
-        ("ListPortraits", "portraits", "GetPortrait", "mediaType"),
-        ("ListRaces", "races", "GetRace", "texts"),
-        (
-            "ListCharacterClasses",
-            "characterClasses",
-            "GetCharacterClass",
-            "texts",
-        ),
-        ("ListKits", "kits", "GetKit", "displayName"),
-        (
-            "ListIdentifierDefinitions",
-            "identifierDefinitions",
-            "GetIdentifierDefinition",
-            "symbols",
-        ),
-        ("ListCampaigns", "campaigns", "GetCampaign", "campaignId"),
-        ("ListExtractionRuns", "extractionRuns", "GetExtractionRun", "runId"),
+        ("ListVoices", "voices", "prompt"),
+        ("ListCharacters", "characters", "detail"),
+        ("ListDialogues", "dialogues", "detail"),
+        ("ListDialogueLines", "dialogueLines", "text"),
+        ("ListDialogueTransitions", "dialogueTransitions", "flagsRaw"),
+        ("ListCharacterSounds", "characterSounds", "text"),
+        ("ListRaces", "races", "texts"),
+        ("ListCharacterClasses", "characterClasses", "texts"),
+        ("ListKits", "kits", "displayName"),
+        ("ListIdentifierDefinitions", "identifierDefinitions", "symbols"),
+        ("ListExtractionRuns", "extractionRuns", "runId"),
     ],
 )
-def test_connect_lists_and_gets_each_full_resource(
+def test_connect_lists_each_browser_collection(
     list_method: str,
     response_field: str,
-    get_method: str,
     full_field: str,
     shared_scenario_database: Path,
 ) -> None:
@@ -168,7 +150,6 @@ def test_connect_lists_and_gets_each_full_resource(
         payload: dict[str, object] = {
             "parent": _PARENT,
             "pageSize": 2,
-            "view": "VIEW_FULL",
         }
         if list_method == "ListRaces":
             payload["filter"] = 'search("Elf")'
@@ -180,18 +161,34 @@ def test_connect_lists_and_gets_each_full_resource(
             payload,
         )
         first = response.json()[response_field][0]
-        fetched = _connect(
-            client,
-            get_method,
-            {"name": first["name"], "view": "VIEW_FULL"},
-        )
 
     assert response.status_code == 200
     assert response.json()[response_field]
     assert int(response.json()["totalSize"]) >= len(response.json()[response_field])
+    assert full_field in first
+
+
+@pytest.mark.parametrize(
+    ("list_method", "response_field", "get_method"),
+    [
+        ("ListVoices", "voices", "GetVoice"),
+        ("ListCharacters", "characters", "GetCharacter"),
+        ("ListDialogues", "dialogues", "GetDialogue"),
+    ],
+)
+def test_connect_gets_routed_detail_resources(
+    list_method: str,
+    response_field: str,
+    get_method: str,
+    shared_scenario_database: Path,
+) -> None:
+    with TestClient(create_app(shared_scenario_database)) as client:
+        listed = _connect(client, list_method, {"parent": _PARENT, "pageSize": 1})
+        first = listed.json()[response_field][0]
+        fetched = _connect(client, get_method, {"name": first["name"]})
+
     assert fetched.status_code == 200
-    assert fetched.json()["name"] == first["name"]
-    assert full_field in fetched.json()
+    assert fetched.json() == first
 
 
 def test_connect_pagination_and_errors_are_publicly_typed(
@@ -204,12 +201,12 @@ def test_connect_pagination_and_errors_are_publicly_typed(
             "ListCharacters",
             {"parent": _PARENT, "pageSize": 10, "orderBy": "engine_resource_name asc"},
         )
-        second = _connect(
+        resized = _connect(
             client,
             "ListCharacters",
             {
                 "parent": _PARENT,
-                "pageSize": 10,
+                "pageSize": 1,
                 "pageToken": first.json()["nextPageToken"],
                 "orderBy": "engine_resource_name asc",
             },
@@ -224,8 +221,9 @@ def test_connect_pagination_and_errors_are_publicly_typed(
             "ListCharacters",
             {
                 "parent": _PARENT,
-                "pageSize": 25,
+                "pageSize": 10,
                 "pageToken": first.json()["nextPageToken"],
+                "orderBy": "engine_resource_name desc",
             },
         )
         missing = _connect(
@@ -243,8 +241,8 @@ def test_connect_pagination_and_errors_are_publicly_typed(
 
     assert installation.status_code == 200
     assert installation.json()["summary"]["characters"] == "12"
-    assert (len(first.json()["characters"]), len(second.json()["characters"])) == (10, 2)
-    assert not second.json().get("nextPageToken")
+    assert (len(first.json()["characters"]), len(resized.json()["characters"])) == (10, 1)
+    assert resized.json()["nextPageToken"]
     assert invalid_filter.status_code == 400
     assert changed_token.status_code == 400
     assert missing.status_code == 404

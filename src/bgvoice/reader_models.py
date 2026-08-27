@@ -10,8 +10,6 @@ from bgvoice.model_types import (
     DetailStatus,
     DialogueLineKind,
     IdentifierKind,
-    RunKind,
-    RunStatus,
     SourceKind,
 )
 
@@ -436,19 +434,6 @@ class IdentifierPage(ResultPage[IdentifierRow, IdentifierSort | Literal["relevan
     pass
 
 
-class ExtractionRunSummary(_ReaderModel):
-    id: str
-    run_kind: RunKind
-    started_at: str
-    completed_at: str | None
-    status: RunStatus
-    resources_discovered: int
-    details_attempted: int
-    details_extracted: int
-    failures: int
-    error: str | None
-
-
 class PipelineStats(_ReaderModel):
     database_path: str
     database_size: int = Field(ge=0)
@@ -488,4 +473,3 @@ class PipelineStats(_ReaderModel):
     dialogues_unattributed: int = Field(ge=0)
     attributed_dialogue_lines: int = Field(ge=0)
     unattributed_dialogue_lines: int = Field(ge=0)
-    latest_runs: list[ExtractionRunSummary]

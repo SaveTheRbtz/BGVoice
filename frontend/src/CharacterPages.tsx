@@ -2,7 +2,7 @@ import { getCharacter, listCharacters } from "./api";
 import { ErrorBanner, NumberFilter, SelectFilter, TableBrowser } from "./browser";
 import type { Column, FilterControls } from "./browser";
 import { formatBytes, formatCount, formatHex } from "./format";
-import type { Character } from "./gen/bgvoice/v1/pipeline_pb";
+import { AttributionStatus, type Character } from "./gen/bgvoice/v1/pipeline_pb";
 import {
   attributionStatusLabel,
   definitionText,
@@ -53,7 +53,7 @@ const CHARACTER_COLUMNS = [
     render: (character) => (
       <ResourceTitle
         href={characterPath(character.name)}
-        title={character.displayName ?? character.resref}
+        title={character.displayName}
         subtitle={character.engineResourceName}
       />
     ),
@@ -155,7 +155,7 @@ function CharacterClass({ character }: { character: Character }) {
 }
 
 function CharacterStatus({ character }: { character: Character }) {
-  const value = character.attributionStatus == null
+  const value = character.attributionStatus === AttributionStatus.UNSPECIFIED
     ? detailStatusLabel(character.extraction?.status)
     : attributionStatusLabel(character.attributionStatus);
   return <StatusPill value={value} />;
@@ -229,7 +229,7 @@ function CharacterDetail({ character }: { character: Character }) {
 }
 
 function CharacterHeader({ character }: { character: Character }) {
-  const label = character.displayName ?? character.resref;
+  const label = character.displayName;
   return (
     <header className="character-profile">
       <ResourceAvatar portrait={character.portrait} label={label} />

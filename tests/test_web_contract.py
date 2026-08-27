@@ -1,12 +1,12 @@
 """Stable resource names and opaque pagination tokens."""
 
+import base64
 import re
 
 import pytest
 
 from bgvoice.web_contract import (
     Collection,
-    ResourceView,
     decode_page_token,
     encode_page_token,
     resource_id,
@@ -16,8 +16,6 @@ from bgvoice.web_contract import (
 _SAFE_ID = re.compile(r"^[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 _FILTER = 'display_name = "Imoen"'
 _ORDER_BY = "npc_line_count desc"
-_VIEW = ResourceView.FULL
-_PAGE_SIZE = 50
 
 
 @pytest.mark.parametrize(
@@ -59,8 +57,6 @@ def test_page_tokens_round_trip_and_bind_the_complete_request() -> None:
         Collection.VOICES,
         filter=_FILTER,
         order_by=_ORDER_BY,
-        view=_VIEW,
-        page_size=_PAGE_SIZE,
         offset=150,
     )
 
@@ -69,8 +65,6 @@ def test_page_tokens_round_trip_and_bind_the_complete_request() -> None:
         Collection.VOICES,
         filter=_FILTER,
         order_by=_ORDER_BY,
-        view=_VIEW,
-        page_size=_PAGE_SIZE,
         offset=150,
     )
     assert (
@@ -79,36 +73,31 @@ def test_page_tokens_round_trip_and_bind_the_complete_request() -> None:
             Collection.VOICES,
             filter=_FILTER,
             order_by=_ORDER_BY,
-            view=_VIEW,
-            page_size=_PAGE_SIZE,
         )
         == 150
     )
+    decoded = base64.urlsafe_b64decode(token + "=" * (-len(token) % 4))
+    assert _FILTER.encode() not in decoded
+    assert _ORDER_BY.encode() not in decoded
 
 
 @pytest.mark.parametrize(
-    ("collection", "filter", "order_by", "view", "page_size"),
+    ("collection", "filter", "order_by"),
     [
-        (Collection.CHARACTERS, _FILTER, _ORDER_BY, _VIEW, _PAGE_SIZE),
-        (Collection.VOICES, 'display_name = "Jaheira"', _ORDER_BY, _VIEW, _PAGE_SIZE),
-        (Collection.VOICES, _FILTER, "npc_line_count asc", _VIEW, _PAGE_SIZE),
-        (Collection.VOICES, _FILTER, _ORDER_BY, ResourceView.BASIC, _PAGE_SIZE),
-        (Collection.VOICES, _FILTER, _ORDER_BY, _VIEW, 100),
+        (Collection.CHARACTERS, _FILTER, _ORDER_BY),
+        (Collection.VOICES, 'display_name = "Jaheira"', _ORDER_BY),
+        (Collection.VOICES, _FILTER, "npc_line_count asc"),
     ],
 )
 def test_page_tokens_cannot_be_reused_for_a_different_request(
     collection: Collection,
     filter: str,
     order_by: str,
-    view: ResourceView,
-    page_size: int,
 ) -> None:
     token = encode_page_token(
         Collection.VOICES,
         filter=_FILTER,
         order_by=_ORDER_BY,
-        view=_VIEW,
-        page_size=_PAGE_SIZE,
         offset=50,
     )
 
@@ -118,8 +107,6 @@ def test_page_tokens_cannot_be_reused_for_a_different_request(
             collection,
             filter=filter,
             order_by=order_by,
-            view=view,
-            page_size=page_size,
         )
 
 
@@ -131,8 +118,6 @@ def test_page_tokens_reject_malformed_data(token: str) -> None:
                 Collection.VOICES,
                 filter=_FILTER,
                 order_by=_ORDER_BY,
-                view=_VIEW,
-                page_size=_PAGE_SIZE,
                 offset=50,
             )
             + "A"
@@ -143,6 +128,4 @@ def test_page_tokens_reject_malformed_data(token: str) -> None:
             Collection.VOICES,
             filter=_FILTER,
             order_by=_ORDER_BY,
-            view=_VIEW,
-            page_size=_PAGE_SIZE,
         )
