@@ -6,7 +6,7 @@ from pathlib import Path
 
 from pydantic import PositiveInt
 
-from bgvoice.database import CharacterDatabase
+from bgvoice.database import PipelineDatabase
 from bgvoice.iecli import CharacterIeCliClient, DialogueIeCliClient
 from bgvoice.models import (
     CharacterDetail,
@@ -16,10 +16,12 @@ from bgvoice.models import (
     ExtractionProgress,
     ExtractionSummary,
     RunKind,
+    RunStatus,
     TerminalRunStatus,
 )
 
 type ProgressCallback = Callable[[ExtractionProgress], None]
+type CommitCallback = Callable[[int, int], None]
 type Failure = tuple[str, str]
 
 _WRITE_BATCH_SIZE = 100
@@ -27,7 +29,7 @@ _WRITE_BATCH_SIZE = 100
 
 def extract_characters(
     client: CharacterIeCliClient,
-    database: CharacterDatabase,
+    database: PipelineDatabase,
     game_root: Path,
     *,
     include_details: bool = True,
@@ -44,8 +46,8 @@ def extract_characters(
         target_names = database.detail_targets(refresh=refresh)
         return [resource for resource in resources if resource.resource_name in target_names]
 
-    def extract_details(resources: Sequence[CreResource]) -> tuple[int, int]:
-        return _extract_resources(
+    def extract_details(resources: Sequence[CreResource], committed: CommitCallback) -> None:
+        _extract_resources(
             resources,
             root,
             name=lambda resource: resource.resource_name,
@@ -55,13 +57,14 @@ def extract_characters(
             workers=int(workers),
             thread_name_prefix="iecli-cre",
             progress=progress,
+            committed=committed,
         )
 
     return _run_extraction(
         database,
         root,
         client.version(),
-        run_kind="characters",
+        run_kind=RunKind.CHARACTERS,
         discover=client.list_creatures,
         store_inventory=database.replace_inventory,
         select_targets=select_targets,
@@ -71,7 +74,7 @@ def extract_characters(
 
 def extract_dialogues(
     client: DialogueIeCliClient,
-    database: CharacterDatabase,
+    database: PipelineDatabase,
     game_root: Path,
     *,
     workers: PositiveInt = 8,
@@ -84,8 +87,8 @@ def extract_dialogues(
     def select_targets(_resources: Sequence[DlgResource]) -> list[str]:
         return database.dialogue_targets(refresh=refresh)
 
-    def extract_details(resource_names: Sequence[str]) -> tuple[int, int]:
-        return _extract_resources(
+    def extract_details(resource_names: Sequence[str], committed: CommitCallback) -> None:
+        _extract_resources(
             resource_names,
             root,
             name=lambda resource_name: resource_name,
@@ -95,13 +98,14 @@ def extract_dialogues(
             workers=int(workers),
             thread_name_prefix="iecli-dlg",
             progress=progress,
+            committed=committed,
         )
 
     return _run_extraction(
         database,
         root,
         client.version(),
-        run_kind="dialogues",
+        run_kind=RunKind.DIALOGUES,
         discover=client.list_dialogues,
         store_inventory=database.replace_dialogue_inventory,
         select_targets=select_targets,
@@ -110,15 +114,15 @@ def extract_dialogues(
 
 
 def _run_extraction[Inventory, Target](
-    database: CharacterDatabase,
+    database: PipelineDatabase,
     game_root: Path,
     iecli_version: str,
     *,
     run_kind: RunKind,
     discover: Callable[[Path], list[Inventory]],
-    store_inventory: Callable[[int, Sequence[Inventory]], None],
+    store_inventory: Callable[[str, Sequence[Inventory]], None],
     select_targets: Callable[[Sequence[Inventory]], list[Target]],
-    extract_details: Callable[[Sequence[Target]], tuple[int, int]],
+    extract_details: Callable[[Sequence[Target], CommitCallback], None],
 ) -> ExtractionSummary:
     """Run the shared inventory, detail, and durable finalization lifecycle."""
     run_id = database.start_run(game_root, iecli_version, run_kind=run_kind)
@@ -131,9 +135,15 @@ def _run_extraction[Inventory, Target](
 
         targets = select_targets(inventory)
         attempted = len(targets)
-        extracted, failed = extract_details(targets)
 
-        status: TerminalRunStatus = "complete_with_errors" if failed else "complete"
+        def record_commit(succeeded: int, failures: int) -> None:
+            nonlocal extracted, failed
+            extracted += succeeded
+            failed += failures
+
+        extract_details(targets, record_commit)
+
+        status: TerminalRunStatus = RunStatus.COMPLETE_WITH_ERRORS if failed else RunStatus.COMPLETE
         database.finish_run(
             run_id,
             status=status,
@@ -157,7 +167,7 @@ def _run_extraction[Inventory, Target](
         try:
             database.finish_run(
                 run_id,
-                status="failed",
+                status=RunStatus.FAILED,
                 attempted=attempted,
                 extracted=extracted,
                 failures=failed,
@@ -179,10 +189,11 @@ def _extract_resources[Resource, Dump, Detail](
     workers: int,
     thread_name_prefix: str,
     progress: ProgressCallback | None,
-) -> tuple[int, int]:
+    committed: CommitCallback,
+) -> None:
     """Extract resources concurrently, isolating failures and writing bounded batches."""
     if not resources:
-        return 0, 0
+        return
 
     succeeded = failed = 0
     details: list[Detail] = []
@@ -204,6 +215,7 @@ def _extract_resources[Resource, Dump, Detail](
 
             if len(details) + len(failures) >= _WRITE_BATCH_SIZE:
                 save(details, failures)
+                committed(len(details), len(failures))
                 details.clear()
                 failures.clear()
 
@@ -226,4 +238,4 @@ def _extract_resources[Resource, Dump, Detail](
 
     if details or failures:
         save(details, failures)
-    return succeeded, failed
+        committed(len(details), len(failures))

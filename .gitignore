@@ -22,8 +22,8 @@ pnpm-debug.log*
 
 # Local pipeline artifacts
 /.tools/
-/data/*.db*
-/data/*.sqlite*
+/data/*
+!/data/README.md
 
 # Local configuration and logs
 .env

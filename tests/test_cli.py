@@ -5,9 +5,11 @@ from pathlib import Path
 import pytest
 
 import bgvoice.__main__ as cli
+from bgvoice.database import PipelineDatabase
 from bgvoice.models import (
     ExtractionProgress,
     ExtractionSummary,
+    RunStatus,
     TerminalRunStatus,
 )
 
@@ -15,9 +17,9 @@ from bgvoice.models import (
 def _summary(tmp_path: Path, status: TerminalRunStatus) -> ExtractionSummary:
     failed = int(status == "complete_with_errors")
     return ExtractionSummary(
-        run_id=1,
+        run_id="test-run",
         game_root=tmp_path,
-        database_path=tmp_path / "db.sqlite3",
+        database_path=tmp_path / "db.lancedb",
         iecli_version="iecli test",
         discovered=2,
         attempted=2,
@@ -35,6 +37,7 @@ def test_parser_uses_available_cpu_count(monkeypatch: pytest.MonkeyPatch) -> Non
     options = cli.build_parser().parse_args(["extract-characters", "--game", "C:/game"])
 
     assert options.workers == 12
+    assert options.database == Path("data/bgvoice.lancedb")
 
 
 @pytest.mark.parametrize(
@@ -84,7 +87,7 @@ def test_extraction_commands_dispatch_options_and_status(
         **options: object,
     ) -> ExtractionSummary:
         calls["characters"] = options
-        return _summary(tmp_path, "complete")
+        return _summary(tmp_path, RunStatus.COMPLETE)
 
     def fake_dialogues(
         _client: object,
@@ -93,14 +96,14 @@ def test_extraction_commands_dispatch_options_and_status(
         **options: object,
     ) -> ExtractionSummary:
         calls["dialogues"] = options
-        return _summary(tmp_path, "complete_with_errors")
+        return _summary(tmp_path, RunStatus.COMPLETE_WITH_ERRORS)
 
     monkeypatch.setattr(cli, "IeCli", fake_iecli)
     monkeypatch.setattr(cli, "extract_characters", fake_characters)
     monkeypatch.setattr(cli, "extract_dialogues", fake_dialogues)
 
     executable = tmp_path / "iecli.exe"
-    database = tmp_path / "pipeline.sqlite3"
+    database = tmp_path / "pipeline.lancedb"
     assert (
         cli.main(
             [
@@ -149,7 +152,7 @@ def test_extraction_commands_dispatch_options_and_status(
     output = capsys.readouterr()
     assert '"status": "complete"' in output.out
     assert '"status": "complete_with_errors"' in output.out
-    assert output.err.count("SQLite integrity: ok") == 2
+    assert output.err.count("Active character records: 0") == 2
 
 
 def test_native_extraction_errors_propagate(
@@ -170,39 +173,11 @@ def test_native_extraction_errors_propagate(
                 "--game",
                 str(tmp_path),
                 "--database",
-                str(tmp_path / "pipeline.sqlite3"),
+                str(tmp_path / "pipeline.lancedb"),
             ]
         )
 
     assert raised.value is expected
-
-
-@pytest.mark.parametrize("command", ["attribute-dialogues", "extract-characters"])
-def test_integrity_failure_asserts_after_printing_diagnostics(
-    command: str,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-    tmp_path: Path,
-) -> None:
-    def corrupt_integrity(_database: object) -> str:
-        return "corrupt"
-
-    def fake_extraction(*_args: object, **_options: object) -> ExtractionSummary:
-        return _summary(tmp_path, "complete")
-
-    monkeypatch.setattr(cli.CharacterDatabase, "integrity_check", corrupt_integrity)
-    monkeypatch.setattr(cli, "IeCli", lambda: object())
-    monkeypatch.setattr(cli, "extract_characters", fake_extraction)
-    arguments = [command, "--database", str(tmp_path / "pipeline.sqlite3")]
-    if command == "extract-characters":
-        arguments.extend(["--game", str(tmp_path)])
-
-    with pytest.raises(AssertionError, match="SQLite integrity check failed: corrupt"):
-        cli.main(arguments)
-
-    output = capsys.readouterr()
-    assert output.out.strip()
-    assert "SQLite integrity: corrupt" in output.err
 
 
 def test_web_and_attribution_commands_dispatch(
@@ -217,7 +192,8 @@ def test_web_and_attribution_commands_dispatch(
 
     monkeypatch.setattr("uvicorn.run", run_web)
 
-    database = tmp_path / "pipeline.sqlite3"
+    database = tmp_path / "pipeline.lancedb"
+    PipelineDatabase(database)
     assert cli.main(["attribute-dialogues", "--database", str(database)]) == 0
     assert (
         cli.main(["web", "--database", str(database), "--host", "0.0.0.0", "--port", "8123"]) == 0
@@ -228,4 +204,11 @@ def test_web_and_attribution_commands_dispatch(
     output = capsys.readouterr()
     assert '"characters_unavailable": 0' in output.out
     assert '"dialogues_unattributed": 0' in output.out
-    assert "SQLite integrity: ok" in output.err
+    assert output.err == ""
+
+
+def test_attribution_rejects_a_missing_database(tmp_path: Path) -> None:
+    path = tmp_path / "missing.lancedb"
+    with pytest.raises(AssertionError, match="pipeline database does not exist"):
+        cli.main(["attribute-dialogues", "--database", str(path)])
+    assert not path.exists()

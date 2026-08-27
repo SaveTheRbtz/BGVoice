@@ -1,32 +1,33 @@
 """Read-only HTTP API and production SPA host for pipeline inspection."""
 
+import asyncio
 import re
-import sqlite3
-from collections.abc import Iterator
-from contextlib import contextmanager
+from collections import Counter
+from collections.abc import AsyncIterator, Iterable, Sequence
+from contextlib import asynccontextmanager
+from dataclasses import dataclass
+from datetime import timedelta
 from pathlib import Path
 from typing import Annotated, Literal, cast
 
+import lancedb
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from lancedb.db import AsyncConnection
+from lancedb.expr import Expr, col, lit
+from lancedb.pydantic import LanceModel
+from lancedb.query import AsyncFTSQuery, BooleanQuery, ColumnOrdering, MatchQuery, Occur
+from lancedb.table import AsyncTable
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import ColumnElement, func, text
-from sqlalchemy.engine import Engine
-from sqlalchemy.orm import Mapped
-from sqlalchemy.pool import NullPool
-from sqlalchemy.sql.elements import TextClause
-from sqlmodel import Session, col, create_engine, select
 
 from bgvoice.database import (
-    SCHEMA_VERSION,
-    AttributionRun,
-    Character,
-    CharacterAttribution,
-    Dialogue,
+    TABLE_INDEXES,
+    TABLE_NAMES,
+    CharacterRecord,
     DialogueLineRecord,
-    ExtractionRun,
-    SchemaMetadata,
+    DialogueRecord,
+    ExtractionRunRecord,
 )
 from bgvoice.models import (
     AttributionStatus,
@@ -70,50 +71,9 @@ type LineSort = Literal[
     "transition_index",
 ]
 type SortDirection = Literal["asc", "desc"]
+type StableColumn = Literal["resource_name", "id"]
 
 _SEARCH_TOKEN = re.compile(r"[\w-]+", re.UNICODE)
-
-_ATTRIBUTION_COUNTS = (
-    select(
-        col(CharacterAttribution.dialogue_resource_name).label("dialogue_resource_name"),
-        func.count().label("character_count"),
-    )
-    .where(col(CharacterAttribution.dialogue_resource_name).is_not(None))
-    .group_by(CharacterAttribution.dialogue_resource_name)
-    .subquery()
-)
-_CHARACTER_COUNT = func.coalesce(_ATTRIBUTION_COUNTS.c.character_count, 0)
-
-_CHARACTER_SORT_COLUMNS = {
-    "resource_name": col(Character.resource_name).collate("NOCASE"),
-    "display_name": col(Character.display_name).collate("NOCASE"),
-    "source_kind": col(Character.source_kind).collate("NOCASE"),
-    "serialized_size": col(Character.serialized_size),
-    "dialogue_line_count": col(Dialogue.dialogue_line_count),
-    "npc_line_count": col(Dialogue.npc_line_count),
-    "player_line_count": col(Dialogue.player_line_count),
-    "dialogue_state_count": col(CharacterAttribution.dialogue_state_count),
-    "dialogue_transition_count": col(CharacterAttribution.dialogue_transition_count),
-    "updated_at": col(Character.updated_at),
-}
-_DIALOGUE_SORT_COLUMNS = {
-    "resource_name": col(Dialogue.resource_name).collate("NOCASE"),
-    "source_kind": col(Dialogue.source_kind).collate("NOCASE"),
-    "serialized_size": col(Dialogue.serialized_size),
-    "dialogue_line_count": col(Dialogue.dialogue_line_count),
-    "npc_line_count": col(Dialogue.npc_line_count),
-    "player_line_count": col(Dialogue.player_line_count),
-    "character_count": _CHARACTER_COUNT,
-    "updated_at": col(Dialogue.updated_at),
-}
-_LINE_SORT_COLUMNS = {
-    "dialogue_resource_name": col(DialogueLineRecord.dialogue_resource_name).collate("NOCASE"),
-    "line_kind": col(DialogueLineRecord.line_kind),
-    "strref": col(DialogueLineRecord.strref),
-    "serialized_size": col(DialogueLineRecord.serialized_size),
-    "state_index": col(DialogueLineRecord.state_index),
-    "transition_index": col(DialogueLineRecord.transition_index),
-}
 
 
 class ApiModel(BaseModel):
@@ -140,7 +100,7 @@ class CharacterQuery(PageQuery):
     race_id: int | None = Field(default=None, ge=0)
     class_id: int | None = Field(default=None, ge=0)
     attribution_status: AttributionStatus | None = None
-    sort: CharacterSort = "serialized_size"
+    sort: CharacterSort | None = None
     direction: SortDirection = "desc"
 
 
@@ -149,7 +109,7 @@ class DialogueQuery(PageQuery):
     status: DetailStatus | None = None
     source_kind: SourceKind | None = None
     attributed: bool | None = None
-    sort: DialogueSort = "dialogue_line_count"
+    sort: DialogueSort | None = None
     direction: SortDirection = "desc"
 
 
@@ -158,7 +118,7 @@ class LineQuery(PageQuery):
     line_kind: DialogueLineKind | None = None
     source_kind: SourceKind | None = None
     attributed: bool | None = None
-    sort: LineSort = "serialized_size"
+    sort: LineSort | None = None
     direction: SortDirection = "desc"
 
 
@@ -192,7 +152,7 @@ class CharacterPage(ApiModel):
     page_size: int
     total: int
     page_count: int
-    sort: CharacterSort
+    sort: CharacterSort | Literal["relevance"]
     direction: SortDirection
 
 
@@ -218,12 +178,12 @@ class DialoguePage(ApiModel):
     page_size: int
     total: int
     page_count: int
-    sort: DialogueSort
+    sort: DialogueSort | Literal["relevance"]
     direction: SortDirection
 
 
 class DialogueLineRow(ApiModel):
-    id: int
+    id: str
     dialogue_resource_name: str
     dialogue_resref: str
     source_kind: SourceKind
@@ -242,7 +202,7 @@ class DialogueLinePage(ApiModel):
     page_size: int
     total: int
     page_count: int
-    sort: LineSort
+    sort: LineSort | Literal["relevance"]
     direction: SortDirection
 
 
@@ -259,7 +219,7 @@ class FilterOptions(ApiModel):
 
 
 class ExtractionRunSummary(ApiModel):
-    id: int
+    id: str
     run_kind: RunKind
     started_at: str
     completed_at: str | None
@@ -308,111 +268,207 @@ class CharacterDetailResponse(ApiModel):
 
 class HealthResponse(ApiModel):
     status: Literal["ok"]
-    sqlite_query_only: bool
-    schema_version: int
+    storage: Literal["lancedb"]
 
 
-class ReadOnlyPipelineDatabase:
-    """Short-lived SQLModel sessions over a read-only SQLite URI."""
+class _Projection(LanceModel):
+    model_config = ConfigDict(strict=True, extra="forbid")
 
-    def __init__(self, path: Path) -> None:
-        self.path = path.expanduser().resolve()
-        assert self.path.is_file(), f"pipeline database does not exist: {self.path}"
-        self._engine = self._create_engine()
 
-    @contextmanager
-    def session(self) -> Iterator[Session]:
-        """Open one short-lived typed read session."""
-        with Session(self._engine) as session:
-            yield session
+class _AttributionMarker(_Projection):
+    attribution_completed_at: str | None
+
+
+class _CharacterStats(_AttributionMarker):
+    detail_status: DetailStatus = Field(strict=False)
+    has_dialog: bool
+    attribution_status: AttributionStatus | None = Field(strict=False)
+
+
+class _DialogueStats(_Projection):
+    detail_status: DetailStatus = Field(strict=False)
+    dialogue_line_count: int | None
+    character_count: int
+    attribution_completed_at: str | None
+
+
+class _CharacterFacets(_Projection):
+    source_kind: SourceKind = Field(strict=False)
+    gender_id: int | None
+    race_id: int | None
+    class_id: int | None
+
+
+class _CharacterSearchResult(CharacterRecord):
+    score: float = Field(alias="_score")
+
+
+class _DialogueSearchResult(DialogueRecord):
+    score: float = Field(alias="_score")
+
+
+class _LineSearchResult(DialogueLineRecord):
+    score: float = Field(alias="_score")
+
+
+@dataclass(frozen=True, slots=True)
+class PipelineReader:
+    """Strongly consistent typed reads over one local LanceDB database."""
+
+    path: Path
+    _connection: AsyncConnection
+    characters_table: AsyncTable
+    dialogues_table: AsyncTable
+    lines_table: AsyncTable
+    runs_table: AsyncTable
+
+    @classmethod
+    async def open(cls, path: Path) -> PipelineReader:
+        resolved_path = path.expanduser().resolve()
+        assert resolved_path.is_dir(), f"pipeline database does not exist: {resolved_path}"
+        connection = await lancedb.connect_async(
+            resolved_path,
+            read_consistency_interval=timedelta(0),
+        )
+        table_names = frozenset((await connection.list_tables(limit=None)).tables)
+        assert table_names == TABLE_NAMES, (
+            f"pipeline database tables are {sorted(table_names)}; "
+            f"expected {sorted(TABLE_NAMES)}. Rebuild the generated database."
+        )
+
+        characters, dialogues, lines, runs = await asyncio.gather(
+            connection.open_table("characters"),
+            connection.open_table("dialogues"),
+            connection.open_table("dialogue_lines"),
+            connection.open_table("extraction_runs"),
+        )
+        character_schema, dialogue_schema, line_schema, run_schema = await asyncio.gather(
+            characters.schema(),
+            dialogues.schema(),
+            lines.schema(),
+            runs.schema(),
+        )
+        character_indexes, dialogue_indexes, line_indexes, run_indexes = await asyncio.gather(
+            characters.list_indices(),
+            dialogues.list_indices(),
+            lines.list_indices(),
+            runs.list_indices(),
+        )
+        assert character_schema.equals(CharacterRecord.to_arrow_schema(), check_metadata=True), (
+            "characters table schema does not match CharacterRecord"
+        )
+        assert dialogue_schema.equals(DialogueRecord.to_arrow_schema(), check_metadata=True), (
+            "dialogues table schema does not match DialogueRecord"
+        )
+        assert line_schema.equals(DialogueLineRecord.to_arrow_schema(), check_metadata=True), (
+            "dialogue_lines table schema does not match DialogueLineRecord"
+        )
+        assert run_schema.equals(ExtractionRunRecord.to_arrow_schema(), check_metadata=True), (
+            "extraction_runs table schema does not match ExtractionRunRecord"
+        )
+        actual_indexes = {
+            "characters": frozenset(
+                (index.name, index.index_type, tuple(index.columns)) for index in character_indexes
+            ),
+            "dialogues": frozenset(
+                (index.name, index.index_type, tuple(index.columns)) for index in dialogue_indexes
+            ),
+            "dialogue_lines": frozenset(
+                (index.name, index.index_type, tuple(index.columns)) for index in line_indexes
+            ),
+            "extraction_runs": frozenset(
+                (index.name, index.index_type, tuple(index.columns)) for index in run_indexes
+            ),
+        }
+        expected_indexes = {
+            name: frozenset(
+                (spec.name, type(spec.config).__name__, (spec.column,)) for spec in specs
+            )
+            for name, specs in TABLE_INDEXES.items()
+        }
+        assert actual_indexes == expected_indexes, (
+            f"pipeline database indexes are {actual_indexes}; expected {expected_indexes}. "
+            "Rebuild the generated database."
+        )
+        return cls(resolved_path, connection, characters, dialogues, lines, runs)
+
+    def close(self) -> None:
+        self._connection.close()
 
     def health(self) -> HealthResponse:
-        with self.session() as session:
-            query_only = session.connection().exec_driver_sql("PRAGMA query_only").scalar_one()
-            metadata = session.get(SchemaMetadata, "schema_version")
-        assert metadata is not None, (
-            f"database schema metadata is missing: {self.path}. "
-            "Rebuild the generated database from the EET installation."
-        )
-        assert metadata.value == SCHEMA_VERSION, (
-            f"database schema is {metadata.value}; expected {SCHEMA_VERSION}. "
-            "Rebuild the generated database from the EET installation."
-        )
-        return HealthResponse(
-            status="ok",
-            sqlite_query_only=bool(query_only),
-            schema_version=int(metadata.value),
-        )
+        return HealthResponse(status="ok", storage="lancedb")
 
-    def stats(self) -> PipelineStats:
-        with self.session() as session:
-            character = session.exec(
-                select(
-                    func.count(col(Character.resource_name)),
-                    func.count().filter(col(Character.detail_status) == "complete"),
-                    func.count().filter(col(Character.detail_status) == "failed"),
-                    func.count().filter(
-                        col(Character.detail_status) == "complete",
-                        col(Character.dialog_resref).is_not(None),
-                    ),
-                ).where(col(Character.active) == 1)
-            ).one()
-            dialogue = session.exec(
-                select(
-                    func.count(col(Dialogue.resource_name)),
-                    func.count().filter(col(Dialogue.detail_status) == "complete"),
-                    func.coalesce(
-                        func.sum(col(Dialogue.dialogue_line_count)).filter(
-                            col(Dialogue.detail_status) == "complete"
-                        ),
-                        0,
-                    ),
-                ).where(col(Dialogue.active) == 1)
-            ).one()
-            line_count = session.exec(
-                select(func.count(col(DialogueLineRecord.id)))
-                .select_from(DialogueLineRecord)
-                .join(
-                    Dialogue,
-                    col(Dialogue.resource_name) == col(DialogueLineRecord.dialogue_resource_name),
-                )
-                .where(Dialogue.active == 1)
-            ).one()
-            latest_runs = list(
-                session.exec(select(ExtractionRun).order_by(col(ExtractionRun.id).desc()).limit(8))
+    async def stats(self) -> PipelineStats:
+        character_rows, dialogue_rows, run_rows, line_records_total = await asyncio.gather(
+            self.characters_table.query()
+            .select(list(_CharacterStats.model_fields))
+            .to_pydantic(_CharacterStats),
+            self.dialogues_table.query()
+            .select(list(_DialogueStats.model_fields))
+            .to_pydantic(_DialogueStats),
+            self.runs_table.query()
+            .order_by(
+                [
+                    ColumnOrdering(column_name="started_at", ascending=False, nulls_first=False),
+                    ColumnOrdering(column_name="id", ascending=False, nulls_first=False),
+                ]
             )
-            attribution = session.exec(
-                select(AttributionRun).order_by(col(AttributionRun.id).desc()).limit(1)
-            ).first()
+            .limit(8)
+            .to_pydantic(ExtractionRunRecord),
+            self.lines_table.count_rows(),
+        )
+        characters = cast(list[_CharacterStats], character_rows)
+        dialogues = cast(list[_DialogueStats], dialogue_rows)
+        latest_runs = cast(list[ExtractionRunRecord], run_rows)
+
+        attribution_completed_at = _published_attribution_timestamp(characters)
+        if attribution_completed_at is None:
+            attribution_counts: Counter[AttributionStatus | None] = Counter()
+            attributed_dialogues: list[_DialogueStats] = []
+            unattributed_dialogues: list[_DialogueStats] = []
+        else:
+            attribution_counts = Counter(row.attribution_status for row in characters)
+            attributed_dialogues = [
+                row
+                for row in dialogues
+                if row.attribution_completed_at == attribution_completed_at
+                and row.character_count > 0
+            ]
+            unattributed_dialogues = [
+                row
+                for row in dialogues
+                if row.attribution_completed_at != attribution_completed_at
+                or row.character_count == 0
+            ]
 
         return PipelineStats(
             database_path=str(self.path),
-            database_size=self.path.stat().st_size,
-            characters_total=int(character[0]),
-            characters_complete=int(character[1]),
-            characters_failed=int(character[2]),
-            characters_with_dialogue=int(character[3]),
-            attribution_completed_at=attribution.completed_at if attribution else None,
-            characters_unavailable=attribution.characters_unavailable if attribution else 0,
-            characters_matched=attribution.characters_matched if attribution else 0,
-            characters_missing_dialogue=(
-                attribution.characters_missing_dialogue if attribution else 0
+            database_size=sum(
+                file.stat().st_size for file in self.path.rglob("*") if file.is_file()
             ),
-            characters_dialogue_failed=(
-                attribution.characters_dialogue_failed if attribution else 0
+            characters_total=len(characters),
+            characters_complete=sum(
+                row.detail_status is DetailStatus.COMPLETE for row in characters
             ),
-            characters_without_dialogue=(
-                attribution.characters_without_dialogue if attribution else 0
+            characters_failed=sum(row.detail_status is DetailStatus.FAILED for row in characters),
+            characters_with_dialogue=sum(row.has_dialog for row in characters),
+            attribution_completed_at=attribution_completed_at,
+            characters_unavailable=attribution_counts[AttributionStatus.CHARACTER_UNAVAILABLE],
+            characters_matched=attribution_counts[AttributionStatus.MATCHED],
+            characters_missing_dialogue=attribution_counts[AttributionStatus.MISSING_DIALOGUE],
+            characters_dialogue_failed=attribution_counts[AttributionStatus.DIALOGUE_FAILED],
+            characters_without_dialogue=attribution_counts[AttributionStatus.NO_DIALOGUE],
+            dialogues_total=len(dialogues),
+            dialogues_complete=sum(row.detail_status is DetailStatus.COMPLETE for row in dialogues),
+            dialogue_lines=sum(row.dialogue_line_count or 0 for row in dialogues),
+            line_records_total=line_records_total,
+            dialogues_attributed=len(attributed_dialogues),
+            dialogues_unattributed=len(unattributed_dialogues),
+            attributed_dialogue_lines=sum(
+                row.dialogue_line_count or 0 for row in attributed_dialogues
             ),
-            dialogues_total=int(dialogue[0]),
-            dialogues_complete=int(dialogue[1]),
-            dialogue_lines=int(dialogue[2] or 0),
-            line_records_total=int(line_count),
-            dialogues_attributed=attribution.dialogues_attributed if attribution else 0,
-            dialogues_unattributed=attribution.dialogues_unattributed if attribution else 0,
-            attributed_dialogue_lines=(attribution.attributed_dialogue_lines if attribution else 0),
-            unattributed_dialogue_lines=(
-                attribution.unattributed_dialogue_lines if attribution else 0
+            unattributed_dialogue_lines=sum(
+                row.dialogue_line_count or 0 for row in unattributed_dialogues
             ),
             latest_runs=[
                 ExtractionRunSummary.model_validate(run, from_attributes=True)
@@ -420,332 +476,270 @@ class ReadOnlyPipelineDatabase:
             ],
         )
 
-    def filter_options(self) -> FilterOptions:
-        with self.session() as session:
-            return FilterOptions(
-                source_kinds=self._facet(session, col(Character.source_kind)),
-                gender_ids=self._facet(session, col(Character.gender_id)),
-                race_ids=self._facet(session, col(Character.race_id)),
-                class_ids=self._facet(session, col(Character.class_id)),
-            )
+    async def filter_options(self) -> FilterOptions:
+        characters = cast(
+            list[_CharacterFacets],
+            await self.characters_table.query()
+            .select(list(_CharacterFacets.model_fields))
+            .to_pydantic(_CharacterFacets),
+        )
+        return FilterOptions(
+            source_kinds=_string_facets(row.source_kind for row in characters),
+            gender_ids=_integer_facets(
+                row.gender_id for row in characters if row.gender_id is not None
+            ),
+            race_ids=_integer_facets(row.race_id for row in characters if row.race_id is not None),
+            class_ids=_integer_facets(
+                row.class_id for row in characters if row.class_id is not None
+            ),
+        )
 
-    def characters(self, query: CharacterQuery) -> CharacterPage:
-        conditions = [col(Character.active) == 1]
+    async def _attribution_marker(self) -> str | None:
+        rows = cast(
+            list[_AttributionMarker],
+            await self.characters_table.query()
+            .select(list(_AttributionMarker.model_fields))
+            .to_pydantic(_AttributionMarker),
+        )
+        return _published_attribution_timestamp(rows)
+
+    async def characters(self, query: CharacterQuery) -> CharacterPage:
+        conditions: list[Expr] = []
         if query.status is not None:
-            conditions.append(col(Character.detail_status) == query.status)
+            conditions.append(col("detail_status") == lit(query.status))
         if query.source_kind is not None:
-            conditions.append(col(Character.source_kind) == query.source_kind)
+            conditions.append(col("source_kind") == lit(query.source_kind))
         if query.gender_id is not None:
-            conditions.append(col(Character.gender_id) == query.gender_id)
+            conditions.append(col("gender_id") == lit(query.gender_id))
         if query.race_id is not None:
-            conditions.append(col(Character.race_id) == query.race_id)
+            conditions.append(col("race_id") == lit(query.race_id))
         if query.class_id is not None:
-            conditions.append(col(Character.class_id) == query.class_id)
+            conditions.append(col("class_id") == lit(query.class_id))
         if query.attribution_status is not None:
-            conditions.append(
-                col(CharacterAttribution.attribution_status) == query.attribution_status
-            )
+            conditions.append(col("attribution_status") == lit(query.attribution_status))
         if query.has_dialog is not None:
-            has_dialog = col(Character.dialog_resref).is_not(None)
-            conditions.append(has_dialog if query.has_dialog else ~has_dialog)
-        if (fts_query := _fts_query(query.q)) is not None:
-            conditions.append(_fts_condition("characters", fts_query))
-
-        statement = (
-            select(Character, CharacterAttribution, Dialogue)
-            .select_from(Character)
-            .outerjoin(
-                CharacterAttribution,
-                col(CharacterAttribution.character_resource_name) == col(Character.resource_name),
-            )
-            .outerjoin(
-                Dialogue,
-                (col(Dialogue.resource_name) == col(CharacterAttribution.dialogue_resource_name))
-                & (col(Dialogue.active) == 1),
-            )
-            .where(*conditions)
+            conditions.append(col("has_dialog") == lit(query.has_dialog))
+        predicate = _combine(conditions)
+        tokens = _search_tokens(query.q)
+        sort = query.sort or ("relevance" if tokens else "serialized_size")
+        direction: SortDirection = "desc" if sort == "relevance" else query.direction
+        total, records = await _records_page(
+            table=self.characters_table,
+            model=CharacterRecord,
+            search_model=_CharacterSearchResult,
+            stable_column="resource_name",
+            predicate=predicate,
+            tokens=tokens,
+            ordering=(None if sort == "relevance" else _ordering(sort, direction, "resource_name")),
+            page=query,
         )
-        count_statement = select(func.count()).select_from(statement.subquery())
-        statement = statement.order_by(
-            _ordered(_CHARACTER_SORT_COLUMNS[query.sort], query.direction),
-            col(Character.resource_name).collate("NOCASE").asc(),
-        ).slice(*_page_slice(query))
 
-        with self.session() as session:
-            total = int(session.exec(count_statement).one())
-            rows = session.exec(statement).all()
         return CharacterPage(
-            items=[self._character_row(*row) for row in rows],
+            items=[CharacterRow.model_validate(record, from_attributes=True) for record in records],
             page=query.page,
             page_size=query.page_size,
             total=total,
             page_count=_page_count(total, query.page_size),
-            sort=query.sort,
-            direction=query.direction,
+            sort=sort,
+            direction=direction,
         )
 
-    def dialogues(self, query: DialogueQuery) -> DialoguePage:
-        conditions = [col(Dialogue.active) == 1]
+    async def dialogues(self, query: DialogueQuery) -> DialoguePage:
+        attribution_marker = await self._attribution_marker()
+        conditions: list[Expr] = []
         if query.status is not None:
-            conditions.append(col(Dialogue.detail_status) == query.status)
+            conditions.append(col("detail_status") == lit(query.status))
         if query.source_kind is not None:
-            conditions.append(col(Dialogue.source_kind) == query.source_kind)
+            conditions.append(col("source_kind") == lit(query.source_kind))
         if query.attributed is not None:
-            attributed = _ATTRIBUTION_COUNTS.c.character_count.is_not(None)
-            conditions.append(attributed if query.attributed else ~attributed)
-        if (fts_query := _fts_query(query.q)) is not None:
-            conditions.append(_fts_condition("dialogues", fts_query))
-
-        statement = (
-            select(Dialogue, _CHARACTER_COUNT.label("character_count"))
-            .select_from(Dialogue)
-            .outerjoin(
-                _ATTRIBUTION_COUNTS,
-                _ATTRIBUTION_COUNTS.c.dialogue_resource_name == col(Dialogue.resource_name),
-            )
-            .where(*conditions)
+            conditions.append(_attribution_filter(query.attributed, attribution_marker))
+        predicate = _combine(conditions)
+        tokens = _search_tokens(query.q)
+        sort = query.sort or ("relevance" if tokens else "dialogue_line_count")
+        direction: SortDirection = "desc" if sort == "relevance" else query.direction
+        total, records = await _records_page(
+            table=self.dialogues_table,
+            model=DialogueRecord,
+            search_model=_DialogueSearchResult,
+            stable_column="resource_name",
+            predicate=predicate,
+            tokens=tokens,
+            ordering=(None if sort == "relevance" else _ordering(sort, direction, "resource_name")),
+            page=query,
         )
-        count_statement = select(func.count()).select_from(statement.subquery())
-        statement = statement.order_by(
-            _ordered(_DIALOGUE_SORT_COLUMNS[query.sort], query.direction),
-            col(Dialogue.resource_name).collate("NOCASE").asc(),
-        ).slice(*_page_slice(query))
 
-        with self.session() as session:
-            total = int(session.exec(count_statement).one())
-            rows = session.exec(statement).all()
         return DialoguePage(
-            items=[self._dialogue_row(*row) for row in rows],
+            items=[
+                DialogueRow.model_validate(
+                    record.model_dump(include=set(DialogueRow.model_fields))
+                    | {
+                        "character_count": _published_character_count(
+                            record.character_count,
+                            record.attribution_completed_at,
+                            attribution_marker,
+                        )
+                    }
+                )
+                for record in records
+            ],
             page=query.page,
             page_size=query.page_size,
             total=total,
             page_count=_page_count(total, query.page_size),
-            sort=query.sort,
-            direction=query.direction,
+            sort=sort,
+            direction=direction,
         )
 
-    def lines(self, query: LineQuery) -> DialogueLinePage:
-        conditions = [col(Dialogue.active) == 1]
+    async def lines(self, query: LineQuery) -> DialogueLinePage:
+        attribution_marker = await self._attribution_marker()
+        conditions: list[Expr] = []
         if query.line_kind is not None:
-            conditions.append(col(DialogueLineRecord.line_kind) == query.line_kind)
+            conditions.append(col("line_kind") == lit(query.line_kind))
         if query.source_kind is not None:
-            conditions.append(col(Dialogue.source_kind) == query.source_kind)
+            conditions.append(col("source_kind") == lit(query.source_kind))
         if query.attributed is not None:
-            attributed = _ATTRIBUTION_COUNTS.c.character_count.is_not(None)
-            conditions.append(attributed if query.attributed else ~attributed)
-        if (fts_query := _fts_query(query.q)) is not None:
-            conditions.append(_fts_condition("dialogue_lines", fts_query))
-
-        statement = (
-            select(DialogueLineRecord, Dialogue, _CHARACTER_COUNT.label("character_count"))
-            .select_from(DialogueLineRecord)
-            .join(
-                Dialogue,
-                col(Dialogue.resource_name) == col(DialogueLineRecord.dialogue_resource_name),
-            )
-            .outerjoin(
-                _ATTRIBUTION_COUNTS,
-                _ATTRIBUTION_COUNTS.c.dialogue_resource_name == col(Dialogue.resource_name),
-            )
-            .where(*conditions)
+            conditions.append(_attribution_filter(query.attributed, attribution_marker))
+        predicate = _combine(conditions)
+        tokens = _search_tokens(query.q)
+        sort = query.sort or ("relevance" if tokens else "serialized_size")
+        direction: SortDirection = "desc" if sort == "relevance" else query.direction
+        total, records = await _records_page(
+            table=self.lines_table,
+            model=DialogueLineRecord,
+            search_model=_LineSearchResult,
+            stable_column="id",
+            predicate=predicate,
+            tokens=tokens,
+            ordering=None if sort == "relevance" else _ordering(sort, direction, "id"),
+            page=query,
         )
-        count_statement = select(func.count()).select_from(statement.subquery())
-        statement = statement.order_by(
-            _ordered(_LINE_SORT_COLUMNS[query.sort], query.direction),
-            col(DialogueLineRecord.id).asc(),
-        ).slice(*_page_slice(query))
 
-        with self.session() as session:
-            total = int(session.exec(count_statement).one())
-            rows = session.exec(statement).all()
         return DialogueLinePage(
-            items=[self._line_row(*row) for row in rows],
+            items=[
+                DialogueLineRow.model_validate(
+                    record.model_dump(include=set(DialogueLineRow.model_fields))
+                    | {
+                        "character_count": _published_character_count(
+                            record.character_count,
+                            record.attribution_completed_at,
+                            attribution_marker,
+                        )
+                    }
+                )
+                for record in records
+            ],
             page=query.page,
             page_size=query.page_size,
             total=total,
             page_count=_page_count(total, query.page_size),
-            sort=query.sort,
-            direction=query.direction,
+            sort=sort,
+            direction=direction,
         )
 
-    def character_detail(self, resource_name: str) -> CharacterDetailResponse | None:
-        statement = (
-            select(Character, CharacterAttribution, Dialogue)
-            .select_from(Character)
-            .outerjoin(
-                CharacterAttribution,
-                col(CharacterAttribution.character_resource_name) == col(Character.resource_name),
-            )
-            .outerjoin(
-                Dialogue,
-                (col(Dialogue.resource_name) == col(CharacterAttribution.dialogue_resource_name))
-                & (col(Dialogue.active) == 1),
-            )
-            .where(
-                col(Character.active) == 1,
-                col(Character.resource_name) == resource_name,
-            )
+    async def character_detail(self, resource_name: str) -> CharacterDetailResponse | None:
+        records = cast(
+            list[CharacterRecord],
+            await self.characters_table.query()
+            .where(col("resource_name") == lit(resource_name))
+            .limit(1)
+            .to_pydantic(CharacterRecord),
         )
-        with self.session() as session:
-            row = session.exec(statement).first()
-        if row is None:
+        if not records or records[0].detail_status is not DetailStatus.COMPLETE:
             return None
-        character, attribution, dialogue = row
-        if character.detail_json is None or character.serialized_size is None:
-            return None
+        record = records[0]
+        assert record.serialized_size is not None
+        character = CharacterDetail.model_validate(record, from_attributes=True)
+
+        dialogue: DialogueDetail | None = None
+        if record.dialogue_status is DetailStatus.COMPLETE:
+            assert record.dialog_resref is not None
+            assert record.dialogue_state_count is not None
+            assert record.dialogue_transition_count is not None
+            assert record.npc_line_count is not None
+            assert record.player_line_count is not None
+            assert record.journal_line_count is not None
+            assert record.dialogue_line_count is not None
+            assert record.dialogue_serialized_size is not None
+            dialogue = DialogueDetail(
+                resource_name=f"{record.dialog_resref}.DLG",
+                resref=record.dialog_resref,
+                dlg_version="V1.0",
+                state_count=record.dialogue_state_count,
+                transition_count=record.dialogue_transition_count,
+                npc_line_count=record.npc_line_count,
+                player_line_count=record.player_line_count,
+                journal_line_count=record.journal_line_count,
+                dialogue_line_count=record.dialogue_line_count,
+                pydantic_json_size=record.dialogue_serialized_size,
+            )
+
         return CharacterDetailResponse(
-            character=CharacterDetail.model_validate_json(character.detail_json, strict=True),
-            dialogue=(
-                DialogueDetail.model_validate_json(dialogue.detail_json, strict=True)
-                if dialogue is not None and dialogue.detail_json is not None
-                else None
-            ),
-            source_kind=character.source_kind,
-            source_path=character.source_path,
-            character_serialized_size=character.serialized_size,
-            dialogue_serialized_size=dialogue.serialized_size if dialogue else None,
-            updated_at=character.updated_at,
-            attribution_status=attribution.attribution_status if attribution else None,
+            character=character,
+            dialogue=dialogue,
+            source_kind=record.source_kind,
+            source_path=record.source_path,
+            character_serialized_size=record.serialized_size,
+            dialogue_serialized_size=record.dialogue_serialized_size,
+            updated_at=record.updated_at,
+            attribution_status=record.attribution_status,
         )
-
-    @staticmethod
-    def _character_row(
-        character: Character,
-        attribution: CharacterAttribution | None,
-        dialogue: Dialogue | None,
-    ) -> CharacterRow:
-        return CharacterRow(
-            resource_name=character.resource_name,
-            display_name=character.display_name,
-            resref=character.resref,
-            source_kind=character.source_kind,
-            dialog_resref=character.dialog_resref,
-            gender_id=character.gender_id,
-            race_id=character.race_id,
-            class_id=character.class_id,
-            detail_status=character.detail_status,
-            detail_error=character.detail_error,
-            attribution_status=attribution.attribution_status if attribution else None,
-            serialized_size=character.serialized_size,
-            dialogue_status=dialogue.detail_status if dialogue else None,
-            dialogue_line_count=dialogue.dialogue_line_count if dialogue else None,
-            npc_line_count=dialogue.npc_line_count if dialogue else None,
-            player_line_count=dialogue.player_line_count if dialogue else None,
-            journal_line_count=dialogue.journal_line_count if dialogue else None,
-            dialogue_state_count=attribution.dialogue_state_count if attribution else None,
-            dialogue_transition_count=(
-                attribution.dialogue_transition_count if attribution else None
-            ),
-            dialogue_serialized_size=dialogue.serialized_size if dialogue else None,
-            updated_at=character.updated_at,
-        )
-
-    @staticmethod
-    def _dialogue_row(dialogue: Dialogue, character_count: int) -> DialogueRow:
-        return DialogueRow(
-            resource_name=dialogue.resource_name,
-            resref=dialogue.resref,
-            source_kind=dialogue.source_kind,
-            source_path=dialogue.source_path,
-            detail_status=dialogue.detail_status,
-            detail_error=dialogue.detail_error,
-            serialized_size=dialogue.serialized_size,
-            dialogue_line_count=dialogue.dialogue_line_count,
-            npc_line_count=dialogue.npc_line_count,
-            player_line_count=dialogue.player_line_count,
-            journal_line_count=dialogue.journal_line_count,
-            character_count=int(character_count),
-            updated_at=dialogue.updated_at,
-        )
-
-    @staticmethod
-    def _line_row(
-        line: DialogueLineRecord, dialogue: Dialogue, character_count: int
-    ) -> DialogueLineRow:
-        assert line.id is not None, "stored dialogue line has no id"
-        return DialogueLineRow(
-            id=line.id,
-            dialogue_resource_name=line.dialogue_resource_name,
-            dialogue_resref=dialogue.resref,
-            source_kind=dialogue.source_kind,
-            line_kind=line.line_kind,
-            state_index=line.state_index,
-            transition_index=line.transition_index,
-            strref=line.strref,
-            text=line.text,
-            serialized_size=line.serialized_size,
-            character_count=int(character_count),
-        )
-
-    @staticmethod
-    def _facet[Value: str | int | None](
-        session: Session, column: Mapped[Value]
-    ) -> list[FacetValue]:
-        count = func.count().label("count")
-        rows = session.exec(
-            select(column.label("value"), count)
-            .where(col(Character.active) == 1, column.is_not(None))
-            .group_by(column)
-            .order_by(count.desc(), column.asc())
-        ).all()
-        return [FacetValue(value=cast(str | int, row[0]), count=int(row[1])) for row in rows]
-
-    def _create_engine(self) -> Engine:
-        return create_engine(
-            "sqlite+pysqlite://",
-            creator=self._open_connection,
-            poolclass=NullPool,
-        )
-
-    def _open_connection(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(
-            f"{self.path.as_uri()}?mode=ro",
-            uri=True,
-            autocommit=False,
-            timeout=5.0,
-        )
-        connection.execute("PRAGMA query_only = ON")
-        return connection
 
 
 def create_app(
-    database_path: Path = Path("data/bgvoice.sqlite3"),
+    database_path: Path = Path("data/bgvoice.lancedb"),
     frontend_dist: Path | None = None,
 ) -> FastAPI:
     """Create the API and optionally serve the compiled SPA from the same origin."""
-    database = ReadOnlyPipelineDatabase(database_path)
-    app = FastAPI(title="BGVoice Pipeline Browser", version="0.1.0")
+    database: PipelineReader | None = None
+
+    @asynccontextmanager
+    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        nonlocal database
+        database = await PipelineReader.open(database_path)
+        try:
+            yield
+        finally:
+            database.close()
+            database = None
+
+    def reader() -> PipelineReader:
+        assert database is not None, (
+            "pipeline reader is unavailable outside the application lifespan"
+        )
+        return database
+
+    app = FastAPI(title="BGVoice Pipeline Browser", version="0.1.0", lifespan=lifespan)
 
     @app.get("/api/health", response_model=HealthResponse)
-    def health() -> HealthResponse:
-        return database.health()
+    async def health() -> HealthResponse:
+        return reader().health()
 
     @app.get("/api/stats", response_model=PipelineStats)
-    def stats() -> PipelineStats:
-        return database.stats()
+    async def stats() -> PipelineStats:
+        return await reader().stats()
 
     @app.get("/api/filter-options", response_model=FilterOptions)
-    def filter_options() -> FilterOptions:
-        return database.filter_options()
+    async def filter_options() -> FilterOptions:
+        return await reader().filter_options()
 
     @app.get("/api/characters", response_model=CharacterPage)
-    def characters(query: Annotated[CharacterQuery, Query()]) -> CharacterPage:
-        return database.characters(query)
+    async def characters(query: Annotated[CharacterQuery, Query()]) -> CharacterPage:
+        return await reader().characters(query)
 
     @app.get("/api/characters/{resource_name}", response_model=CharacterDetailResponse)
-    def character_detail(resource_name: str) -> CharacterDetailResponse:
-        detail = database.character_detail(resource_name)
+    async def character_detail(resource_name: str) -> CharacterDetailResponse:
+        detail = await reader().character_detail(resource_name)
         if detail is None:
             raise HTTPException(status_code=404, detail="character detail not found")
         return detail
 
     @app.get("/api/dialogues", response_model=DialoguePage)
-    def dialogues(query: Annotated[DialogueQuery, Query()]) -> DialoguePage:
-        return database.dialogues(query)
+    async def dialogues(query: Annotated[DialogueQuery, Query()]) -> DialoguePage:
+        return await reader().dialogues(query)
 
     @app.get("/api/lines", response_model=DialogueLinePage)
-    def lines(query: Annotated[LineQuery, Query()]) -> DialogueLinePage:
-        return database.lines(query)
+    async def lines(query: Annotated[LineQuery, Query()]) -> DialogueLinePage:
+        return await reader().lines(query)
 
     dist = (frontend_dist or Path("frontend/dist")).expanduser().resolve()
     if dist.is_dir():
@@ -763,45 +757,149 @@ def create_app(
     return app
 
 
-def _ordered(column: object, direction: SortDirection) -> ColumnElement[object]:
-    expression = cast(ColumnElement[object], column)
-    ordered = expression.asc() if direction == "asc" else expression.desc()
-    return ordered.nulls_last()
+async def _records_page[Record: LanceModel](
+    *,
+    table: AsyncTable,
+    model: type[Record],
+    search_model: type[Record],
+    stable_column: StableColumn,
+    predicate: Expr | None,
+    tokens: tuple[str, ...],
+    ordering: list[ColumnOrdering] | None,
+    page: PageQuery,
+) -> tuple[int, list[Record]]:
+    """Run the one typed pagination path shared by all three browser tables."""
+    if tokens:
+
+        def search() -> AsyncFTSQuery:
+            query = table.query().nearest_to_text(_fts_query(tokens))
+            return query.where(predicate) if predicate is not None else query
+
+        match_limit = max(1, await table.count_rows())
+        if ordering is not None:
+            matches = cast(
+                list[Record],
+                await search()
+                .order_by(ordering)
+                .limit(match_limit)
+                .select([*model.model_fields, "_score"])
+                .to_pydantic(search_model),
+            )
+            offset = _page_offset(page)
+            return len(matches), matches[offset : offset + page.page_size]
+
+        matches = (
+            await search().limit(match_limit).select([*model.model_fields, "_score"]).to_arrow()
+        )
+        page_rows = (
+            matches.sort_by([("_score", "descending"), (stable_column, "ascending")])
+            .slice(_page_offset(page), page.page_size)
+            .to_pylist()
+        )
+        return cast(int, matches.num_rows), [search_model.model_validate(row) for row in page_rows]
+
+    assert ordering is not None
+    page_query = table.query()
+    if predicate is not None:
+        page_query = page_query.where(predicate)
+    total, record_rows = await asyncio.gather(
+        table.count_rows(predicate.to_sql() if predicate is not None else None),
+        page_query.order_by(ordering)
+        .offset(_page_offset(page))
+        .limit(page.page_size)
+        .to_pydantic(model),
+    )
+    return total, cast(list[Record], record_rows)
 
 
-def _page_slice(query: PageQuery) -> tuple[int, int]:
-    start = (query.page - 1) * query.page_size
-    return start, start + query.page_size
+def _published_attribution_timestamp(rows: Sequence[_AttributionMarker]) -> str | None:
+    if not rows:
+        return None
+    timestamp = rows[0].attribution_completed_at
+    if timestamp is None or any(row.attribution_completed_at != timestamp for row in rows):
+        return None
+    return timestamp
+
+
+def _attribution_filter(attributed: bool, published_at: str | None) -> Expr:
+    character_count = col("character_count")
+    if published_at is None:
+        return character_count < lit(0) if attributed else character_count >= lit(0)
+
+    same_generation = col("attribution_completed_at") == lit(published_at)
+    if attributed:
+        return same_generation.and_(character_count > lit(0))
+    return (character_count == lit(0)).or_(col("attribution_completed_at") != lit(published_at))
+
+
+def _published_character_count(
+    character_count: int,
+    attributed_at: str | None,
+    published_at: str | None,
+) -> int:
+    if published_at is None or attributed_at != published_at:
+        return 0
+    return character_count
+
+
+def _combine(conditions: list[Expr]) -> Expr | None:
+    if not conditions:
+        return None
+    predicate = conditions[0]
+    for condition in conditions[1:]:
+        predicate &= condition
+    return predicate
+
+
+def _search_tokens(value: str | None) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    return tuple(match.group(0) for match in _SEARCH_TOKEN.finditer(value.strip()))
+
+
+def _fts_query(tokens: tuple[str, ...]) -> BooleanQuery:
+    assert tokens
+    return BooleanQuery([(Occur.MUST, MatchQuery(token, "search_text")) for token in tokens])
+
+
+def _ordering(column: str, direction: SortDirection, stable_column: str) -> list[ColumnOrdering]:
+    ordering = [
+        ColumnOrdering(
+            column_name=column,
+            ascending=direction == "asc",
+            nulls_first=False,
+        )
+    ]
+    if column != stable_column:
+        ordering.append(
+            ColumnOrdering(
+                column_name=stable_column,
+                ascending=True,
+                nulls_first=False,
+            )
+        )
+    return ordering
+
+
+def _page_offset(query: PageQuery) -> int:
+    return (query.page - 1) * query.page_size
 
 
 def _page_count(total: int, page_size: int) -> int:
     return max(1, (total + page_size - 1) // page_size)
 
 
-def _fts_condition(
-    table: Literal["characters", "dialogues", "dialogue_lines"], query: str
-) -> TextClause:
-    clauses = {
-        "characters": (
-            "characters.resource_name IN "
-            "(SELECT resource_name FROM characters_fts WHERE characters_fts MATCH :fts_query)"
-        ),
-        "dialogues": (
-            "dialogues.resource_name IN "
-            "(SELECT resource_name FROM dialogues_fts WHERE dialogues_fts MATCH :fts_query)"
-        ),
-        "dialogue_lines": (
-            "dialogue_lines.id IN "
-            "(SELECT line_id FROM dialogue_lines_fts WHERE dialogue_lines_fts MATCH :fts_query)"
-        ),
-    }
-    return text(clauses[table]).bindparams(fts_query=query)
+def _string_facets(values: Iterable[str]) -> list[FacetValue]:
+    counts = Counter(values)
+    return [
+        FacetValue(value=value, count=count)
+        for value, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+    ]
 
 
-def _fts_query(value: str | None) -> str | None:
-    if value is None:
-        return None
-    tokens = _SEARCH_TOKEN.findall(value.strip())
-    if not tokens:
-        return None
-    return " AND ".join(f'"{token}"*' for token in tokens)
+def _integer_facets(values: Iterable[int]) -> list[FacetValue]:
+    counts = Counter(values)
+    return [
+        FacetValue(value=value, count=count)
+        for value, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+    ]

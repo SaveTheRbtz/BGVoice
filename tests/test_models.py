@@ -11,7 +11,9 @@ from bgvoice.models import (
     DialogueDetail,
     DialogueExtraction,
     DialogueLine,
+    DialogueLineKind,
     DlgDump,
+    SourceKind,
     StringReference,
     clean_display_name,
 )
@@ -49,11 +51,20 @@ def test_clean_display_name_handles_empty_values() -> None:
 def test_resrefs_are_limited_to_eight_characters() -> None:
     resource = make_resource("ABCDEFGH.CRE")
     assert resource.resref == "ABCDEFGH"
+    assert resource.source_kind is SourceKind.OVERRIDE
 
     payload = resource.model_dump(by_alias=True)
     payload["resref"] = "ABCDEFGHI"
     with pytest.raises(ValidationError):
         CreResource.model_validate(payload, strict=True)
+
+
+def test_resource_kinds_reject_values_outside_the_enum() -> None:
+    payload = make_resource().model_dump(by_alias=True)
+    payload["source_kind"] = "archive"
+
+    with pytest.raises(ValidationError, match="override"):
+        CreResource.model_validate(payload)
 
 
 @pytest.mark.parametrize("value", [-1, 0x100])
@@ -131,11 +142,11 @@ def test_dialogue_metrics_and_lines_preserve_dlg_semantics() -> None:
         (line.line_kind, line.state_index, line.transition_index, line.strref)
         for line in DialogueLine.from_dump(dump)
     ] == [
-        ("npc", 0, None, 1),
-        ("player", 0, 0, 2),
-        ("npc", 1, None, 3),
-        ("player", 1, 2, 4),
-        ("journal", 1, 2, 5),
+        (DialogueLineKind.NPC, 0, None, 1),
+        (DialogueLineKind.PLAYER, 0, 0, 2),
+        (DialogueLineKind.NPC, 1, None, 3),
+        (DialogueLineKind.PLAYER, 1, 2, 4),
+        (DialogueLineKind.JOURNAL, 1, 2, 5),
     ]
 
 
@@ -145,3 +156,10 @@ def test_dialogue_extraction_rejects_lines_from_another_resource() -> None:
 
     with pytest.raises(ValidationError, match=r"contains lines for.*MINSC\.DLG"):
         DialogueExtraction(detail=extraction.detail, lines=[wrong_line])
+
+
+def test_dialogue_extraction_reconciles_aggregate_and_line_records() -> None:
+    extraction = DialogueExtraction.from_dump(make_dialogue_dump())
+
+    with pytest.raises(ValidationError, match="line counts"):
+        DialogueExtraction(detail=extraction.detail, lines=[])

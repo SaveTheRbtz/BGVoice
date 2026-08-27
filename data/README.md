@@ -1,10 +1,10 @@
 # Local generated data
 
-BGVoice writes its generated pipeline database here as `bgvoice.sqlite3`. SQLite may also create
-`-wal` and `-shm` sidecars while the database is open.
+BGVoice writes its generated pipeline database here as the `bgvoice.lancedb` directory.
+The local IESDP reference archive may also be unpacked as `iesdp-gh-pages`.
 
-These files are ignored by Git because they are reproducible, machine-local extracts that can be
-large and contain copyrighted game text. Do not commit them.
+Everything except this README is ignored by Git because these are reproducible, machine-local
+artifacts that can be large or contain copyrighted game text. Do not commit them.
 
-The web UI opens the database read-only. WAL mode lets it browse while extraction writes, but an
-active database must stay with its sidecars; stop the processes before copying or moving it.
+The web UI only reads committed LanceDB table versions, so it can browse while extraction writes
+new snapshots. Treat the database as one directory; stop writers before copying or moving it.

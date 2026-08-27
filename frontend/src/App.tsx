@@ -68,7 +68,7 @@ const DEFAULT_CHARACTER_QUERY: CharacterQuery = {
   race_id: "",
   class_id: "",
   attribution_status: "",
-  sort: "serialized_size",
+  sort: "",
   direction: "desc",
 };
 
@@ -79,7 +79,7 @@ const DEFAULT_DIALOGUE_QUERY: DialogueQuery = {
   status: "",
   source_kind: "",
   attributed: "",
-  sort: "dialogue_line_count",
+  sort: "",
   direction: "desc",
 };
 
@@ -90,7 +90,7 @@ const DEFAULT_LINE_QUERY: LineQuery = {
   line_kind: "",
   source_kind: "",
   attributed: "",
-  sort: "serialized_size",
+  sort: "",
   direction: "desc",
 };
 
@@ -110,7 +110,7 @@ function useBrowser<
     page_size: defaultQuery.page_size,
     total: 0,
     page_count: 1,
-    sort: defaultQuery.sort,
+    sort: "relevance",
     direction: defaultQuery.direction,
   }));
   const [loadedQuery, setLoadedQuery] = useState<Query | null>(null);
@@ -146,13 +146,13 @@ function useBrowser<
     setQuery((current) => ({ ...current, [key]: value, page: 1 }));
   }
 
-  function sortBy(sort: Query["sort"]) {
+  function sortBy(sort: Sort) {
     setQuery((current) => ({
       ...current,
       page: 1,
       sort,
       direction:
-        current.sort === sort && current.direction === "desc" ? "asc" : "desc",
+        page.sort === sort && page.direction === "desc" ? "asc" : "desc",
     }));
   }
 
@@ -420,15 +420,15 @@ function CharacterBrowser({
         <table>
           <thead>
             <tr>
-              <SortHeader label="Character" sort="display_name" query={query} onSort={browser.sortBy} />
-              <SortHeader label="Resource" sort="resource_name" query={query} onSort={browser.sortBy} />
-              <SortHeader label="Source" sort="source_kind" query={query} onSort={browser.sortBy} />
-              <SortHeader label="Object size" sort="serialized_size" query={query} onSort={browser.sortBy} numeric />
-              <SortHeader label="Lines" sort="dialogue_line_count" query={query} onSort={browser.sortBy} numeric />
-              <SortHeader label="NPC" sort="npc_line_count" query={query} onSort={browser.sortBy} numeric />
-              <SortHeader label="Player" sort="player_line_count" query={query} onSort={browser.sortBy} numeric />
-              <SortHeader label="States" sort="dialogue_state_count" query={query} onSort={browser.sortBy} numeric />
-              <SortHeader label="Transitions" sort="dialogue_transition_count" query={query} onSort={browser.sortBy} numeric />
+              <SortHeader label="Character" sort="display_name" query={page} onSort={browser.sortBy} />
+              <SortHeader label="Resource" sort="resource_name" query={page} onSort={browser.sortBy} />
+              <SortHeader label="Source" sort="source_kind" query={page} onSort={browser.sortBy} />
+              <SortHeader label="Object size" sort="serialized_size" query={page} onSort={browser.sortBy} numeric />
+              <SortHeader label="Lines" sort="dialogue_line_count" query={page} onSort={browser.sortBy} numeric />
+              <SortHeader label="NPC" sort="npc_line_count" query={page} onSort={browser.sortBy} numeric />
+              <SortHeader label="Player" sort="player_line_count" query={page} onSort={browser.sortBy} numeric />
+              <SortHeader label="States" sort="dialogue_state_count" query={page} onSort={browser.sortBy} numeric />
+              <SortHeader label="Transitions" sort="dialogue_transition_count" query={page} onSort={browser.sortBy} numeric />
               <th>Status</th>
               <th aria-label="Open details" />
             </tr>
@@ -518,13 +518,13 @@ function DialogueBrowser() {
         <table>
           <thead>
             <tr>
-              <SortHeader label="Dialogue" sort="resource_name" query={query} onSort={browser.sortBy} />
-              <SortHeader label="Source" sort="source_kind" query={query} onSort={browser.sortBy} />
-              <SortHeader label="Object size" sort="serialized_size" query={query} onSort={browser.sortBy} numeric />
-              <SortHeader label="Lines" sort="dialogue_line_count" query={query} onSort={browser.sortBy} numeric />
-              <SortHeader label="NPC" sort="npc_line_count" query={query} onSort={browser.sortBy} numeric />
-              <SortHeader label="Player" sort="player_line_count" query={query} onSort={browser.sortBy} numeric />
-              <SortHeader label="CREs" sort="character_count" query={query} onSort={browser.sortBy} numeric />
+              <SortHeader label="Dialogue" sort="resource_name" query={page} onSort={browser.sortBy} />
+              <SortHeader label="Source" sort="source_kind" query={page} onSort={browser.sortBy} />
+              <SortHeader label="Object size" sort="serialized_size" query={page} onSort={browser.sortBy} numeric />
+              <SortHeader label="Lines" sort="dialogue_line_count" query={page} onSort={browser.sortBy} numeric />
+              <SortHeader label="NPC" sort="npc_line_count" query={page} onSort={browser.sortBy} numeric />
+              <SortHeader label="Player" sort="player_line_count" query={page} onSort={browser.sortBy} numeric />
+              <SortHeader label="CREs" sort="character_count" query={page} onSort={browser.sortBy} numeric />
               <th>Status</th>
             </tr>
           </thead>
@@ -566,7 +566,7 @@ function DialogueBrowser() {
 function LineBrowser() {
   const browser = useBrowser(DEFAULT_LINE_QUERY, getLines);
   const { query, page, loading } = browser;
-  const [expandedLineId, setExpandedLineId] = useState<number | null>(null);
+  const [expandedLineId, setExpandedLineId] = useState<string | null>(null);
 
   return (
     <section className="browser-card tab-panel">
@@ -595,12 +595,12 @@ function LineBrowser() {
           <thead>
             <tr>
               <th>Resolved text</th>
-              <SortHeader label="Dialogue" sort="dialogue_resource_name" query={query} onSort={browser.sortBy} />
-              <SortHeader label="Kind" sort="line_kind" query={query} onSort={browser.sortBy} />
-              <SortHeader label="Strref" sort="strref" query={query} onSort={browser.sortBy} numeric />
-              <SortHeader label="State" sort="state_index" query={query} onSort={browser.sortBy} numeric />
-              <SortHeader label="Transition" sort="transition_index" query={query} onSort={browser.sortBy} numeric />
-              <SortHeader label="Object size" sort="serialized_size" query={query} onSort={browser.sortBy} numeric />
+              <SortHeader label="Dialogue" sort="dialogue_resource_name" query={page} onSort={browser.sortBy} />
+              <SortHeader label="Kind" sort="line_kind" query={page} onSort={browser.sortBy} />
+              <SortHeader label="Strref" sort="strref" query={page} onSort={browser.sortBy} numeric />
+              <SortHeader label="State" sort="state_index" query={page} onSort={browser.sortBy} numeric />
+              <SortHeader label="Transition" sort="transition_index" query={page} onSort={browser.sortBy} numeric />
+              <SortHeader label="Object size" sort="serialized_size" query={page} onSort={browser.sortBy} numeric />
               <th className="numeric">CREs</th>
             </tr>
           </thead>
@@ -719,7 +719,7 @@ function ResultCount({ loading, count, noun }: {
 
 function SortHeader<Sort extends string>({ label, sort, query, onSort, numeric = false }: {
   label: string; sort: Sort;
-  query: { sort: Sort; direction: SortDirection };
+  query: { sort: Sort | "relevance"; direction: SortDirection };
   onSort: (sort: Sort) => void; numeric?: boolean;
 }) {
   const active = query.sort === sort;

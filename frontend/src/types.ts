@@ -22,7 +22,7 @@ export interface PaginatedQuery<TSort extends string> {
   page: number;
   page_size: number;
   q: string;
-  sort: TSort;
+  sort: "" | TSort;
   direction: SortDirection;
 }
 
@@ -32,7 +32,7 @@ export interface Page<TItem, TSort extends string> {
   page_size: number;
   total: number;
   page_count: number;
-  sort: TSort;
+  sort: TSort | "relevance";
   direction: SortDirection;
 }
 
@@ -133,7 +133,7 @@ export interface LineQuery extends PaginatedQuery<LineSort> {
 }
 
 interface DialogueLineRow {
-  id: number;
+  id: string;
   dialogue_resource_name: string;
   dialogue_resref: string;
   source_kind: SourceKind;
@@ -161,7 +161,7 @@ export interface FilterOptions {
 }
 
 interface ExtractionRunSummary {
-  id: number;
+  id: string;
   run_kind: RunKind;
   started_at: string;
   completed_at: string | null;

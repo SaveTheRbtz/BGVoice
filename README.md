@@ -39,11 +39,12 @@ uv run bgvoice attribute-dialogues
 Extraction defaults to the available logical CPU count, skips completed records, and accepts
 `--refresh` to rebuild them. Character extraction also accepts `--inventory-only`.
 
-The default database is `data/bgvoice.sqlite3`. Strict Pydantic projections validate `ie-cli`
-output; SQLModel handles application persistence; SQLite supplies foreign keys, `STRICT` tables,
-transactions, WAL, and FTS5 indexes. Generated databases are local and reproducible, so schema
-changes are handled by rebuilding from the EET installation rather than migrations. They are also
-ignored because they contain game text; see [`data/README.md`](data/README.md).
+The default database is the `data/bgvoice.lancedb` directory. Strict Pydantic projections validate
+`ie-cli` output, and typed LanceModel rows define the stored schema. The pipeline keeps its current
+state in a small set of denormalized LanceDB tables with native full-text indexes. Generated
+databases are local and reproducible, so schema changes are handled by rebuilding from the EET
+installation rather than migrations. They are also ignored because they contain game text; see
+[`data/README.md`](data/README.md).
 
 ## Read-only browser
 
@@ -56,11 +57,12 @@ cd ..
 uv run bgvoice web
 ```
 
-Open `http://127.0.0.1:8000`. The server uses short-lived read-only SQLite sessions with
-`query_only` enabled. WAL allows browsing while extraction writes, and trigger-free FTS5 virtual
-indexes are updated transactionally with writer batches so committed searches stay current. The
-Characters, Dialogues, and Lines tabs provide search, filters, sorting, pagination, and line
-coordinates.
+Open `http://127.0.0.1:8000`. The server exposes a read-only API over committed LanceDB table
+versions, so it can browse while extraction writes new snapshots. Native full-text indexes require
+no mirror tables or triggers. Search uses the English tokenizer with stemming, 64-character tokens,
+case and ASCII folding, and retained stop words. Results default to LanceDB's BM25 relevance;
+clicking a column explicitly overrides relevance. The Characters, Dialogues, and Lines tabs also
+provide filters, pagination, and line coordinates.
 
 ## Quality checks
 
@@ -80,6 +82,8 @@ pnpm build
 
 ## Format references
 
+- [LanceDB Python API](https://lancedb.github.io/lancedb/python/python/)
+- [LanceDB full-text search](https://docs.lancedb.com/search/full-text-search)
 - [`ie-cli`](https://github.com/emm-n-m/ie-cli), using
   [`v0.3.0-rc.1`](https://github.com/emm-n-m/ie-cli/releases/tag/v0.3.0-rc.1)
 - [IESDP file format index](https://gibberlings3.github.io/iesdp/file_formats/index.htm)

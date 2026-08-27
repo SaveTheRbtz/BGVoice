@@ -6,12 +6,12 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from bgvoice.database import CharacterDatabase
+from bgvoice.database import PipelineDatabase
 from bgvoice.iecli import IeCli
-from bgvoice.models import ExtractionProgress
+from bgvoice.models import ExtractionProgress, RunStatus
 from bgvoice.pipeline import extract_characters, extract_dialogues
 
-_DEFAULT_DATABASE = Path("data/bgvoice.sqlite3")
+_DEFAULT_DATABASE = Path("data/bgvoice.lancedb")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -33,7 +33,7 @@ def build_parser() -> argparse.ArgumentParser:
             "--database",
             type=Path,
             default=_DEFAULT_DATABASE,
-            help=f"SQLite output path (default: {_DEFAULT_DATABASE})",
+            help=f"LanceDB directory (default: {_DEFAULT_DATABASE})",
         )
         extraction.add_argument("--iecli", type=Path, help="override the bundled iecli executable")
         extraction.add_argument(
@@ -54,11 +54,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="account for every character reference and every extracted DLG",
     )
     attribution.add_argument(
-        "--database", type=Path, default=_DEFAULT_DATABASE, help="SQLite database"
+        "--database", type=Path, default=_DEFAULT_DATABASE, help="LanceDB directory"
     )
 
     web = commands.add_parser("web", help="serve the read-only pipeline browser")
-    web.add_argument("--database", type=Path, default=_DEFAULT_DATABASE, help="SQLite database")
+    web.add_argument("--database", type=Path, default=_DEFAULT_DATABASE, help="LanceDB directory")
     web.add_argument("--host", default="127.0.0.1", help="listen address")
     web.add_argument("--port", default=8000, type=_port, help="listen port")
     return parser
@@ -77,43 +77,40 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
 
     if args.command == "attribute-dialogues":
-        with CharacterDatabase(args.database) as database:
-            summary = database.rebuild_attributions()
-            integrity = database.integrity_check()
+        assert args.database.expanduser().resolve().is_dir(), (
+            f"pipeline database does not exist: {args.database}"
+        )
+        database = PipelineDatabase(args.database)
+        summary = database.rebuild_attributions()
         print(summary.model_dump_json(indent=2))
-        print(f"SQLite integrity: {integrity}", file=sys.stderr)
-        assert integrity == "ok", f"SQLite integrity check failed: {integrity}"
         return 0
 
     client = IeCli(args.iecli) if args.iecli is not None else IeCli()
-    with CharacterDatabase(args.database) as database:
-        if args.command == "extract-characters":
-            summary = extract_characters(
-                client,
-                database,
-                args.game,
-                include_details=not args.inventory_only,
-                workers=args.workers,
-                refresh=args.refresh,
-                progress=_print_character_progress,
-            )
-        else:
-            summary = extract_dialogues(
-                client,
-                database,
-                args.game,
-                workers=args.workers,
-                refresh=args.refresh,
-                progress=_print_dialogue_progress,
-            )
-        integrity = database.integrity_check()
-        character_count = database.stats().total
+    database = PipelineDatabase(args.database)
+    if args.command == "extract-characters":
+        summary = extract_characters(
+            client,
+            database,
+            args.game,
+            include_details=not args.inventory_only,
+            workers=args.workers,
+            refresh=args.refresh,
+            progress=_print_character_progress,
+        )
+    else:
+        summary = extract_dialogues(
+            client,
+            database,
+            args.game,
+            workers=args.workers,
+            refresh=args.refresh,
+            progress=_print_dialogue_progress,
+        )
+    character_count = database.stats().total
 
     print(summary.model_dump_json(indent=2))
-    print(f"SQLite integrity: {integrity}", file=sys.stderr)
     print(f"Active character records: {character_count}", file=sys.stderr)
-    assert integrity == "ok", f"SQLite integrity check failed: {integrity}"
-    return 0 if summary.status == "complete" else 1
+    return 0 if summary.status is RunStatus.COMPLETE else 1
 
 
 def _print_character_progress(progress: ExtractionProgress) -> None:

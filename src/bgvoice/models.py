@@ -6,25 +6,60 @@ https://gibberlings3.github.io/iesdp/file_formats/ie_formats/dlg_v1.htm
 """
 
 import re
+from collections import Counter
 from datetime import UTC, datetime
+from enum import StrEnum
 from pathlib import Path
 from typing import Annotated, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-type DialogueLineKind = Literal["npc", "player", "journal"]
-type DetailStatus = Literal["pending", "complete", "failed"]
-type AttributionStatus = Literal[
-    "matched",
-    "missing_dialogue",
-    "dialogue_failed",
-    "no_dialogue",
-    "character_unavailable",
+
+class DialogueLineKind(StrEnum):
+    NPC = "npc"
+    PLAYER = "player"
+    JOURNAL = "journal"
+
+
+class DetailStatus(StrEnum):
+    PENDING = "pending"
+    COMPLETE = "complete"
+    FAILED = "failed"
+
+
+class AttributionStatus(StrEnum):
+    MATCHED = "matched"
+    MISSING_DIALOGUE = "missing_dialogue"
+    DIALOGUE_FAILED = "dialogue_failed"
+    NO_DIALOGUE = "no_dialogue"
+    CHARACTER_UNAVAILABLE = "character_unavailable"
+
+
+class RunKind(StrEnum):
+    CHARACTERS = "characters"
+    DIALOGUES = "dialogues"
+
+
+class RunStatus(StrEnum):
+    RUNNING = "running"
+    COMPLETE = "complete"
+    COMPLETE_WITH_ERRORS = "complete_with_errors"
+    FAILED = "failed"
+
+
+type TerminalRunStatus = Literal[
+    RunStatus.COMPLETE,
+    RunStatus.COMPLETE_WITH_ERRORS,
+    RunStatus.FAILED,
 ]
-type RunKind = Literal["characters", "dialogues"]
-type TerminalRunStatus = Literal["complete", "complete_with_errors", "failed"]
-type RunStatus = Literal["running"] | TerminalRunStatus
-type SourceKind = Literal["override", "bif", "dlc"]
+
+
+class SourceKind(StrEnum):
+    OVERRIDE = "override"
+    BIF = "bif"
+    DLC = "dlc"
+
+
 type ResRef = Annotated[str, Field(min_length=1, max_length=8)]
 type UInt8 = Annotated[int, Field(ge=0, le=0xFF)]
 type UInt32 = Annotated[int, Field(ge=0, le=0xFFFF_FFFF)]
@@ -49,7 +84,7 @@ class CreResource(StrictModel):
 
     resource_name: str = Field(min_length=1)
     resref: ResRef
-    source_kind: SourceKind
+    source_kind: SourceKind = Field(strict=False)
     source_path: str = Field(min_length=1)
     resource_type: Literal["CRE"] = Field(alias="type")
 
@@ -59,7 +94,7 @@ class DlgResource(StrictModel):
 
     resource_name: str = Field(min_length=1)
     resref: ResRef
-    source_kind: SourceKind
+    source_kind: SourceKind = Field(strict=False)
     source_path: str = Field(min_length=1)
     resource_type: Literal["DLG"] = Field(alias="type")
 
@@ -163,7 +198,7 @@ class DlgDump(IeCliProjection):
 
 
 class CharacterDetail(StrictModel):
-    """Normalized CRE detail stored in SQLite."""
+    """Normalized, voice-relevant detail from one CRE resource."""
 
     resource_name: str
     display_name: str
@@ -239,6 +274,16 @@ class DialogueDetail(StrictModel):
     dialogue_line_count: int = Field(ge=0)
     pydantic_json_size: int = Field(ge=0)
 
+    @model_validator(mode="after")
+    def validate_counts(self) -> Self:
+        assert self.npc_line_count == self.state_count, (
+            "DLG state count must equal its NPC line count"
+        )
+        assert self.dialogue_line_count == self.npc_line_count + self.player_line_count, (
+            "DLG spoken line count must equal NPC plus player lines"
+        )
+        return self
+
     @classmethod
     def from_dump(cls, dump: DlgDump) -> Self:
         """Count spoken and journal text while retaining header consistency."""
@@ -285,7 +330,7 @@ class DialogueLine(StrictModel):
             lines.append(
                 cls(
                     dialogue_resource_name=dump.resource_name,
-                    line_kind="npc",
+                    line_kind=DialogueLineKind.NPC,
                     state_index=state.index,
                     transition_index=None,
                     strref=state.response_text.strref,
@@ -294,8 +339,8 @@ class DialogueLine(StrictModel):
             )
             for transition in state.transitions:
                 for kind, reference in (
-                    ("player", transition.player_text),
-                    ("journal", transition.journal_text),
+                    (DialogueLineKind.PLAYER, transition.player_text),
+                    (DialogueLineKind.JOURNAL, transition.journal_text),
                 ):
                     if reference is not None:
                         lines.append(
@@ -329,6 +374,16 @@ class DialogueExtraction(StrictModel):
         assert not unexpected, (
             f"DLG extraction {self.detail.resource_name!r} contains lines for {unexpected}"
         )
+        counts = Counter(line.line_kind for line in self.lines)
+        expected: dict[DialogueLineKind, int] = {
+            DialogueLineKind.NPC: self.detail.npc_line_count,
+            DialogueLineKind.PLAYER: self.detail.player_line_count,
+            DialogueLineKind.JOURNAL: self.detail.journal_line_count,
+        }
+        assert all(counts[kind] == count for kind, count in expected.items()), (
+            f"DLG extraction {self.detail.resource_name!r} line counts are "
+            f"{dict(counts)}; expected {expected}"
+        )
         return self
 
     @classmethod
@@ -348,7 +403,7 @@ class ExtractionProgress(StrictModel):
 class ExtractionSummary(StrictModel):
     """Machine-readable terminal result of one extraction run."""
 
-    run_id: int = Field(gt=0)
+    run_id: str = Field(min_length=1)
     game_root: Path
     database_path: Path
     iecli_version: str
