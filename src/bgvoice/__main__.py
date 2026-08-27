@@ -98,6 +98,11 @@ def build_parser() -> argparse.ArgumentParser:
     generation.add_argument(
         "--database", type=Path, default=_DEFAULT_DATABASE, help="LanceDB directory"
     )
+    generation.add_argument(
+        "--recreate-voices",
+        action="store_true",
+        help="delete and recreate every selected character voice, direction, and audio",
+    )
 
     export = commands.add_parser(
         "export-mod",
@@ -146,6 +151,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 args.lines_per_voice,
                 os.environ["OPENAI_API_KEY"],
                 os.environ["INWORLD_API_KEY"],
+                recreate_voices=args.recreate_voices,
             )
         )
         print(summary.model_dump_json(indent=2))

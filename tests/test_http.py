@@ -17,11 +17,11 @@ from bgvoice.model_types import (
     DlgResource,
     PortraitResource,
     RunKind,
-    Speaker,
     StringReference,
 )
 from bgvoice.pipeline import extract_characters, extract_dialogues, extract_portraits
 from bgvoice.storage_records import (
+    CharacterDirection,
     DirectedLineRecord,
     GeneratedAudioRecord,
     GeneratedVoiceRecord,
@@ -97,8 +97,8 @@ def _seed_generated_audio(path: Path) -> DirectedLineRecord:
         id=DirectedLineRecord.id_for("aerie", line_id),
         voice_id="aerie",
         dialogue_line_id=line_id,
-        speaker=Speaker.CHARACTER,
-        text="[warmly] Hello.",
+        character=CharacterDirection(directed_dialogue="[warmly] Hello."),
+        narrator=None,
         created_at="2026-08-27T10:01:00+00:00",
     )
     records = {
@@ -201,7 +201,10 @@ def test_generated_work_is_browsable_filterable_and_playable(
     ) == ("1", "1", "1")
     assert voice["generatedVoice"]["inworldVoiceId"] == "voice-aerie"
     assert (voice["directedLineCount"], voice["generatedAudioCount"]) == ("1", "1")
-    assert lines[0]["directions"][0]["id"] == direction.id
+    direction_json = lines[0]["directions"][0]
+    assert direction_json["id"] == direction.id
+    assert direction_json["character"] == {"directedDialogue": "[warmly] Hello."}
+    assert "narrator" not in direction_json
     assert audio.status_code == 200
     assert audio.headers["content-type"] == "audio/ogg"
     assert audio.content == b"OggSgenerated audio"

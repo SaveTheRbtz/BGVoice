@@ -73,12 +73,6 @@ enum DialogueLineKind {
   DIALOGUE_LINE_KIND_JOURNAL = 3;
 }
 
-enum Speaker {
-  SPEAKER_UNSPECIFIED = 0;
-  SPEAKER_CHARACTER = 1;
-  SPEAKER_NARRATOR = 2;
-}
-
 enum IdentifierKind {
   IDENTIFIER_KIND_UNSPECIFIED = 0;
   IDENTIFIER_KIND_RACE = 1;
@@ -179,12 +173,22 @@ message GeneratedVoice {
   google.protobuf.Timestamp created_at = 4;
 }
 
+message CharacterDirection {
+  string directed_dialogue = 1;
+}
+
+message NarratorDirection {
+  string directed_dialogue = 1;
+}
+
 message DirectedLine {
   string id = 1;
   string voice = 2 [(google.api.resource_reference).type = "bgvoice.local/Voice"];
   string voice_display_name = 3;
-  Speaker speaker = 4;
-  string text = 5;
+  oneof result {
+    CharacterDirection character = 4;
+    NarratorDirection narrator = 5;
+  }
   optional string audio_url = 6;
 }
 

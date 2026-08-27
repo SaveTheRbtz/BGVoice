@@ -16,7 +16,6 @@ from bgvoice.model_types import (
     RunKind,
     RunStatus,
     SourceKind,
-    Speaker,
 )
 from bgvoice.reader import PipelineReader
 from bgvoice.reader_models import (
@@ -33,6 +32,7 @@ from bgvoice.reader_models import (
 )
 from bgvoice.storage_records import (
     CharacterAttributionRecord,
+    CharacterDirection,
     DirectedLineRecord,
     GeneratedAudioRecord,
     GeneratedVoiceRecord,
@@ -224,8 +224,8 @@ async def test_generation_progress_enriches_and_filters_source_resources(
         id=DirectedLineRecord.id_for("aerie", line_id),
         voice_id="aerie",
         dialogue_line_id=line_id,
-        speaker=Speaker.CHARACTER,
-        text="[warmly] Hello.",
+        character=CharacterDirection(directed_dialogue="[warmly] Hello."),
+        narrator=None,
         created_at="2026-08-27T10:01:00+00:00",
     )
     store = await GenerationStore.open(scenario_database)
@@ -310,6 +310,8 @@ async def test_generation_progress_enriches_and_filters_source_resources(
     assert (dialogue.directed_line_count, dialogue.generated_audio_count) == (1, 1)
     assert (all_voice_lines.total, directed.total, pending.total, by_dialogue.total) == (2, 1, 1, 1)
     assert directed.items[0].directions[0].audio_id == direction.id
+    assert directed.items[0].directions[0].character == direction.character
+    assert directed.items[0].directions[0].narrator is None
     assert (
         stats.generated_voices,
         stats.directed_lines,

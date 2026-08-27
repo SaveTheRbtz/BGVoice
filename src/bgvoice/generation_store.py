@@ -119,6 +119,13 @@ class GenerationStore:
         if audio_ids:
             await self._generated_audio.delete(col("id").isin(audio_ids))
 
+    async def delete_voice_generation(self, voice_id: str) -> None:
+        """Remove every regenerable artifact owned by one canonical character voice."""
+        predicate = col("voice_id") == lit(voice_id)
+        await self._generated_audio.delete(predicate)
+        await self._directed_lines.delete(predicate)
+        await self._generated_voices.delete(predicate)
+
 
 async def _records[Record: LanceModel](
     table: AsyncTable,

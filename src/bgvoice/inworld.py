@@ -34,7 +34,7 @@ class VoiceDesignRequest(StrictModel):
     """Input accepted by Inworld Voice Design."""
 
     language_code: Annotated[str, Field(min_length=2)]
-    design_prompt: Annotated[str, Field(min_length=30, max_length=250)]
+    design_prompt: Annotated[str, Field(min_length=30, max_length=1000)]
     preview_text: Annotated[str, Field(min_length=1, max_length=400)]
 
 

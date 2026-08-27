@@ -93,8 +93,8 @@ class GenerationSnapshot:
                 voice_display_name=self.voice_names.get(
                     record.voice_id.casefold(), record.voice_id
                 ),
-                speaker=record.speaker,
-                text=record.text,
+                character=record.character,
+                narrator=record.narrator,
                 audio_id=record.id if record.id in audio_by_id else None,
             )
             for record in self.directions_by_line.get(line_id, ())

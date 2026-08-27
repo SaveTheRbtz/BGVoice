@@ -5,11 +5,13 @@ from pathlib import Path
 import pytest
 
 from bgvoice.generation_store import GenerationStore
-from bgvoice.model_types import RunStatus, Speaker
+from bgvoice.model_types import RunStatus
 from bgvoice.storage_records import (
+    CharacterDirection,
     DirectedLineRecord,
     GeneratedAudioRecord,
     GeneratedVoiceRecord,
+    NarratorDirection,
     TtsBatchRecord,
     VoiceDescription,
 )
@@ -48,16 +50,16 @@ async def test_generated_assets_round_trip_upsert_filter_and_delete(
             id=DirectedLineRecord.id_for("imoen", line_id),
             voice_id="imoen",
             dialogue_line_id=line_id,
-            speaker=Speaker.CHARACTER,
-            text="[cheerfully] I am ready.",
+            character=CharacterDirection(directed_dialogue="[cheerfully] I am ready."),
+            narrator=None,
             created_at="2026-08-27T10:01:00+00:00",
         )
         gorion_line = DirectedLineRecord(
             id=DirectedLineRecord.id_for("gorion", line_id),
             voice_id="gorion",
             dialogue_line_id=line_id,
-            speaker=Speaker.NARRATOR,
-            text="[quietly] The road awaits.",
+            character=None,
+            narrator=NarratorDirection(directed_dialogue="[quietly] The road awaits."),
             created_at="2026-08-27T10:01:00+00:00",
         )
         await store.upsert_directed_lines([imoen_line, gorion_line])
@@ -89,6 +91,13 @@ async def test_generated_assets_round_trip_upsert_filter_and_delete(
         assert voices["imoen"].inworld_voice_id == "voice-imoen-v2"
         assert await store.generated_voice("imoen") == updated_imoen
         assert await store.generated_voice("unknown") is None
+        stored_directions = await store.directed_lines()
+        assert {line.id for line in stored_directions if line.character is not None} == {
+            imoen_line.id
+        }
+        assert {line.id for line in stored_directions if line.narrator is not None} == {
+            gorion_line.id
+        }
         assert {line.id for line in await store.directed_lines(["imoen"])} == {imoen_line.id}
         assert await store.directed_lines([]) == []
         assert (await store.audio(imoen_audio.id)) == imoen_audio
@@ -99,6 +108,12 @@ async def test_generated_assets_round_trip_upsert_filter_and_delete(
         await store.upsert_directed_lines([])
         assert await store.audio(imoen_audio.id) is None
         assert {audio.id for audio in await store.generated_audio()} == {gorion_audio.id}
+
+        await store.upsert_generated_audio([imoen_audio])
+        await store.delete_voice_generation("imoen")
+        assert set(await store.generated_voices()) == {"gorion"}
+        assert {line.voice_id for line in await store.directed_lines()} == {"gorion"}
+        assert {audio.voice_id for audio in await store.generated_audio()} == {"gorion"}
     finally:
         store.close()
 

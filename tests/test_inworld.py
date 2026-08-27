@@ -37,7 +37,7 @@ def test_batch_packing_preserves_order_and_respects_the_on_demand_limit() -> Non
         pack_synthesis_items([_item("large", 10_001)])
 
 
-@pytest.mark.parametrize("length", [29, 251])
+@pytest.mark.parametrize("length", [29, 1_001])
 def test_voice_design_rejects_provider_invalid_prompt_lengths(length: int) -> None:
     with pytest.raises(ValidationError):
         VoiceDesignRequest(

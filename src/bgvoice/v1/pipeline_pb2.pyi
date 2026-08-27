@@ -49,12 +49,6 @@ class DialogueLineKind(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     DIALOGUE_LINE_KIND_PLAYER: _ClassVar[DialogueLineKind]
     DIALOGUE_LINE_KIND_JOURNAL: _ClassVar[DialogueLineKind]
 
-class Speaker(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
-    __slots__ = ()
-    SPEAKER_UNSPECIFIED: _ClassVar[Speaker]
-    SPEAKER_CHARACTER: _ClassVar[Speaker]
-    SPEAKER_NARRATOR: _ClassVar[Speaker]
-
 class IdentifierKind(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
     IDENTIFIER_KIND_UNSPECIFIED: _ClassVar[IdentifierKind]
@@ -107,9 +101,6 @@ DIALOGUE_LINE_KIND_UNSPECIFIED: DialogueLineKind
 DIALOGUE_LINE_KIND_NPC: DialogueLineKind
 DIALOGUE_LINE_KIND_PLAYER: DialogueLineKind
 DIALOGUE_LINE_KIND_JOURNAL: DialogueLineKind
-SPEAKER_UNSPECIFIED: Speaker
-SPEAKER_CHARACTER: Speaker
-SPEAKER_NARRATOR: Speaker
 IDENTIFIER_KIND_UNSPECIFIED: IdentifierKind
 IDENTIFIER_KIND_RACE: IdentifierKind
 IDENTIFIER_KIND_CLASS: IdentifierKind
@@ -247,21 +238,33 @@ class GeneratedVoice(_message.Message):
     created_at: _timestamp_pb2.Timestamp
     def __init__(self, description: _Optional[str] = ..., language_code: _Optional[str] = ..., inworld_voice_id: _Optional[str] = ..., created_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ...) -> None: ...
 
+class CharacterDirection(_message.Message):
+    __slots__ = ("directed_dialogue",)
+    DIRECTED_DIALOGUE_FIELD_NUMBER: _ClassVar[int]
+    directed_dialogue: str
+    def __init__(self, directed_dialogue: _Optional[str] = ...) -> None: ...
+
+class NarratorDirection(_message.Message):
+    __slots__ = ("directed_dialogue",)
+    DIRECTED_DIALOGUE_FIELD_NUMBER: _ClassVar[int]
+    directed_dialogue: str
+    def __init__(self, directed_dialogue: _Optional[str] = ...) -> None: ...
+
 class DirectedLine(_message.Message):
-    __slots__ = ("id", "voice", "voice_display_name", "speaker", "text", "audio_url")
+    __slots__ = ("id", "voice", "voice_display_name", "character", "narrator", "audio_url")
     ID_FIELD_NUMBER: _ClassVar[int]
     VOICE_FIELD_NUMBER: _ClassVar[int]
     VOICE_DISPLAY_NAME_FIELD_NUMBER: _ClassVar[int]
-    SPEAKER_FIELD_NUMBER: _ClassVar[int]
-    TEXT_FIELD_NUMBER: _ClassVar[int]
+    CHARACTER_FIELD_NUMBER: _ClassVar[int]
+    NARRATOR_FIELD_NUMBER: _ClassVar[int]
     AUDIO_URL_FIELD_NUMBER: _ClassVar[int]
     id: str
     voice: str
     voice_display_name: str
-    speaker: Speaker
-    text: str
+    character: CharacterDirection
+    narrator: NarratorDirection
     audio_url: str
-    def __init__(self, id: _Optional[str] = ..., voice: _Optional[str] = ..., voice_display_name: _Optional[str] = ..., speaker: _Optional[_Union[Speaker, str]] = ..., text: _Optional[str] = ..., audio_url: _Optional[str] = ...) -> None: ...
+    def __init__(self, id: _Optional[str] = ..., voice: _Optional[str] = ..., voice_display_name: _Optional[str] = ..., character: _Optional[_Union[CharacterDirection, _Mapping]] = ..., narrator: _Optional[_Union[NarratorDirection, _Mapping]] = ..., audio_url: _Optional[str] = ...) -> None: ...
 
 class Voice(_message.Message):
     __slots__ = ("name", "display_name", "prompt", "characters", "dialogues", "portrait", "npc_line_count", "serialized_size", "biography", "generated_voice", "directed_line_count", "generated_audio_count")

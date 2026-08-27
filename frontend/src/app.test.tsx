@@ -13,7 +13,6 @@ import {
   DialogueLineSchema,
   type Installation,
   InstallationSchema,
-  Speaker,
   type Voice,
   VoiceSchema,
 } from "./gen/bgvoice/v1/pipeline_pb";
@@ -85,9 +84,20 @@ const line = create(DialogueLineSchema, {
     id: "direction-imoen-line-1",
     voice: voice.name,
     voiceDisplayName: "Imoen",
-    speaker: Speaker.CHARACTER,
-    text: "[brightly] Heya! It's me, Imoen!",
+    result: {
+      case: "character",
+      value: { directedDialogue: "[brightly] Heya! It's me, Imoen!" },
+    },
     audioUrl: "/v1/installations/bg2ee-eet/generatedAudio/audio-1:download",
+  }, {
+    id: "direction-imoen-line-2",
+    voice: voice.name,
+    voiceDisplayName: "Imoen",
+    result: {
+      case: "narrator",
+      value: { directedDialogue: "[narrate gently] The chamber falls silent." },
+    },
+    audioUrl: "/v1/installations/bg2ee-eet/generatedAudio/audio-2:download",
   }],
 });
 
@@ -145,9 +155,11 @@ describe("application jobs", () => {
       "CHARNAME×3PLAYER1×2PLAYER2×2DAYState trigger 23 · unresolved",
     );
     expect(screen.getByText("[brightly] Heya! It's me, Imoen!")).toBeTruthy();
+    expect(screen.getByText("[narrate gently] The chamber falls silent.")).toBeTruthy();
     const audio = screen.getByLabelText("Audio sample for Imoen");
     expect(audio.getAttribute("preload")).toBe("none");
     expect(audio.getAttribute("src")).toBe(line.directions[0]?.audioUrl);
+    expect(screen.getByLabelText("Narrator audio sample attributed to Imoen")).toBeTruthy();
     expect(api.listDialogueLines).toHaveBeenCalledWith(
       expect.objectContaining({ filter: "", orderBy: "", pageSize: 25 }),
       expect.any(AbortSignal),

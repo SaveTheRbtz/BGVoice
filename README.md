@@ -41,8 +41,9 @@ the generated models own the service boundary shared by the Python backend and T
   and pipeline model modules own their respective validated domain objects.
 - `storage_records.py` and `storage_schema.py` define persistence. `database.py` writes extracted
   source data; `record_builders.py` projects it and `attribution.py` groups voices.
-- `generation.py` owns the iterative AI stages, `generation_store.py` persists their final outputs,
-  and `inworld.py` is the small typed boundary for voice design and batch synthesis.
+- `generation.py` orchestrates the iterative AI stages, `generation_ai.py` owns their tuned prompts
+  and structured results, `generation_store.py` persists final outputs, and `inworld.py` is the
+  small typed boundary for voice design and batch synthesis.
 - `mod_export.py` groups generated recordings by exact DLG text and emits the universal WeiDU
   content-intersection mod.
 - `reader.py` coordinates read-only queries using focused query, metadata, view, statistics, and
@@ -99,13 +100,26 @@ uv run bgvoice generate --voice Imoen --voice Gorion --lines-per-voice 100
 ```
 
 For each voice, dialogue resources are sorted once and their lowest remaining state is selected in
-round-robin order. Direction is submitted in small homogeneous batches with a stable prompt prefix;
-speech is packed into Inworld's asynchronous batch API under its 10,000-character On-Demand limit.
-Inworld returns uncompressed 22.05 kHz WAV; PyAV normalizes it to mono and SoundFile encodes it at
-maximum Vorbis quality. Published provider IDs, final voice descriptions, directed text, game-ready
-Ogg Vorbis bytes, and durable batch operation names are stored immediately. Prompts, preview
-artifacts, manifests, and expiring signed URLs are not persisted. Re-running the command resumes
-missing work.
+round-robin order. Voice design combines extracted metadata, ability scores, biography, and portrait
+with required web research under an annotated 12-part voice profile. Dialogue direction has no web
+access and returns an explicit character-or-narrator result for every line. Direction is submitted
+in small homogeneous batches with a stable prompt prefix; speech is packed into Inworld's
+asynchronous batch API under its 10,000-character On-Demand limit.
+Inworld returns each batch line as one or more concatenated WAV segments. PyAV joins and normalizes
+them into mono 22.05 kHz Ogg Vorbis at 90 kb/s. Published provider IDs, final voice descriptions,
+directed text, game-ready audio bytes, and durable batch operation names are stored immediately.
+Prompts, preview artifacts, manifests, and expiring signed URLs are not persisted. Re-running the
+command resumes missing work.
+
+To deliberately replace selected character voices and all of their derived directions and audio,
+use the recreation flag:
+
+```powershell
+uv run bgvoice generate --voice Imoen --voice Gorion --lines-per-voice 100 --recreate-voices
+```
+
+The command removes their corresponding tagged Inworld voices and regenerates the workload. The
+shared narrator is reused; only the requested character voices are recreated.
 
 Export the game-ready recordings as one installable mod after generation completes:
 

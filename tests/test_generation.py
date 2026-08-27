@@ -1,30 +1,38 @@
 """Deterministic generation workload and critical speech-input behavior."""
 
 import json
+import re
 import wave
 from io import BytesIO
 from pathlib import Path
-from types import TracebackType
-from typing import Any, Self, cast
+from types import SimpleNamespace, TracebackType
+from typing import Any, ClassVar, Self, cast
 
+import av
 import httpx
 import pytest
+from av.container import InputContainer
 
 import bgvoice.generation as generation_module
 from bgvoice.game_audio import encode_game_audio
 from bgvoice.generation import (
-    DirectedLinePlan,
-    DirectionBatchPlan,
-    VoiceDesignPlan,
-    _validated_direction,
     generate,
     load_workloads,
     round_robin_lines,
 )
+from bgvoice.generation_ai import (
+    CharacterDirectedDialogue,
+    DirectedLinePlan,
+    DirectionBatchPlan,
+    NarratorDirectedDialogue,
+    VoiceDesignPlan,
+    VoiceProfile,
+)
 from bgvoice.generation_store import GenerationStore
-from bgvoice.model_types import DialogueLineKind, Speaker
+from bgvoice.inworld import BatchOperation, InworldClient, OperationError, PublishedVoice
+from bgvoice.model_types import DialogueLineKind, RunStatus
 from bgvoice.reader import PipelineReader
-from bgvoice.storage_records import DialogueLineRecord
+from bgvoice.storage_records import DialogueLineRecord, TtsBatchRecord
 
 
 def _line(dialogue: str, state: int) -> DialogueLineRecord:
@@ -44,21 +52,23 @@ def _line(dialogue: str, state: int) -> DialogueLineRecord:
 
 
 def test_round_robin_takes_each_dialogues_lowest_remaining_state() -> None:
-    selected = round_robin_lines(
-        {
-            "B.DLG": [_line("B.DLG", 3), _line("B.DLG", 0)],
-            "A.DLG": [_line("A.DLG", 6), _line("A.DLG", 2), _line("A.DLG", 4)],
-        },
-        5,
-    )
-
-    assert [(line.dialogue_resource_name, line.state_index) for line in selected] == [
+    dialogues = {
+        "B.DLG": [_line("B.DLG", 3), _line("B.DLG", 0)],
+        "A.DLG": [_line("A.DLG", 6), _line("A.DLG", 2), _line("A.DLG", 4)],
+    }
+    expected = [
         ("A.DLG", 2),
         ("B.DLG", 0),
         ("A.DLG", 4),
         ("B.DLG", 3),
         ("A.DLG", 6),
     ]
+    assert [
+        (line.dialogue_resource_name, line.state_index) for line in round_robin_lines(dialogues, 5)
+    ] == expected
+    assert [
+        (line.dialogue_resource_name, line.state_index) for line in round_robin_lines(dialogues, 6)
+    ] == expected
 
 
 @pytest.mark.anyio
@@ -74,81 +84,93 @@ async def test_current_voice_workload_uses_attributed_nonempty_npc_lines(
     assert workload.voice.voice_id == "aerie"
     assert len(workload.lines) == 2
     assert all(line.line_kind is DialogueLineKind.NPC and line.text for line in workload.lines)
-
-
-@pytest.mark.parametrize(
-    "text",
-    ["Hello, <CHARNAME>.", "*whispers* Hello.", "```Hello```", "   "],
-)
-def test_direction_rejects_only_content_that_cannot_be_synthesized(text: str) -> None:
-    with pytest.raises(AssertionError):
-        _validated_direction(text)
-
-
-def test_direction_preserves_valid_tts_instructions() -> None:
-    assert _validated_direction(" [speak quietly] We should go. ") == (
-        "[speak quietly] We should go."
-    )
+    assert workload.ability_scores.render() == ("STR 10, DEX 17, CON 9, INT 16, WIS 16, CHA 14")
+    assert workload.portrait_png == b"\x89PNG\r\n\x1a\nfixture"
 
 
 def test_provider_audio_is_encoded_for_the_enhanced_edition() -> None:
-    source = BytesIO()
-    with wave.open(source, "wb") as audio:
+    first = BytesIO()
+    with wave.open(first, "wb") as audio:
         audio.setnchannels(2)
         audio.setsampwidth(2)
         audio.setframerate(44_100)
         audio.writeframes(b"\0\0" * 2 * 4_410)
 
-    encoded = encode_game_audio(source.getvalue())
+    second = BytesIO()
+    with wave.open(second, "wb") as audio:
+        audio.setnchannels(1)
+        audio.setsampwidth(2)
+        audio.setframerate(22_050)
+        audio.writeframes(b"\0\0" * 2_205)
+
+    encoded = encode_game_audio(first.getvalue() + second.getvalue())
     identification = encoded.index(b"\x01vorbis")
+    with cast(InputContainer, av.open(BytesIO(encoded))) as container:
+        samples = sum(frame.samples for frame in container.decode(audio=0))
 
     assert encoded.startswith(b"OggS")
+    assert samples / 22_050 == pytest.approx(0.2, abs=0.015)
     assert encoded[identification + 11] == 1
     assert int.from_bytes(encoded[identification + 12 : identification + 16], "little") == 22_050
     assert int.from_bytes(encoded[identification + 20 : identification + 24], "little") >= 89_000
 
 
 class _FakeResponses:
+    calls: ClassVar[list[dict[str, object]]] = []
+
     async def parse(self, **arguments: object) -> object:
+        self.calls.append(arguments)
         if arguments["text_format"] is VoiceDesignPlan:
-            return type(
-                "VoiceResponse",
-                (),
-                {
-                    "output_parsed": VoiceDesignPlan(
-                        description=(
-                            "A clear, warm British voice with an earnest, measured delivery. "
-                            "Perfect broadcast quality audio."
-                        ),
-                        language_code="en-GB",
-                        preview_text="We travel together, and we shall face whatever waits ahead.",
-                    )
-                },
-            )()
+            return SimpleNamespace(
+                output_parsed=VoiceDesignPlan(
+                    language_code="en-GB",
+                    profile=VoiceProfile(
+                        dialect="English with a subtle northern English accent",
+                        gender="female",
+                        age="young adult",
+                        emotion="earnest and hopeful",
+                        tone="warm and conversational",
+                        pitch="medium-high",
+                        volume="moderate",
+                        speed="quick but articulate",
+                        clarity="clear",
+                        fluency="fluent",
+                        personality="compassionate and resilient",
+                        texture="bright and lightly breathy",
+                    ),
+                    preview_text=("We travel together, and we shall face whatever waits ahead."),
+                    research_summary="Game evidence agrees with published character references.",
+                    source_urls=["https://example.com/aerie"],
+                ),
+                output=[SimpleNamespace(type="web_search_call")],
+            )
 
         messages = cast(list[dict[str, object]], arguments["input"])
         content = cast(str, messages[1]["content"])
-        source = content.split("Lines to direct:\n", 1)[1].splitlines()
-        return type(
-            "DirectionResponse",
-            (),
-            {
-                "output_parsed": DirectionBatchPlan(
-                    lines=[
-                        DirectedLinePlan(
-                            id=line.partition("\t")[0],
-                            speaker=(Speaker.CHARACTER if index == 0 else Speaker.NARRATOR),
-                            text=(
-                                "[warmly] A quest for another day."
-                                if "<" in line
-                                else f"[warmly] {line.partition('\t')[2]}"
-                            ),
-                        )
-                        for index, line in enumerate(source)
-                    ]
-                )
-            },
-        )()
+        identifiers = re.findall(r"^Requested ID: (.+)$", content, re.MULTILINE)
+        return SimpleNamespace(
+            output_parsed=DirectionBatchPlan(
+                items=[
+                    DirectedLinePlan(
+                        id=identifier,
+                        result=(
+                            CharacterDirectedDialogue(
+                                speaker="character",
+                                directed_dialogue="[warmly] A quest for another day.",
+                            )
+                            if index == 0
+                            else NarratorDirectedDialogue(
+                                speaker="narrator",
+                                directed_dialogue=(
+                                    "[narrate calmly] The road grows quiet as night falls."
+                                ),
+                            )
+                        ),
+                    )
+                    for index, identifier in enumerate(identifiers)
+                ]
+            )
+        )
 
 
 class _FakeOpenAI:
@@ -168,6 +190,81 @@ class _FakeOpenAI:
         return None
 
 
+class _ReusableVoiceProvider:
+    async def list_voices(self) -> list[PublishedVoice]:
+        return [
+            PublishedVoice(
+                name="workspaces/test/voices/aerie-existing",
+                voiceId="aerie-existing",
+                displayName="Aerie",
+                description="An existing carefully designed voice.",
+                langCode="EN_GB",
+                tags=["bgvoice"],
+                source="IVC",
+            )
+        ]
+
+
+class _FailedBatchProvider:
+    async def poll_operation(self, name: str) -> BatchOperation:
+        return BatchOperation(
+            name=name,
+            done=True,
+            error=OperationError(code=13, message="provider synthesis failed"),
+        )
+
+
+@pytest.mark.anyio
+async def test_provider_voice_is_reused_when_local_generation_is_missing(
+    scenario_database: Path,
+) -> None:
+    store = await GenerationStore.open(scenario_database)
+    try:
+        record = await generation_module._reuse_existing_voice(
+            cast(InworldClient, _ReusableVoiceProvider()),
+            store,
+            "aerie",
+            "Aerie",
+        )
+        persisted = await store.generated_voice("aerie")
+    finally:
+        store.close()
+
+    assert record == persisted
+    assert record is not None
+    assert record.inworld_voice_id == "aerie-existing"
+    assert record.description.language_code == "en-GB"
+
+
+@pytest.mark.anyio
+async def test_failed_provider_batch_is_persisted_without_audio(
+    scenario_database: Path,
+) -> None:
+    batch = TtsBatchRecord(
+        operation_name="workspaces/test/ttsBatchJobs/failed/operations/op",
+        status=RunStatus.RUNNING,
+        started_at="2026-08-27T12:00:00+00:00",
+    )
+    store = await GenerationStore.open(scenario_database)
+    try:
+        await store.upsert_batches([batch])
+        generated = await generation_module._complete_batch(
+            store,
+            cast(InworldClient, _FailedBatchProvider()),
+            batch,
+        )
+        persisted = {record.operation_name: record for record in await store.batches()}[
+            batch.operation_name
+        ]
+    finally:
+        store.close()
+
+    assert generated == 0
+    assert persisted.status is RunStatus.FAILED
+    assert persisted.error == "provider synthesis failed"
+    assert persisted.completed_at is not None
+
+
 @pytest.mark.anyio
 async def test_generation_runs_from_voice_design_through_game_audio(
     scenario_database: Path,
@@ -182,13 +279,18 @@ async def test_generation_runs_from_voice_design_through_game_audio(
 
     draft = 0
     batch = 0
+    voice_list_requests = 0
     operations: dict[str, list[str]] = {}
+    published: dict[str, dict[str, object]] = {}
+    published_names: list[str] = []
+    deleted_voice_ids: list[str] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
-        nonlocal draft, batch
+        nonlocal draft, batch, voice_list_requests
         path = request.url.path
         if path == "/voices/v1/voices" and request.method == "GET":
-            return httpx.Response(200, json={"voices": []})
+            voice_list_requests += 1
+            return httpx.Response(200, json={"voices": list(published.values())})
         if path == "/voices/v1/voices:design":
             draft += 1
             return httpx.Response(
@@ -207,18 +309,25 @@ async def test_generation_runs_from_voice_design_through_game_audio(
         if path.endswith(":publish"):
             body = cast(dict[str, Any], json.loads(request.content))
             display_name = cast(str, body["displayName"])
-            return httpx.Response(
-                200,
-                json={
-                    "name": f"workspaces/test/voices/{draft}",
-                    "voiceId": f"voice-{display_name.casefold().replace(' ', '-')}",
-                    "displayName": display_name,
-                    "description": body["description"],
-                    "langCode": "EN_GB",
-                    "tags": ["bgvoice"],
-                    "source": "IVC",
-                },
-            )
+            voice_id = f"voice-{display_name.casefold().replace(' ', '-')}-{draft}"
+            voice = {
+                "name": f"workspaces/test/voices/{voice_id}",
+                "voiceId": voice_id,
+                "displayName": display_name,
+                "description": body["description"],
+                "langCode": "EN_GB",
+                "tags": ["bgvoice"],
+                "source": "IVC",
+            }
+            published[voice_id] = voice
+            published_names.append(display_name)
+            return httpx.Response(200, json=voice)
+        if path.startswith("/voices/v1/voices/") and request.method == "DELETE":
+            voice_id = path.rsplit("/", 1)[1]
+            assert voice_id in published
+            del published[voice_id]
+            deleted_voice_ids.append(voice_id)
+            return httpx.Response(200)
         if path == "/tts/v1/voice:synthesizeBatch":
             batch += 1
             body = cast(dict[str, Any], json.loads(request.content))
@@ -259,16 +368,44 @@ async def test_generation_runs_from_voice_design_through_game_audio(
             return httpx.Response(200, content=provider_audio.getvalue())
         raise AssertionError(f"unexpected request: {request.method} {request.url}")
 
-    http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    transport = httpx.MockTransport(handler)
+    client_type = httpx.AsyncClient
     monkeypatch.setattr(generation_module, "AsyncOpenAI", _FakeOpenAI)
-    monkeypatch.setattr(httpx, "AsyncClient", lambda **_: http)
+    monkeypatch.setattr(
+        httpx,
+        "AsyncClient",
+        lambda **_: client_type(transport=transport),
+    )
+    _FakeResponses.calls.clear()
 
-    summary = await generate(
+    first_summary = await generate(
         scenario_database,
         ["Aerie"],
         2,
         "openai-test",
         "inworld-test",
+    )
+    store = await GenerationStore.open(scenario_database)
+    try:
+        first_voices = await store.generated_voices()
+        first_recordings = await store.generated_audio(["aerie"])
+    finally:
+        store.close()
+
+    resumed_summary = await generate(
+        scenario_database,
+        ["Aerie"],
+        2,
+        "openai-test",
+        "inworld-test",
+    )
+    second_summary = await generate(
+        scenario_database,
+        ["Aerie"],
+        2,
+        "openai-test",
+        "inworld-test",
+        recreate_voices=True,
     )
     store = await GenerationStore.open(scenario_database)
     try:
@@ -279,13 +416,54 @@ async def test_generation_runs_from_voice_design_through_game_audio(
     finally:
         store.close()
 
-    assert summary.model_dump() == {
+    expected_summary = {
         "voices": 1,
         "selected_lines": 2,
         "directed_lines": 2,
         "generated_audio": 2,
     }
+    assert first_summary.model_dump() == expected_summary
+    assert resumed_summary.model_dump() == expected_summary
+    assert second_summary.model_dump() == expected_summary
     assert set(voices) == {"aerie", "narrator"}
-    assert {line.speaker for line in directions} == {Speaker.CHARACTER, Speaker.NARRATOR}
+    assert sum(line.character is not None for line in directions) == 1
+    assert sum(line.narrator is not None for line in directions) == 1
     assert all(record.audio.startswith(b"OggS") for record in recordings)
+    assert {record.batch_operation_name for record in first_recordings}.isdisjoint(
+        record.batch_operation_name for record in recordings
+    )
     assert all(batch.status.value == "complete" for batch in batches)
+    assert len(batches) == 4
+
+    first_character_voice_id = first_voices["aerie"].inworld_voice_id
+    narrator_voice_id = first_voices["narrator"].inworld_voice_id
+    assert voices["aerie"].inworld_voice_id != first_character_voice_id
+    assert voices["narrator"].inworld_voice_id == narrator_voice_id
+    assert deleted_voice_ids == [first_character_voice_id]
+    assert narrator_voice_id in published
+    assert published_names == ["Aerie", "Narrator", "Aerie"]
+    assert voice_list_requests == 3
+    assert {record.inworld_voice_id for record in recordings} == {
+        voices["aerie"].inworld_voice_id,
+        narrator_voice_id,
+    }
+
+    voice_calls = [call for call in _FakeResponses.calls if call["text_format"] is VoiceDesignPlan]
+    direction_calls = [
+        call for call in _FakeResponses.calls if call["text_format"] is DirectionBatchPlan
+    ]
+    assert len(voice_calls) == 2
+    assert len(direction_calls) == 2
+    assert all(
+        call["tools"] == [{"type": "web_search"}] and call["tool_choice"] == "required"
+        for call in voice_calls
+    )
+    assert all(call["tools"] == [] and call["tool_choice"] == "none" for call in direction_calls)
+    direction_prompts = [
+        cast(str, cast(list[dict[str, object]], call["input"])[1]["content"])
+        for call in direction_calls
+    ]
+    assert all(
+        "Previous NPC/scene line: Hello." in prompt and "Player response: Hi." in prompt
+        for prompt in direction_prompts
+    )

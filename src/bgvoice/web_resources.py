@@ -17,7 +17,6 @@ from bgvoice.model_types import (
     RunKind,
     RunStatus,
     SourceKind,
-    Speaker,
 )
 from bgvoice.reader import PipelineReader
 from bgvoice.reader_metadata import LabelResolver
@@ -72,10 +71,6 @@ _LINE_KIND: Final[dict[DialogueLineKind, pb.DialogueLineKind]] = {
     DialogueLineKind.NPC: pb.DIALOGUE_LINE_KIND_NPC,
     DialogueLineKind.PLAYER: pb.DIALOGUE_LINE_KIND_PLAYER,
     DialogueLineKind.JOURNAL: pb.DIALOGUE_LINE_KIND_JOURNAL,
-}
-_SPEAKER: Final[dict[Speaker, pb.Speaker]] = {
-    Speaker.CHARACTER: pb.SPEAKER_CHARACTER,
-    Speaker.NARRATOR: pb.SPEAKER_NARRATOR,
 }
 _IDENTIFIER_KIND: Final[dict[IdentifierKind, pb.IdentifierKind]] = {
     IdentifierKind.RACE: pb.IDENTIFIER_KIND_RACE,
@@ -386,9 +381,12 @@ def directed_line(row: DirectedLineRow) -> pb.DirectedLine:
         id=row.id,
         voice=resource_name(Collection.VOICES, row.voice_id),
         voice_display_name=row.voice_display_name,
-        speaker=_SPEAKER[row.speaker],
-        text=row.text,
     )
+    if row.character is not None:
+        message.character.directed_dialogue = row.character.directed_dialogue
+    else:
+        assert row.narrator is not None
+        message.narrator.directed_dialogue = row.narrator.directed_dialogue
     if row.audio_id is not None:
         message.audio_url = (
             f"/v1/installations/{INSTALLATION_ID}/generatedAudios/{row.audio_id}:download"

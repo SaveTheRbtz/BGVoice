@@ -23,7 +23,6 @@ from bgvoice.model_types import (
     ResourceTargetType,
     RunKind,
     RunStatus,
-    Speaker,
 )
 
 
@@ -256,14 +255,52 @@ class GeneratedVoiceRecord(_Record):
     created_at: str = Field(min_length=1)
 
 
+class CharacterDirection(BaseModel):
+    """Processed dialogue spoken by its attributed character."""
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    directed_dialogue: Annotated[
+        str,
+        Field(
+            min_length=1,
+            max_length=2000,
+            description=(
+                "The character's complete spoken text, with concise Inworld TTS-2 square-bracket "
+                "instruction tags and with source-only asterisks and Infinity Engine placeholders "
+                "removed or naturally rewritten."
+            ),
+        ),
+    ]
+
+
+class NarratorDirection(BaseModel):
+    """Processed scene narration spoken by the shared narrator."""
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    directed_dialogue: Annotated[
+        str,
+        Field(
+            min_length=1,
+            max_length=2000,
+            description=(
+                "The narrator's complete spoken text, with concise Inworld TTS-2 square-bracket "
+                "instruction tags and with source-only asterisks, enclosing parentheses, and "
+                "Infinity Engine placeholders removed or naturally rewritten."
+            ),
+        ),
+    ]
+
+
 class DirectedLineRecord(_Record):
     """One processed line ready for speech synthesis."""
 
     id: str = Field(min_length=1, max_length=63)
     voice_id: str = Field(min_length=1)
     dialogue_line_id: str = Field(min_length=1)
-    speaker: Speaker = Field(strict=False)
-    text: str = Field(min_length=1, max_length=2000)
+    character: CharacterDirection | None = None
+    narrator: NarratorDirection | None = None
     created_at: str = Field(min_length=1)
 
     @staticmethod
@@ -275,6 +312,9 @@ class DirectedLineRecord(_Record):
     def validate_id(self) -> Self:
         expected = self.id_for(self.voice_id, self.dialogue_line_id)
         assert self.id == expected, f"directed line id must be {expected!r}"
+        assert (self.character is None) != (self.narrator is None), (
+            "a directed line must contain exactly one character or narrator result"
+        )
         return self
 
 

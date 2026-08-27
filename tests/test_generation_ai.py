@@ -1,0 +1,299 @@
+"""Model-facing contracts for voice research and dialogue direction."""
+
+from types import SimpleNamespace
+from typing import cast
+
+import pytest
+from openai import AsyncOpenAI
+from pydantic import ValidationError
+
+from bgvoice.generation_ai import (
+    CharacterAbilityScores,
+    CharacterDirectedDialogue,
+    DialogueDirectionSource,
+    DirectedLinePlan,
+    DirectionBatchPlan,
+    DirectionBatchSource,
+    NarratorDirectedDialogue,
+    VoiceDesignPlan,
+    VoiceDesignSource,
+    VoiceProfile,
+    build_direction_prompt,
+    build_voice_design_content,
+    build_voice_design_prompt,
+    create_direction_batch,
+    create_voice_design_plan,
+    validate_directed_dialogue,
+)
+
+
+def _voice_profile(**changes: str) -> VoiceProfile:
+    values = {
+        "dialect": "English with a subtle northern English accent",
+        "gender": "female",
+        "age": "late teens",
+        "emotion": "earnest and optimistic",
+        "tone": "warm and conversational",
+        "pitch": "medium-high",
+        "volume": "moderate",
+        "speed": "quick but articulate",
+        "clarity": "clear",
+        "fluency": "fluent",
+        "personality": "playful and resilient",
+        "texture": "bright and lightly breathy",
+    }
+    values.update(changes)
+    return VoiceProfile.model_validate(values)
+
+
+def _voice_plan() -> VoiceDesignPlan:
+    return VoiceDesignPlan(
+        language_code="en-GB",
+        profile=_voice_profile(),
+        preview_text="I know the road is dangerous, but we can still face it together.",
+        research_summary="Local evidence and published character references agree.",
+        source_urls=["https://example.com/imoen"],
+    )
+
+
+def _voice_source(*, portrait: bool = True) -> VoiceDesignSource:
+    return VoiceDesignSource(
+        display_name="Imoen",
+        metadata="Name: Imoen\nGender: Female\nRace: Human\nClass: Thief\nAlignment: Neutral Good",
+        biography="Imoen grew up in Candlekeep alongside her closest childhood friend.",
+        ability_scores=CharacterAbilityScores(
+            strength=9,
+            strength_bonus=0,
+            intelligence=17,
+            wisdom=11,
+            dexterity=18,
+            constitution=16,
+            charisma=16,
+        ),
+        portrait_png=b"\x89PNG\r\n" if portrait else None,
+    )
+
+
+def test_voice_profile_preserves_provider_shape_and_validation() -> None:
+    profile = _voice_profile(
+        tone=(
+            "warm, observant, disarmingly cheerful, and able to become serious "
+            "without losing intimacy at emotionally difficult moments"
+        ),
+        texture="bright and lightly breathy. Perfect broadcast quality audio.",
+    )
+
+    assert len(profile.tone) <= 70
+    assert not profile.tone.endswith("emotionally")
+    assert profile.render().splitlines() == [
+        f"{name}: {getattr(profile, name)}"
+        for name in (
+            "dialect",
+            "gender",
+            "age",
+            "emotion",
+            "tone",
+            "pitch",
+            "volume",
+            "speed",
+            "clarity",
+            "fluency",
+            "personality",
+            "texture",
+        )
+    ]
+    assert profile.texture.endswith("Perfect broadcast quality audio.")
+    assert profile.texture.count("Perfect broadcast quality audio.") == 1
+
+    for invalid in (
+        {"dialect": "Rashemi accent"},
+        {"tone": "tone: nested value"},
+        {"texture": "warm and Faerûnian"},
+    ):
+        with pytest.raises(ValidationError):
+            _voice_profile(**invalid)
+
+    schema = VoiceProfile.model_json_schema()["properties"]
+    assert "real-world accent or dialect" in schema["dialect"]["description"]
+    assert "audio quality is added in code" in schema["texture"]["description"]
+
+
+def test_voice_prompt_and_content_keep_tuned_local_evidence() -> None:
+    source = _voice_source()
+    prompt = build_voice_design_prompt(source)
+    content = build_voice_design_content(source, prompt)
+
+    assert prompt.startswith("Design an original synthetic voice for Imoen from Baldur's Gate.")
+    assert "Combine your internal model knowledge with current web research." in prompt
+    assert "Reconcile\ncampaign progression such as class changes" in prompt
+    assert "- Ability scores: STR 9, DEX 18, CON 16, INT 17, WIS 11, CHA 16" in prompt
+    assert "A local game portrait of Imoen is attached." in prompt
+    assert "## Voice Description Best Practices" in prompt
+    assert "Pirate structured voice example:" in prompt
+    assert len(content) == 2
+    assert content[0] == {"type": "input_text", "text": prompt}
+    assert content[1]["type"] == "input_image"
+    assert cast(str, content[1]["image_url"]).startswith("data:image/png;base64,")
+    assert content[1]["detail"] == "high"
+
+
+class _QueuedResponses:
+    def __init__(self, responses: list[object]) -> None:
+        self.responses = responses
+        self.calls: list[dict[str, object]] = []
+
+    async def parse(self, **arguments: object) -> object:
+        self.calls.append(arguments)
+        return self.responses.pop(0)
+
+
+def _client(responses: _QueuedResponses) -> AsyncOpenAI:
+    return cast(AsyncOpenAI, SimpleNamespace(responses=responses))
+
+
+@pytest.mark.anyio
+async def test_voice_design_requires_and_verifies_web_search_with_retry() -> None:
+    plan = _voice_plan()
+    responses = _QueuedResponses(
+        [
+            SimpleNamespace(output_parsed=plan, output=[]),
+            SimpleNamespace(
+                output_parsed=plan,
+                output=[SimpleNamespace(type="web_search_call")],
+            ),
+        ]
+    )
+
+    assert (
+        await create_voice_design_plan(_client(responses), _voice_source(), model="gpt-5.6-sol")
+        == plan
+    )
+    assert len(responses.calls) == 2
+    for call in responses.calls:
+        assert call["tools"] == [{"type": "web_search"}]
+        assert call["tool_choice"] == "required"
+        assert call["max_tool_calls"] == 4
+        assert call["include"] == ["web_search_call.action.sources"]
+        assert call["text_format"] is VoiceDesignPlan
+    second_input = cast(list[dict[str, object]], responses.calls[1]["input"])
+    second_content = cast(list[dict[str, object]], second_input[1]["content"])
+    assert "previous result failed local compatibility validation" in cast(
+        str, second_content[0]["text"]
+    )
+
+
+def _direction_source() -> DirectionBatchSource:
+    return DirectionBatchSource(
+        display_name="Gorion",
+        metadata="Name: Gorion\nGender: Male\nRace: Human\nClass: Mage",
+        lines=[
+            DialogueDirectionSource(
+                id="d-character",
+                text="*whispering* We must leave, <CHARNAME>.",
+                dialogue_history=(
+                    "Unspoken scene context:\n"
+                    "Previous NPC/scene line: The walls are no longer safe after nightfall.\n"
+                    "Player response: What should we do now?"
+                ),
+            ),
+            DialogueDirectionSource(
+                id="d-narrator",
+                text="(The old mage turns toward the road as dawn breaks.)",
+            ),
+        ],
+    )
+
+
+def test_direction_contract_is_discriminated_and_keeps_tuned_rules() -> None:
+    schema = DirectionBatchPlan.model_json_schema()
+    result_schema = schema["$defs"]["DirectedLinePlan"]["properties"]["result"]
+    prompt = build_direction_prompt(_direction_source())
+
+    branch_names = [branch["$ref"].rsplit("/", 1)[1] for branch in result_schema["anyOf"]]
+    assert {schema["$defs"][name]["properties"]["speaker"]["const"] for name in branch_names} == {
+        "character",
+        "narrator",
+    }
+    assert "not merely from the presence of punctuation" in result_schema["description"]
+    assert "A fuller instruction like [say sadly with deliberate" in prompt
+    assert "Never include an angle-bracket token in the result." in prompt
+    assert "Fully enclosing asterisks or parentheses are strong evidence" in prompt
+    assert "A brief stage direction such as *sighs* or *whispering*" in prompt
+    assert "Do not infer additional emotion from a visual action." in prompt
+    assert "Requested ID: d-character" in prompt
+    assert "Previous NPC/scene line: The walls are no longer safe" in prompt
+    assert "Requested ID: d-narrator" in prompt
+
+
+@pytest.mark.anyio
+async def test_direction_has_no_tools_and_retries_invalid_structured_results() -> None:
+    source = _direction_source()
+    invalid = DirectionBatchPlan(
+        items=[
+            DirectedLinePlan(
+                id="d-character",
+                result=CharacterDirectedDialogue(
+                    speaker="character",
+                    directed_dialogue="[speak quietly] We must leave, <CHARNAME>.",
+                ),
+            ),
+            DirectedLinePlan(
+                id="d-narrator",
+                result=NarratorDirectedDialogue(
+                    speaker="narrator",
+                    directed_dialogue="[narrate calmly] The old mage turns toward the road.",
+                ),
+            ),
+        ]
+    )
+    valid = invalid.model_copy(
+        update={
+            "items": [
+                invalid.items[0].model_copy(
+                    update={
+                        "result": CharacterDirectedDialogue(
+                            speaker="character",
+                            directed_dialogue="[speak quietly] We must leave.",
+                        )
+                    }
+                ),
+                invalid.items[1],
+            ]
+        }
+    )
+    responses = _QueuedResponses(
+        [
+            SimpleNamespace(output_parsed=invalid),
+            SimpleNamespace(output_parsed=valid),
+        ]
+    )
+
+    assert await create_direction_batch(_client(responses), source, model="gpt-5.6-luna") == valid
+    assert len(responses.calls) == 2
+    for call in responses.calls:
+        assert call["tools"] == []
+        assert call["tool_choice"] == "none"
+        assert call["text_format"] is DirectionBatchPlan
+    second_input = cast(list[dict[str, str]], responses.calls[1]["input"])
+    assert "previous result failed validation" in second_input[1]["content"]
+
+
+def test_direction_validation_rejects_narrator_wrappers_and_copied_context() -> None:
+    source = _direction_source().lines[0]
+
+    with pytest.raises(ValueError, match="enclosing parentheses"):
+        validate_directed_dialogue(
+            source,
+            NarratorDirectedDialogue(
+                speaker="narrator",
+                directed_dialogue="(The old mage turns toward the road.)",
+            ),
+        )
+    with pytest.raises(ValueError, match="unspoken scene context"):
+        validate_directed_dialogue(
+            source,
+            CharacterDirectedDialogue(
+                speaker="character",
+                directed_dialogue="The walls are no longer safe after nightfall.",
+            ),
+        )

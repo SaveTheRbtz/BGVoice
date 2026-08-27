@@ -1,8 +1,8 @@
 """Typed query and result models for pipeline inspection."""
 
-from typing import Literal
+from typing import Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from bgvoice.model_types import (
     AttributionPublicationStatus,
@@ -11,8 +11,8 @@ from bgvoice.model_types import (
     DialogueLineKind,
     IdentifierKind,
     SourceKind,
-    Speaker,
 )
+from bgvoice.storage_records import CharacterDirection, NarratorDirection
 
 type CharacterSort = Literal[
     "resource_name",
@@ -281,9 +281,16 @@ class DirectedLineRow(_ReaderModel):
     id: str
     voice_id: str
     voice_display_name: str
-    speaker: Speaker
-    text: str
+    character: CharacterDirection | None
+    narrator: NarratorDirection | None
     audio_id: str | None
+
+    @model_validator(mode="after")
+    def validate_result(self) -> Self:
+        assert (self.character is None) != (self.narrator is None), (
+            "a directed line must contain exactly one character or narrator result"
+        )
+        return self
 
 
 class DialogueLineRow(_ReaderModel):

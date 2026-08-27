@@ -13,7 +13,7 @@ import {
 } from "./browser";
 import { filterValue } from "./filters";
 import { formatCount } from "./format";
-import { Speaker, type DialogueLine, type DirectedLine } from "./gen/bgvoice/v1/pipeline_pb";
+import type { DialogueLine, DirectedLine } from "./gen/bgvoice/v1/pipeline_pb";
 import { lineKindLabel, sourceKindLabel } from "./pipeline-labels";
 import { ResourceTitle } from "./resource-ui";
 import { dialoguePath, followLink, resourceId, voicePath } from "./routes";
@@ -206,40 +206,66 @@ function LineDirections({ directions }: { directions: readonly DirectedLine[] })
   if (directions.length === 0) return null;
   return (
     <div className="line-directions" aria-label="Generated performances">
-      {directions.map((direction) => (
-        <article className="line-direction" key={direction.id}>
-          <div className="line-direction-head">
-            <a
-              href={voicePath(direction.voice)}
-              onClick={(event) => followLink(event, voicePath(direction.voice))}
-            >
-              {direction.voiceDisplayName}
-            </a>
-            <span>{speakerLabel(direction.speaker)}</span>
-          </div>
-          <p>{direction.text}</p>
-          {direction.audioUrl == null ? (
-            <small>Audio pending</small>
-          ) : (
-            <audio
-              controls
-              preload="none"
-              src={direction.audioUrl}
-              aria-label={`Audio sample for ${direction.voiceDisplayName}`}
-            >
-              <a href={direction.audioUrl}>Download audio</a>
-            </audio>
-          )}
-        </article>
-      ))}
+      {directions.map((direction) => {
+        const result = directionResult(direction);
+        return (
+          <article className="line-direction" key={direction.id}>
+            <div className="line-direction-head">
+              <a
+                href={voicePath(direction.voice)}
+                onClick={(event) => followLink(event, voicePath(direction.voice))}
+              >
+                {direction.voiceDisplayName}
+              </a>
+              <span>{result.label}</span>
+            </div>
+            <p>{result.directedDialogue}</p>
+            {direction.audioUrl == null ? (
+              <small>Audio pending</small>
+            ) : (
+              <audio
+                controls
+                preload="none"
+                src={direction.audioUrl}
+                aria-label={result.audioLabel}
+              >
+                <a href={direction.audioUrl}>Download audio</a>
+              </audio>
+            )}
+          </article>
+        );
+      })}
     </div>
   );
 }
 
-function speakerLabel(speaker: Speaker): string {
-  if (speaker === Speaker.NARRATOR) return "Narrator";
-  if (speaker === Speaker.CHARACTER) return "Character";
-  return "Speaker";
+function directionResult(direction: DirectedLine): {
+  label: string;
+  directedDialogue: string;
+  audioLabel: string;
+} {
+  switch (direction.result.case) {
+    case "character":
+      return {
+        label: "Character",
+        directedDialogue: direction.result.value.directedDialogue,
+        audioLabel: `Audio sample for ${direction.voiceDisplayName}`,
+      };
+    case "narrator":
+      return {
+        label: "Narrator",
+        directedDialogue: direction.result.value.directedDialogue,
+        audioLabel: `Narrator audio sample attributed to ${direction.voiceDisplayName}`,
+      };
+    case undefined:
+      throw new Error(`Directed line ${direction.id} has no result`);
+    default:
+      return assertNever(direction.result);
+  }
+}
+
+function assertNever(value: never): never {
+  throw new Error(`Unexpected direction result: ${String(value)}`);
 }
 
 function LineContext({ tokens, triggerIndex, triggerText }: {

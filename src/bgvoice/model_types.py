@@ -17,13 +17,6 @@ class DialogueLineKind(StrEnum):
     JOURNAL = "journal"
 
 
-class Speaker(StrEnum):
-    """Voice selected to speak one processed dialogue line."""
-
-    CHARACTER = "character"
-    NARRATOR = "narrator"
-
-
 class DetailStatus(StrEnum):
     PENDING = "pending"
     COMPLETE = "complete"
