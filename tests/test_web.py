@@ -3,21 +3,35 @@
 import asyncio
 from collections.abc import Iterator
 from pathlib import Path
+from typing import ClassVar, Self
 
 import lancedb
 import pytest
 from fastapi.testclient import TestClient
 from lancedb.pydantic import LanceModel
+from pydantic import model_validator
 
+import bgvoice.web as web_module
 from bgvoice.database import (
     CharacterRecord,
     DialogueLineRecord,
     DialogueRecord,
     PipelineDatabase,
 )
-from bgvoice.models import CharacterDetail, DialogueExtraction, RunKind, RunStatus
+from bgvoice.models import (
+    CharacterDetail,
+    DialogueExtraction,
+    IdentifierDefinition,
+    IdentifierKind,
+    RaceId,
+    RunKind,
+    RunStatus,
+    SoundSlotGroup,
+    SoundSlotId,
+)
 from bgvoice.web import CharacterQuery, PipelineReader, create_app
 from tests.factories import make_dialogue_dump, make_dialogue_resource, make_dump, make_resource
+from tests.test_database import make_metadata_extraction
 
 
 @pytest.fixture
@@ -30,19 +44,41 @@ def web_database(tmp_path: Path) -> Path:
     ghost = make_resource("GHOST.CRE")
     extras = [make_resource(f"EXTRA{index}.CRE") for index in range(8)]
 
+    aerie_dump = make_dump()
+    aerie_dump = aerie_dump.model_copy(
+        update={"header": aerie_dump.header.model_copy(update={"racial_enemy": RaceId(123)})}
+    )
     details = [
-        CharacterDetail.from_dump(aerie, make_dump()),
+        CharacterDetail.from_dump(aerie, aerie_dump),
         CharacterDetail.from_dump(
             minsc,
-            make_dump("MINSC.CRE", short_name="Minsc", long_name="Minsc", dialog="MINSC"),
+            make_dump(
+                "MINSC.CRE",
+                short_name="Minsc",
+                long_name="Minsc",
+                death_variable="Minsc",
+                dialog="MINSC",
+            ),
         ),
         CharacterDetail.from_dump(
             empty,
-            make_dump("EMPTY.CRE", short_name="Nameless", long_name=None, dialog="NONE"),
+            make_dump(
+                "EMPTY.CRE",
+                short_name="Nameless",
+                long_name=None,
+                death_variable="Empty",
+                dialog="NONE",
+            ),
         ),
         CharacterDetail.from_dump(
             ghost,
-            make_dump("GHOST.CRE", short_name="Ghost", long_name="Ghost", dialog="GHOST"),
+            make_dump(
+                "GHOST.CRE",
+                short_name="Ghost",
+                long_name="Ghost",
+                death_variable="Ghost",
+                dialog="GHOST",
+            ),
         ),
         *[
             CharacterDetail.from_dump(
@@ -51,6 +87,7 @@ def web_database(tmp_path: Path) -> Path:
                     resource.resource_name,
                     short_name=resource.resref.title(),
                     long_name=None,
+                    death_variable=resource.resref,
                     dialog="NONE",
                 ),
             )
@@ -59,6 +96,43 @@ def web_database(tmp_path: Path) -> Path:
     ]
 
     database = PipelineDatabase(path)
+    metadata = make_metadata_extraction()
+    metadata.identifiers.append(
+        IdentifierDefinition(
+            kind=IdentifierKind.SOUND_SLOT,
+            value=9,
+            source_resource="SNDSLOT.IDS",
+            ordinal=len(metadata.identifiers),
+            symbols=["ATTACK_VOICE"],
+        )
+    )
+    metadata.sound_slot_groups.extend(
+        [
+            SoundSlotGroup(
+                source_resource="SPEECH.2DA",
+                ordinal=2,
+                row_name="BATTLE_CRIES",
+                offset=SoundSlotId(8),
+                count=4,
+            ),
+            SoundSlotGroup(
+                source_resource="SPEECH.2DA",
+                ordinal=3,
+                row_name="COMBAT_VOICE",
+                offset=SoundSlotId(9),
+                count=1,
+            ),
+        ]
+    )
+    metadata_run = database.start_run(tmp_path, "iecli test", run_kind=RunKind.METADATA)
+    database.replace_metadata(metadata_run, metadata)
+    database.finish_run(
+        metadata_run,
+        status=RunStatus.COMPLETE,
+        attempted=metadata.source_resource_count,
+        extracted=metadata.source_resource_count,
+        failures=0,
+    )
     character_run = database.start_run(tmp_path, "iecli test")
     database.replace_inventory(character_run, [aerie, minsc, empty, ghost, *extras])
     database.apply_detail_batch(details, [])
@@ -123,6 +197,20 @@ def test_reader_is_healthy_and_reports_pipeline_totals(web_database: Path) -> No
             )
             assert stats.line_records_total == 10
             assert (
+                stats.character_sounds_total,
+                stats.soundset_lines_total,
+                stats.transition_edges_total,
+                stats.character_resource_links_total,
+                stats.interaction_rules_total,
+                stats.engine_strings_total,
+            ) == (24, 1, 6, 3, 1, 2)
+            assert (
+                stats.sound_slot_groups_total,
+                stats.favored_enemies_total,
+                stats.happiness_rules_total,
+                stats.banter_timing_settings_total,
+            ) == (4, 1, 3, 1)
+            assert (
                 stats.characters_matched,
                 stats.characters_missing_dialogue,
                 stats.characters_dialogue_failed,
@@ -131,7 +219,18 @@ def test_reader_is_healthy_and_reports_pipeline_totals(web_database: Path) -> No
             assert stats.characters_unavailable == 0
             assert (stats.dialogues_attributed, stats.dialogues_unattributed) == (2, 1)
             assert (stats.attributed_dialogue_lines, stats.unattributed_dialogue_lines) == (4, 4)
-            assert [run.run_kind for run in stats.latest_runs] == ["dialogues", "characters"]
+            assert (
+                stats.races_total,
+                stats.classes_total,
+                stats.kits_total,
+                stats.identifiers_total,
+                stats.campaigns_total,
+            ) == (5, 4, 1, 8, 2)
+            assert [run.run_kind for run in stats.latest_runs] == [
+                "dialogues",
+                "characters",
+                "metadata",
+            ]
             assert all(type(run.id) is str for run in stats.latest_runs)
         finally:
             reader.close()
@@ -189,8 +288,29 @@ def test_character_api_supports_filters_sort_fts_pagination_and_detail(
     assert api.get("/api/stats").json()["characters_total"] == 12
 
     options = api.get("/api/filter-options").json()
-    assert options["source_kinds"] == [{"value": "override", "count": 12}]
-    assert options["gender_ids"] == [{"value": 2, "count": 12}]
+    assert options["source_kinds"] == [{"value": "override", "label": None, "count": 12}]
+    assert options["gender_ids"] == [{"value": 2, "label": "Female", "count": 12}]
+    assert options["race_ids"] == [{"value": 2, "label": "Elf", "count": 12}]
+    assert options["class_ids"] == [{"value": 14, "label": "Cleric / Mage", "count": 12}]
+    assert options["metadata_class_ids"] == [
+        {"value": 1, "label": "Mage", "count": 1},
+        {"value": 2, "label": "Fighter", "count": 1},
+        {"value": 14, "label": "Cleric / Mage", "count": 1},
+    ]
+    assert options["campaigns"] == ["SOA", "BG1"]
+    assert options["identifier_kinds"] == [
+        "gender",
+        "alignment",
+        "enemy_ally",
+        "general",
+        "specific",
+        "animation",
+        "sound_slot",
+    ]
+    assert options["sound_slot_ids"] == [
+        {"value": 9, "label": "Attack Voice", "count": 12},
+        {"value": 44, "label": "Unknown (44)", "count": 12},
+    ]
 
     first_page = api.get(
         "/api/characters",
@@ -225,6 +345,19 @@ def test_character_api_supports_filters_sort_fts_pagination_and_detail(
 
     search = api.get("/api/characters", params={"q": "Minsc", "page_size": 10}).json()
     assert [item["resource_name"] for item in search["items"]] == ["MINSC.CRE"]
+    assert search["items"][0]["gender_label"] == "Female"
+    assert search["items"][0]["race_label"] == "Elf"
+    assert search["items"][0]["class_label"] == "Cleric / Mage"
+    assert search["items"][0]["alignment_label"] == "Lawful Good"
+    assert search["items"][0]["enemy_ally_label"] == "Goodcutoff / Ally"
+    assert search["items"][0]["animation_label"] == "Elf Female"
+    assert search["items"][0]["racial_enemy_label"] == "No Race"
+    assert search["items"][0]["kit_label"] == "Trueclass"
+    assert (
+        search["items"][0]["first_class_level"],
+        search["items"][0]["second_class_level"],
+        search["items"][0]["third_class_level"],
+    ) == (7, 7, 0)
     assert api.get("/api/characters", params={"q": "Mins", "page_size": 10}).json()["total"] == 0
     assert api.get("/api/characters", params={"q": " !!! ", "page_size": 100}).json()["total"] == 12
     escaped_syntax = api.get("/api/characters", params={"q": 'Aerie OR "Minsc"', "page_size": 10})
@@ -263,12 +396,179 @@ def test_character_api_supports_filters_sort_fts_pagination_and_detail(
 
     detail = api.get("/api/characters/AERIE.CRE")
     assert detail.status_code == 200
-    assert detail.json()["character"]["display_name"] == "Aerie"
-    assert detail.json()["dialogue"]["dialogue_line_count"] == 4
+    payload = detail.json()
+    character = payload["character"]
+    assert character["display_name"] == "Aerie"
+    assert character["race_label"] == "Elf"
+    assert character["racial_enemy_label"] == "Beholder"
+    assert character["kit_label"] == "Trueclass"
+    assert character["kit_ids_value"] == 0x4000
+    assert {
+        key: character[key]
+        for key in (
+            "strength",
+            "strength_bonus",
+            "intelligence",
+            "wisdom",
+            "dexterity",
+            "constitution",
+            "charisma",
+            "morale",
+            "morale_break",
+            "morale_recovery_time",
+            "reputation",
+        )
+    } == {
+        "strength": 10,
+        "strength_bonus": 0,
+        "intelligence": 16,
+        "wisdom": 16,
+        "dexterity": 17,
+        "constitution": 9,
+        "charisma": 14,
+        "morale": 10,
+        "morale_break": 5,
+        "morale_recovery_time": 60,
+        "reputation": 0,
+    }
+    assert payload["dialogue"]["dialogue_line_count"] == 4
     empty_detail = api.get("/api/characters/EMPTY.CRE").json()
     assert empty_detail["dialogue"] is None
     assert empty_detail["attribution_status"] == "no_dialogue"
     assert api.get("/api/characters/UNKNOWN.CRE").status_code == 404
+
+
+def test_metadata_apis_outer_merge_filter_sort_and_use_native_fts(api: TestClient) -> None:
+    races = api.get(
+        "/api/races",
+        params={"sort": "source_resource", "direction": "asc", "page_size": 100},
+    ).json()
+    assert races["total"] == 5
+    human = next(row for row in races["items"] if row["race_id"] == 1)
+    assert human == {
+        "key": "race:1",
+        "race_id": 1,
+        "symbols": ["HUMAN"],
+        "source_resource": None,
+        "ordinal": None,
+        "campaigns": [],
+        "row_name": None,
+        "name_strref": None,
+        "name": None,
+        "description_strref": None,
+        "description": None,
+        "uppercase_name_strref": None,
+        "uppercase_name": None,
+        "biography_strref": None,
+        "biography": None,
+    }
+    gnome = next(row for row in races["items"] if row["race_id"] == 7)
+    assert gnome["symbols"] == []
+    assert gnome["campaigns"] == ["SOA"]
+
+    soa_races = api.get(
+        "/api/races",
+        params={"campaign": "soa", "page_size": 100},
+    ).json()
+    assert {row["name"] for row in soa_races["items"]} == {"Elf", "Gnome"}
+    human_search = api.get(
+        "/api/races",
+        params={"q": "Human", "page_size": 100},
+    ).json()
+    assert (human_search["sort"], human_search["direction"]) == ("relevance", "desc")
+    assert [row["race_id"] for row in human_search["items"]] == [1]
+    elf_search = api.get(
+        "/api/races",
+        params={"q": "Elf", "sort": "source_resource", "page_size": 100},
+    ).json()
+    assert elf_search["sort"] == "source_resource"
+    assert {row["source_resource"] for row in elf_search["items"]} == {
+        "RACETEXT.2DA",
+        "BGRACTXT.2DA",
+    }
+
+    classes = api.get(
+        "/api/classes",
+        params={"class_id": 14, "fallen": "false", "page_size": 100},
+    ).json()
+    assert classes["total"] == 2
+    assert {tuple(row["campaigns"]) for row in classes["items"]} == {("SOA",), ("BG1",)}
+    canonical_class = api.get(
+        "/api/classes",
+        params={"q": "Fighter", "page_size": 100},
+    ).json()
+    assert canonical_class["items"][0]["source_resource"] is None
+    assert canonical_class["items"][0]["class_id"] == 2
+    assert (
+        api.get(
+            "/api/classes",
+            params={"fallen": "true", "page_size": 100},
+        ).json()["total"]
+        == 0
+    )
+
+    kits = api.get(
+        "/api/kits",
+        params={
+            "q": "Berserker",
+            "class_id": 2,
+            "sort": "lower_name",
+            "direction": "desc",
+            "page_size": 100,
+        },
+    ).json()
+    assert kits["total"] == 1
+    assert kits["items"][0] == {
+        "key": "KITLIST.2DA:0",
+        "source_resource": "KITLIST.2DA",
+        "ordinal": 0,
+        "row_id": 0,
+        "row_name": "BERSERKER",
+        "lower_name_strref": 3000,
+        "lower_name": "berserker",
+        "mixed_name_strref": 3001,
+        "mixed_name": "Berserker",
+        "help_strref": 3002,
+        "help_text": "A furious fighter.",
+        "abilities_resref": "K_BERS",
+        "proficiency_column": 1,
+        "unusable_mask": 0x10,
+        "class_id": 2,
+        "class_symbols": ["FIGHTER"],
+        "kit_ids_value": 0x4001,
+        "kit_symbols": ["BERSERKER"],
+        "class_text_kit_id": 1,
+    }
+
+    identifiers = api.get(
+        "/api/identifiers",
+        params={"kind": "gender", "q": "Female", "page_size": 100},
+    ).json()
+    assert identifiers["total"] == 1
+    assert identifiers["items"][0]["symbols"] == ["FEMALE"]
+    all_identifiers = api.get(
+        "/api/identifiers",
+        params={"sort": "value", "direction": "desc", "page_size": 100},
+    ).json()
+    assert all_identifiers["total"] == 8
+    assert {row["kind"] for row in all_identifiers["items"]} == {
+        "gender",
+        "alignment",
+        "enemy_ally",
+        "general",
+        "specific",
+        "animation",
+        "sound_slot",
+    }
+    assert (
+        api.get(
+            "/api/identifiers",
+            params={"q": "Human", "page_size": 100},
+        ).json()["total"]
+        == 0
+    )
+    assert api.get("/api/identifiers", params={"kind": "race"}).status_code == 422
+    assert api.get("/api/races", params={"sort": "DROP TABLE"}).status_code == 422
 
 
 def test_dialogue_and_line_apis_support_fts_filters_and_sorting(api: TestClient) -> None:
@@ -319,12 +619,162 @@ def test_dialogue_and_line_apis_support_fts_filters_and_sorting(api: TestClient)
     assert line["transition_index"] == 2
     assert line["source_kind"] == "override"
 
+    triggered = api.get(
+        "/api/lines",
+        params={
+            "q": "Hello",
+            "line_kind": "npc",
+            "attributed": "true",
+            "page_size": 10,
+        },
+    ).json()
+    assert triggered["total"] == 1
+    assert triggered["items"][0]["state_trigger_index"] == 0
+    assert triggered["items"][0]["state_trigger_text"] == 'Global("MetAerie","GLOBAL",0)'
+    tokenized = api.get(
+        "/api/lines",
+        params={
+            "q": "DAYANDMONTH",
+            "line_kind": "npc",
+            "attributed": "true",
+            "page_size": 10,
+        },
+    ).json()
+    assert tokenized["items"][0]["tokens"] == ["DAYANDMONTH"]
+
     schemas = api.get("/openapi.json").json()["components"]["schemas"]
     assert {"source_kind", "source_path"} <= set(schemas["DialogueRow"]["required"])
     assert "source_kind" in schemas["DialogueLineRow"]["required"]
 
 
-def test_fts_pagination_sorts_the_complete_match_set(tmp_path: Path) -> None:
+def test_voice_api_supports_fts_slot_filters_sorting_and_pagination(api: TestClient) -> None:
+    voices = api.get(
+        "/api/voices",
+        params={"q": "fallen", "slot_id": 9, "page_size": 10},
+    ).json()
+    assert (voices["total"], voices["page_count"], voices["sort"], voices["direction"]) == (
+        12,
+        2,
+        "relevance",
+        "desc",
+    )
+    assert voices["items"][0]["text"] == "For the fallen!"
+    assert voices["items"][0]["slot_id"] == 9
+    assert voices["items"][0]["slot_groups"] == ["BATTLE_CRIES", "COMBAT_VOICE"]
+    assert voices["items"][0]["serialized_size"] > 0
+
+    symbol_matches = api.get(
+        "/api/voices",
+        params={"q": "attack voice", "page_size": 10},
+    ).json()
+    assert (symbol_matches["total"], symbol_matches["sort"]) == (12, "relevance")
+    assert {row["slot_id"] for row in symbol_matches["items"]} == {9}
+
+    group_matches = api.get(
+        "/api/voices",
+        params={
+            "q": "combat voice",
+            "sort": "character_resource_name",
+            "direction": "asc",
+            "page_size": 10,
+        },
+    ).json()
+    assert (group_matches["total"], group_matches["sort"]) == (
+        12,
+        "character_resource_name",
+    )
+    assert {row["slot_id"] for row in group_matches["items"]} == {9}
+
+    named = api.get("/api/voices", params={"q": "Minsc", "page_size": 10}).json()
+    assert named["total"] == 2
+    assert {row["character_resource_name"] for row in named["items"]} == {"MINSC.CRE"}
+    assert {row["character_name"] for row in named["items"]} == {"Minsc"}
+
+    sorted_voices = api.get(
+        "/api/voices",
+        params={
+            "slot_id": 44,
+            "sort": "character_resource_name",
+            "direction": "asc",
+            "page_size": 10,
+        },
+    ).json()
+    assert sorted_voices["items"][0]["key"] == "AERIE.CRE:44"
+    assert sorted_voices["items"][0]["text"] == "What is it, <CHARNAME>?"
+    assert api.get("/api/voices", params={"sort": "DROP TABLE"}).status_code == 422
+
+
+def test_transition_api_exposes_state_machine_edges_and_actions(api: TestClient) -> None:
+    ordered = api.get("/api/transitions", params={"page_size": 10}).json()
+    assert (ordered["sort"], ordered["direction"]) == ("location", "asc")
+    assert [row["id"] for row in ordered["items"]] == [
+        "AERIE.DLG:0:0",
+        "AERIE.DLG:0:1",
+        "AERIE.DLG:1:2",
+        "UNUSED.DLG:0:0",
+        "UNUSED.DLG:0:1",
+        "UNUSED.DLG:1:2",
+    ]
+    reversed_order = api.get(
+        "/api/transitions",
+        params={"sort": "location", "direction": "desc", "page_size": 10},
+    ).json()
+    assert [row["id"] for row in reversed_order["items"]] == [
+        "UNUSED.DLG:1:2",
+        "UNUSED.DLG:0:1",
+        "UNUSED.DLG:0:0",
+        "AERIE.DLG:1:2",
+        "AERIE.DLG:0:1",
+        "AERIE.DLG:0:0",
+    ]
+
+    actions = api.get(
+        "/api/transitions",
+        params={"q": "SetGlobal", "terminates_dialog": "false", "page_size": 10},
+    ).json()
+    assert (actions["total"], actions["sort"], actions["direction"]) == (
+        2,
+        "relevance",
+        "desc",
+    )
+    edge = next(row for row in actions["items"] if row["dialogue_resource_name"] == "AERIE.DLG")
+    assert edge["id"] == "AERIE.DLG:1:2"
+    assert edge["trigger_text"] == 'Global("Quest","GLOBAL",0)'
+    assert edge["action_text"] == 'SetGlobal("Quest","GLOBAL",1)'
+    assert (edge["next_dialog"], edge["next_state_index"], edge["terminates_dialog"]) == (
+        "MINSC",
+        7,
+        False,
+    )
+    assert edge["flags_decoded"] == ["HasText", "HasTrigger", "HasAction"]
+    assert edge["serialized_size"] > 0
+
+    terminal = api.get(
+        "/api/transitions",
+        params={
+            "terminates_dialog": "true",
+            "sort": "dialogue_resource_name",
+            "direction": "asc",
+            "page_size": 10,
+        },
+    ).json()
+    assert [row["id"] for row in terminal["items"]] == [
+        "AERIE.DLG:0:1",
+        "UNUSED.DLG:0:1",
+    ]
+    assert all(row["next_dialog"] is None for row in terminal["items"])
+    assert api.get("/api/transitions", params={"sort": "DROP TABLE"}).status_code == 422
+
+    schemas = api.get("/openapi.json").json()["components"]["schemas"]
+    assert "slot_id" in schemas["VoiceRow"]["required"]
+    assert "slot_groups" in schemas["VoiceRow"]["required"]
+    assert "action_text" in schemas["TransitionRow"]["required"]
+
+
+def test_fts_pagination_sorts_the_complete_match_set(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     path = tmp_path / "fts-pages.lancedb"
     resources = [make_resource(f"R{index:02}.CRE") for index in range(35)]
     details = [
@@ -384,6 +834,15 @@ def test_fts_pagination_sorts_the_complete_match_set(tmp_path: Path) -> None:
         ]
         assert relevance_names == [resource.resource_name for resource in resources]
 
+        class CountingCharacterRecord(CharacterRecord):
+            deserialized: ClassVar[int] = 0
+
+            @model_validator(mode="after")
+            def count_deserialization(self) -> Self:
+                type(self).deserialized += 1
+                return self
+
+        monkeypatch.setattr(web_module, "CharacterRecord", CountingCharacterRecord)
         explicit = client.get(
             "/api/characters",
             params={
@@ -395,6 +854,7 @@ def test_fts_pagination_sorts_the_complete_match_set(tmp_path: Path) -> None:
         ).json()
         assert (explicit["sort"], explicit["direction"]) == ("resource_name", "desc")
         assert explicit["items"][0]["resource_name"] == "R34.CRE"
+        assert CountingCharacterRecord.deserialized == 10
 
         explicit_names = [
             item["resource_name"]

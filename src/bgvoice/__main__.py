@@ -9,7 +9,7 @@ from pathlib import Path
 from bgvoice.database import PipelineDatabase
 from bgvoice.iecli import IeCli
 from bgvoice.models import ExtractionProgress, RunStatus
-from bgvoice.pipeline import extract_characters, extract_dialogues
+from bgvoice.pipeline import extract_characters, extract_dialogues, extract_metadata
 
 _DEFAULT_DATABASE = Path("data/bgvoice.lancedb")
 
@@ -19,13 +19,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="bgvoice")
     commands = parser.add_subparsers(dest="command", required=True)
 
+    metadata = commands.add_parser(
+        "extract-metadata",
+        help="import effective engine, campaign, dialogue-link, and voice metadata",
+    )
     characters = commands.add_parser(
         "extract-characters", help="inventory and extract all EET CRE resources"
     )
     dialogues = commands.add_parser(
         "extract-dialogues", help="inventory and extract all EET DLG resources"
     )
-    for extraction in (characters, dialogues):
+    for extraction in (metadata, characters, dialogues):
         extraction.add_argument(
             "--game", required=True, type=Path, help="game root containing chitin.key"
         )
@@ -42,6 +46,7 @@ def build_parser() -> argparse.ArgumentParser:
             default=os.process_cpu_count() or 1,
             help="concurrent iecli processes (default: available logical CPU count)",
         )
+    for extraction in (characters, dialogues):
         extraction.add_argument(
             "--refresh", action="store_true", help="re-extract records already completed"
         )
@@ -87,7 +92,14 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     client = IeCli(args.iecli) if args.iecli is not None else IeCli()
     database = PipelineDatabase(args.database)
-    if args.command == "extract-characters":
+    if args.command == "extract-metadata":
+        summary = extract_metadata(
+            client,
+            database,
+            args.game,
+            workers=args.workers,
+        )
+    elif args.command == "extract-characters":
         summary = extract_characters(
             client,
             database,
@@ -106,10 +118,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             refresh=args.refresh,
             progress=_print_dialogue_progress,
         )
-    character_count = database.stats().total
-
     print(summary.model_dump_json(indent=2))
-    print(f"Active character records: {character_count}", file=sys.stderr)
+    if args.command != "extract-metadata":
+        print(f"Active character records: {database.stats().total}", file=sys.stderr)
     return 0 if summary.status is RunStatus.COMPLETE else 1
 
 

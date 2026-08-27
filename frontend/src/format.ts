@@ -26,6 +26,10 @@ export function formatDate(value: string | null): string {
   return dateFormatter.format(new Date(value));
 }
 
+export function formatHex(value: number): string {
+  return `0x${value.toString(16).toUpperCase().padStart(8, "0")}`;
+}
+
 function formatUnit(value: number, unit: "KiB" | "MiB" | "GiB"): string {
   return `${value.toFixed(value >= 100 ? 0 : 1)} ${unit}`;
 }

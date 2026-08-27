@@ -8,24 +8,45 @@ import {
   getLines,
   getStats,
 } from "./api";
-import { formatBytes, formatCount, formatDate } from "./format";
+import {
+  BrowserHeading,
+  ErrorBanner,
+  FacetFilter,
+  Pagination,
+  RelevanceButton,
+  ResultCount,
+  SearchBox,
+  SelectFilter,
+  SortHeader,
+} from "./browser";
+import {
+  browserTab,
+  countFilters,
+  errorMessage,
+  navigateToTab,
+  useBrowser,
+} from "./browser-state";
+import type { BrowserTab } from "./browser-state";
+import { formatBytes, formatCount, formatDate, formatHex } from "./format";
+import {
+  ClassBrowser,
+  IdentifierBrowser,
+  KitBrowser,
+  RaceBrowser,
+} from "./MetadataBrowser";
+import { TransitionBrowser, VoiceBrowser } from "./PipelineBrowsers";
 import type {
   AttributionStatus,
   CharacterDetailResponse,
   CharacterQuery,
   DetailStatus,
   DialogueQuery,
-  FacetValue,
   FilterOptions,
   LineQuery,
-  Page,
-  PaginatedQuery,
   PipelineStats,
   SourceKind,
-  SortDirection,
 } from "./types";
 
-const PAGE_SIZES = [10, 25, 50, 100] as const;
 const DETAIL_STATUSES = ["complete", "pending", "failed"] as const satisfies readonly DetailStatus[];
 const SOURCE_KINDS = ["override", "bif", "dlc"] as const satisfies readonly SourceKind[];
 const ATTRIBUTION_STATUSES = [
@@ -94,101 +115,11 @@ const DEFAULT_LINE_QUERY: LineQuery = {
   direction: "desc",
 };
 
-function useBrowser<
-  Item,
-  Sort extends string,
-  Query extends PaginatedQuery<Sort>,
->(
-  defaultQuery: Query,
-  loadPage: (query: Query, signal: AbortSignal) => Promise<Page<Item, Sort>>,
-) {
-  const [query, setQuery] = useState(defaultQuery);
-  const [search, setSearch] = useState(defaultQuery.q);
-  const [page, setPage] = useState<Page<Item, Sort>>(() => ({
-    items: [],
-    page: 1,
-    page_size: defaultQuery.page_size,
-    total: 0,
-    page_count: 1,
-    sort: "relevance",
-    direction: defaultQuery.direction,
-  }));
-  const [loadedQuery, setLoadedQuery] = useState<Query | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    const timer = window.setTimeout(() => {
-      const q = search.trim();
-      setQuery((current) =>
-        current.q === q ? current : { ...current, q, page: 1 },
-      );
-    }, 250);
-    return () => window.clearTimeout(timer);
-  }, [search]);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    loadPage(query, controller.signal)
-      .then((result) => {
-        setPage(result);
-        setError(null);
-      })
-      .catch((reason: unknown) => {
-        if (!controller.signal.aborted) setError(errorMessage(reason));
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setLoadedQuery(query);
-      });
-    return () => controller.abort();
-  }, [loadPage, query]);
-
-  function update<Key extends keyof Query>(key: Key, value: Query[Key]) {
-    setQuery((current) => ({ ...current, [key]: value, page: 1 }));
-  }
-
-  function sortBy(sort: Sort) {
-    setQuery((current) => ({
-      ...current,
-      page: 1,
-      sort,
-      direction:
-        page.sort === sort && page.direction === "desc" ? "asc" : "desc",
-    }));
-  }
-
-  function reset() {
-    setSearch("");
-    setQuery((current) => ({
-      ...defaultQuery,
-      page_size: current.page_size,
-    }));
-  }
-
-  function goToPage(nextPage: number) {
-    setQuery((current) => ({
-      ...current,
-      page: Math.max(1, Math.min(page.page_count, nextPage)),
-    }));
-  }
-
-  return {
-    query,
-    search,
-    setSearch,
-    page,
-    loading: loadedQuery !== query,
-    error,
-    update,
-    sortBy,
-    reset,
-    goToPage,
-  };
-}
-
 export default function App() {
-  const [activeTab, setActiveTab] = useState<
-    "characters" | "dialogues" | "lines"
-  >("characters");
+  const [activeTab, setActiveTab] = useState<BrowserTab>(browserTab);
+  const [visitedTabs, setVisitedTabs] = useState<ReadonlySet<BrowserTab>>(
+    () => new Set([browserTab()]),
+  );
   const [stats, setStats] = useState<PipelineStats | null>(null);
   const [options, setOptions] = useState<FilterOptions | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
@@ -215,6 +146,23 @@ export default function App() {
     : stats.attribution_completed_at == null
       ? "Attribution not run"
       : `Completed ${formatDate(stats.attribution_completed_at)}`;
+
+  const openTab = useCallback((tab: BrowserTab) => {
+    if (tab === activeTab) return;
+    navigateToTab(tab);
+    setActiveTab(tab);
+    setVisitedTabs((current) => new Set(current).add(tab));
+  }, [activeTab]);
+
+  useEffect(() => {
+    const restoreTab = () => {
+      const tab = browserTab();
+      setActiveTab(tab);
+      setVisitedTabs((current) => new Set(current).add(tab));
+    };
+    window.addEventListener("popstate", restoreTab);
+    return () => window.removeEventListener("popstate", restoreTab);
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -286,8 +234,8 @@ export default function App() {
             <p className="eyebrow">PIPELINE OBSERVATORY</p>
             <h1>Pipeline database</h1>
             <p>
-              Inspect characters, dialogue resources, and addressable lines
-              without touching pipeline state.
+              Inspect characters, dialogue resources, addressable lines, and
+              resolved engine definitions without touching pipeline state.
             </p>
           </div>
           <div className="database-meta" title={stats?.database_path}>
@@ -305,20 +253,83 @@ export default function App() {
           <Stat label="Dialogue lines" value={stats?.dialogue_lines} note="NPC + player responses" accent />
         </section>
 
+        <section className="support-stats" aria-label="Imported support data">
+          <SupportStat label="CRE voice slots" value={stats?.character_sounds_total} />
+          <SupportStat label="Preset soundset lines" value={stats?.soundset_lines_total} />
+          <SupportStat label="Transition edges" value={stats?.transition_edges_total} />
+          <SupportStat label="Character / resource links" value={stats?.character_resource_links_total} />
+          <SupportStat label="Interaction rules" value={stats?.interaction_rules_total} />
+          <SupportStat label="Resolved engine strings" value={stats?.engine_strings_total} />
+          <SupportStat label="Voice slot groups" value={stats?.sound_slot_groups_total} />
+          <SupportStat label="Favored enemies" value={stats?.favored_enemies_total} />
+          <SupportStat label="Happiness rules" value={stats?.happiness_rules_total} />
+          <SupportStat label="Banter timing settings" value={stats?.banter_timing_settings_total} />
+        </section>
+
         <nav className="view-tabs" role="tablist" aria-label="Pipeline data views">
-          <Tab active={activeTab === "characters"} count={stats?.characters_total} label="Characters" onClick={() => setActiveTab("characters")} />
-          <Tab active={activeTab === "dialogues"} count={stats?.dialogues_total} label="Dialogues" onClick={() => setActiveTab("dialogues")} />
-          <Tab active={activeTab === "lines"} count={stats?.line_records_total} label="Lines" onClick={() => setActiveTab("lines")} />
+          <Tab active={activeTab === "characters"} count={stats?.characters_total} label="Characters" onClick={() => openTab("characters")} />
+          <Tab active={activeTab === "dialogues"} count={stats?.dialogues_total} label="Dialogues" onClick={() => openTab("dialogues")} />
+          <Tab active={activeTab === "lines"} count={stats?.line_records_total} label="Lines" onClick={() => openTab("lines")} />
+          <Tab active={activeTab === "voices"} count={stats?.character_sounds_total} label="Voices" onClick={() => openTab("voices")} />
+          <Tab active={activeTab === "transitions"} count={stats?.transition_edges_total} label="Transitions" onClick={() => openTab("transitions")} />
+          <Tab active={activeTab === "races"} count={stats?.races_total} label="Races" onClick={() => openTab("races")} />
+          <Tab active={activeTab === "classes"} count={stats?.classes_total} label="Classes" onClick={() => openTab("classes")} />
+          <Tab active={activeTab === "kits"} count={stats?.kits_total} label="Kits" onClick={() => openTab("kits")} />
+          <Tab active={activeTab === "identifiers"} count={stats?.identifiers_total} label="Identifiers" onClick={() => openTab("identifiers")} />
         </nav>
 
         {refreshError != null && (
           <ErrorBanner message={refreshError} onDismiss={() => setRefreshError(null)} />
         )}
-        {activeTab === "characters" && (
-          <CharacterBrowser options={options} onSelect={openDetail} />
+        {visitedTabs.has("characters") && (
+          <div hidden={activeTab !== "characters"}>
+            <CharacterBrowser active={activeTab === "characters"} options={options} onSelect={openDetail} />
+          </div>
         )}
-        {activeTab === "dialogues" && <DialogueBrowser />}
-        {activeTab === "lines" && <LineBrowser />}
+        {visitedTabs.has("dialogues") && (
+          <div hidden={activeTab !== "dialogues"}>
+            <DialogueBrowser active={activeTab === "dialogues"} />
+          </div>
+        )}
+        {visitedTabs.has("lines") && (
+          <div hidden={activeTab !== "lines"}>
+            <LineBrowser active={activeTab === "lines"} />
+          </div>
+        )}
+        {visitedTabs.has("voices") && (
+          <div hidden={activeTab !== "voices"}>
+            <VoiceBrowser active={activeTab === "voices"} soundSlots={options?.sound_slot_ids ?? []} />
+          </div>
+        )}
+        {visitedTabs.has("transitions") && (
+          <div hidden={activeTab !== "transitions"}>
+            <TransitionBrowser active={activeTab === "transitions"} />
+          </div>
+        )}
+        {visitedTabs.has("races") && (
+          <div hidden={activeTab !== "races"}>
+            <RaceBrowser active={activeTab === "races"} campaigns={options?.campaigns ?? []} />
+          </div>
+        )}
+        {visitedTabs.has("classes") && (
+          <div hidden={activeTab !== "classes"}>
+            <ClassBrowser
+              active={activeTab === "classes"}
+              campaigns={options?.campaigns ?? []}
+              classIds={options?.metadata_class_ids ?? []}
+            />
+          </div>
+        )}
+        {visitedTabs.has("kits") && (
+          <div hidden={activeTab !== "kits"}>
+            <KitBrowser active={activeTab === "kits"} classIds={options?.metadata_class_ids ?? []} />
+          </div>
+        )}
+        {visitedTabs.has("identifiers") && (
+          <div hidden={activeTab !== "identifiers"}>
+            <IdentifierBrowser active={activeTab === "identifiers"} kinds={options?.identifier_kinds ?? []} />
+          </div>
+        )}
 
         <section className="runs-card">
           <div>
@@ -360,13 +371,17 @@ export default function App() {
 }
 
 function CharacterBrowser({
+  active,
   options,
   onSelect,
 }: {
+  active: boolean;
   options: FilterOptions | null;
   onSelect: (resourceName: string) => void;
 }) {
   const browser = useBrowser(
+    "characters",
+    active,
     DEFAULT_CHARACTER_QUERY,
     getCharacters,
   );
@@ -392,13 +407,18 @@ function CharacterBrowser({
           placeholder="Search names, resrefs, variables, scripts…"
           label="Full-text search characters"
         />
+        <RelevanceButton
+          visible={browser.search.trim().length > 0}
+          active={query.sort === ""}
+          onClick={browser.sortByRelevance}
+        />
         <ResultCount loading={loading} count={page.total} noun="results" />
       </div>
 
       <div className="filters" aria-label="Character filters">
         <SelectFilter label="Status" value={query.status} values={DETAIL_STATUSES} onChange={(value) => browser.update("status", value)} />
         <FacetFilter label="Source" value={query.source_kind} values={options?.source_kinds} onChange={(value) => browser.update("source_kind", value)} />
-        <SelectFilter label="Dialogue" value={query.has_dialog} values={BOOLEAN_FILTERS} labels={{ true: "Has dialogue", false: "No dialogue" }} onChange={(value) => browser.update("has_dialog", value)} />
+        <SelectFilter label="Direct CRE DLG" value={query.has_dialog} values={BOOLEAN_FILTERS} labels={{ true: "Has direct DLG", false: "No direct DLG" }} onChange={(value) => browser.update("has_dialog", value)} />
         <FacetFilter label="Gender ID" value={query.gender_id} values={options?.gender_ids} onChange={(value) => browser.update("gender_id", value)} />
         <FacetFilter label="Race ID" value={query.race_id} values={options?.race_ids} onChange={(value) => browser.update("race_id", value)} />
         <FacetFilter label="Class ID" value={query.class_id} values={options?.class_ids} onChange={(value) => browser.update("class_id", value)} />
@@ -423,6 +443,10 @@ function CharacterBrowser({
               <SortHeader label="Character" sort="display_name" query={page} onSort={browser.sortBy} />
               <SortHeader label="Resource" sort="resource_name" query={page} onSort={browser.sortBy} />
               <SortHeader label="Source" sort="source_kind" query={page} onSort={browser.sortBy} />
+              <th>Gender</th>
+              <th>Race</th>
+              <th>Class / kit</th>
+              <th className="numeric">DLGs resolved / declared</th>
               <SortHeader label="Object size" sort="serialized_size" query={page} onSort={browser.sortBy} numeric />
               <SortHeader label="Lines" sort="dialogue_line_count" query={page} onSort={browser.sortBy} numeric />
               <SortHeader label="NPC" sort="npc_line_count" query={page} onSort={browser.sortBy} numeric />
@@ -443,11 +467,25 @@ function CharacterBrowser({
                     onClick={() => onSelect(character.resource_name)}
                   >
                     <strong>{character.display_name ?? character.resref}</strong>
-                    <span>{character.dialog_resref ?? "No DLG"}</span>
+                    <span>Direct CRE DLG · {character.dialog_resref ?? "None"}</span>
                   </button>
                 </td>
                 <td className="mono">{character.resource_name}</td>
                 <td><span className={`source source-${character.source_kind}`}>{character.source_kind}</span></td>
+                <td><ResolvedValue label={character.gender_label} id={character.gender_id} /></td>
+                <td><ResolvedValue label={character.race_label} id={character.race_id} /></td>
+                <td>
+                  <ResolvedValue label={character.class_label} id={character.class_id} />
+                  {(character.kit_label != null || character.kit_ids_value != null) && (
+                    <ResolvedValue label={character.kit_label} id={character.kit_ids_value} secondary />
+                  )}
+                </td>
+                <td className="numeric">
+                  <DialogueCoverage
+                    resolved={character.resolved_dialogue_count}
+                    declared={character.declared_dialogue_count}
+                  />
+                </td>
                 <td className="numeric mono">{formatBytes(character.serialized_size)}</td>
                 <td className="numeric emphatic">{formatCount(character.dialogue_line_count)}</td>
                 <td className="numeric">{formatCount(character.npc_line_count)}</td>
@@ -468,7 +506,7 @@ function CharacterBrowser({
               </tr>
             ))}
             {!loading && page.items.length === 0 && (
-              <tr><td className="empty-state" colSpan={11}>No characters match these filters.</td></tr>
+              <tr><td className="empty-state" colSpan={15}>No characters match these filters.</td></tr>
             )}
           </tbody>
         </table>
@@ -485,8 +523,10 @@ function CharacterBrowser({
   );
 }
 
-function DialogueBrowser() {
+function DialogueBrowser({ active }: { active: boolean }) {
   const browser = useBrowser(
+    "dialogues",
+    active,
     DEFAULT_DIALOGUE_QUERY,
     getDialogues,
   );
@@ -502,6 +542,11 @@ function DialogueBrowser() {
           onChange={browser.setSearch}
           placeholder="Search DLG resrefs and source paths…"
           label="Full-text search dialogues"
+        />
+        <RelevanceButton
+          visible={browser.search.trim().length > 0}
+          active={query.sort === ""}
+          onClick={browser.sortByRelevance}
         />
       </div>
       <div className="filters">
@@ -563,8 +608,8 @@ function DialogueBrowser() {
   );
 }
 
-function LineBrowser() {
-  const browser = useBrowser(DEFAULT_LINE_QUERY, getLines);
+function LineBrowser({ active }: { active: boolean }) {
+  const browser = useBrowser("lines", active, DEFAULT_LINE_QUERY, getLines);
   const { query, page, loading } = browser;
   const [expandedLineId, setExpandedLineId] = useState<string | null>(null);
 
@@ -578,6 +623,11 @@ function LineBrowser() {
           onChange={browser.setSearch}
           placeholder="Search resolved line text or DLG resrefs…"
           label="Full-text search dialogue lines"
+        />
+        <RelevanceButton
+          visible={browser.search.trim().length > 0}
+          active={query.sort === ""}
+          onClick={browser.sortByRelevance}
         />
       </div>
       <div className="filters">
@@ -600,6 +650,7 @@ function LineBrowser() {
               <SortHeader label="Strref" sort="strref" query={page} onSort={browser.sortBy} numeric />
               <SortHeader label="State" sort="state_index" query={page} onSort={browser.sortBy} numeric />
               <SortHeader label="Transition" sort="transition_index" query={page} onSort={browser.sortBy} numeric />
+              <th>Context</th>
               <SortHeader label="Object size" sort="serialized_size" query={page} onSort={browser.sortBy} numeric />
               <th className="numeric">CREs</th>
             </tr>
@@ -630,12 +681,13 @@ function LineBrowser() {
                 <td className="numeric mono">{line.strref}</td>
                 <td className="numeric">{line.state_index}</td>
                 <td className="numeric">{formatCount(line.transition_index)}</td>
+                <td><LineContext tokens={line.tokens} triggerIndex={line.state_trigger_index} triggerText={line.state_trigger_text} /></td>
                 <td className="numeric mono">{formatBytes(line.serialized_size)}</td>
                 <td className="numeric">{line.character_count}</td>
               </tr>
             ))}
             {!loading && page.items.length === 0 && (
-              <tr><td className="empty-state" colSpan={8}>No dialogue lines match these filters.</td></tr>
+              <tr><td className="empty-state" colSpan={9}>No dialogue lines match these filters.</td></tr>
             )}
           </tbody>
         </table>
@@ -661,6 +713,34 @@ function Tab({ active, count, label, onClick }: {
   );
 }
 
+export function LineContext({ tokens, triggerIndex, triggerText }: {
+  tokens: string[];
+  triggerIndex: number | null;
+  triggerText: string | null;
+}) {
+  if (tokens.length === 0 && triggerIndex == null && triggerText == null) {
+    return <span className="muted">—</span>;
+  }
+  return (
+    <div className="line-context">
+      {tokens.length > 0 && (
+        <div className="definition-tags">
+          {tokens.map((token, index) => <span key={`${index}:${token}`}>{token}</span>)}
+        </div>
+      )}
+      {triggerText != null && (
+        <details className="table-text-details script-text">
+          <summary>State trigger{triggerIndex == null ? "" : ` ${triggerIndex}`}</summary>
+          <code>{triggerText}</code>
+        </details>
+      )}
+      {triggerText == null && triggerIndex != null && (
+        <span className="muted">State trigger {triggerIndex} · unresolved</span>
+      )}
+    </div>
+  );
+}
+
 function Stat({ label, value, note, accent = false }: {
   label: string; value?: number; note: string; accent?: boolean;
 }) {
@@ -673,153 +753,11 @@ function Stat({ label, value, note, accent = false }: {
   );
 }
 
-function BrowserHeading({ eyebrow, title, description, loading, count, noun }: {
-  eyebrow: string; title: string; description: string;
-  loading: boolean; count: number; noun: string;
-}) {
+function SupportStat({ label, value }: { label: string; value?: number }) {
   return (
-    <div className="section-head">
-      <div>
-        <p className="eyebrow">{eyebrow}</p>
-        <h2>{title}</h2>
-        <p>{description}</p>
-      </div>
-      <ResultCount loading={loading} count={count} noun={noun} />
-    </div>
-  );
-}
-
-function SearchBox({ value, onChange, placeholder, label }: {
-  value: string; onChange: (value: string) => void;
-  placeholder: string; label: string;
-}) {
-  return (
-    <label className="search-box">
-      <span aria-hidden="true">⌕</span>
-      <input
-        type="search"
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        placeholder={placeholder}
-        aria-label={label}
-      />
-    </label>
-  );
-}
-
-function ResultCount({ loading, count, noun }: {
-  loading: boolean; count: number; noun: string;
-}) {
-  return (
-    <div className="result-count" aria-live="polite">
-      {loading ? "Loading…" : `${formatCount(count)} ${noun}`}
-    </div>
-  );
-}
-
-function SortHeader<Sort extends string>({ label, sort, query, onSort, numeric = false }: {
-  label: string; sort: Sort;
-  query: { sort: Sort | "relevance"; direction: SortDirection };
-  onSort: (sort: Sort) => void; numeric?: boolean;
-}) {
-  const active = query.sort === sort;
-  const direction = query.direction === "asc" ? "ascending" : "descending";
-  return (
-    <th className={numeric ? "numeric" : undefined} aria-sort={active ? direction : "none"}>
-      <button type="button" onClick={() => onSort(sort)}>
-        {label}<span>{active ? (query.direction === "asc" ? "↑" : "↓") : "↕"}</span>
-      </button>
-    </th>
-  );
-}
-
-function SelectFilter<Value extends string>({ label, value, values, labels = {}, onChange }: {
-  label: string; value: "" | Value; values: readonly Value[];
-  labels?: Partial<Record<Value, string>>;
-  onChange: (value: "" | Value) => void;
-}) {
-  return (
-    <label className="filter">
+    <div>
       <span>{label}</span>
-      <select
-        value={value}
-        onChange={(event) => onChange(event.target.value as "" | Value)}
-      >
-        <option value="">All</option>
-        {values.map((item) => (
-          <option key={item} value={item}>{labels[item] ?? item}</option>
-        ))}
-      </select>
-    </label>
-  );
-}
-
-function FacetFilter<Value extends string>({ label, value, values, onChange }: {
-  label: string; value: "" | Value; values?: FacetValue[];
-  onChange: (value: "" | Value) => void;
-}) {
-  return (
-    <label className="filter">
-      <span>{label}</span>
-      <select
-        value={value}
-        onChange={(event) => onChange(event.target.value as "" | Value)}
-      >
-        <option value="">All</option>
-        {values?.map((item) => (
-          <option key={item.value} value={item.value}>
-            {item.value} · {formatCount(item.count)}
-          </option>
-        ))}
-      </select>
-    </label>
-  );
-}
-
-function Pagination({ page, loading, label, onPageChange, onPageSizeChange }: {
-  page: Page<unknown, string>; label: string;
-  loading: boolean;
-  onPageChange: (page: number) => void;
-  onPageSizeChange: (pageSize: number) => void;
-}) {
-  const start = page.items.length === 0 ? 0 : (page.page - 1) * page.page_size + 1;
-  const end = (page.page - 1) * page.page_size + page.items.length;
-  return (
-    <div className="pagination" aria-busy={loading}>
-      <div>
-        <label>
-          Rows
-          <select
-            value={page.page_size}
-            disabled={loading}
-            onChange={(event) => onPageSizeChange(Number(event.target.value))}
-          >
-            {PAGE_SIZES.map((size) => <option key={size} value={size}>{size}</option>)}
-          </select>
-        </label>
-        <span>{formatCount(start)}–{formatCount(end)} of {formatCount(page.total)}</span>
-      </div>
-      <nav aria-label={label}>
-        <button type="button" onClick={() => onPageChange(1)} disabled={loading || page.page <= 1}>«</button>
-        <button type="button" onClick={() => onPageChange(page.page - 1)} disabled={loading || page.page <= 1}>‹</button>
-        <span>Page <strong>{page.page}</strong> of {page.page_count}</span>
-        <button type="button" onClick={() => onPageChange(page.page + 1)} disabled={loading || page.page >= page.page_count}>›</button>
-        <button type="button" onClick={() => onPageChange(page.page_count)} disabled={loading || page.page >= page.page_count}>»</button>
-      </nav>
-    </div>
-  );
-}
-
-function ErrorBanner({ message, onDismiss }: {
-  message: string; onDismiss?: () => void;
-}) {
-  return (
-    <div className="error-banner" role="alert">
-      {onDismiss != null && <strong>Couldn’t refresh the database view.</strong>}
-      {onDismiss != null && " "}{message}
-      {onDismiss != null && (
-        <button type="button" onClick={onDismiss} aria-label="Dismiss error">×</button>
-      )}
+      <strong>{formatCount(value)}</strong>
     </div>
   );
 }
@@ -918,7 +856,7 @@ function DetailDrawer({ resourceName, detail, error, onClose, onRetry }: {
             <section>
               <h3>Overview</h3>
               <dl>
-                <Data label="Dialogue" value={detail.character.dialog_resref ?? "—"} />
+                <Data label="Direct CRE DLG" value={detail.character.dialog_resref ?? "—"} />
                 <Data label="Source" value={detail.source_kind} />
                 <Data label="CRE version" value={detail.character.cre_version} />
                 <Data label="Object JSON" value={formatBytes(detail.character_serialized_size)} />
@@ -927,7 +865,7 @@ function DetailDrawer({ resourceName, detail, error, onClose, onRetry }: {
             </section>
             {detail.dialogue != null && (
               <section>
-                <h3>Dialogue workload</h3>
+                <h3>Direct CRE dialogue workload</h3>
                 <div className="metric-grid">
                   <Metric label="Total lines" value={detail.dialogue.dialogue_line_count} />
                   <Metric label="NPC lines" value={detail.dialogue.npc_line_count} />
@@ -940,11 +878,35 @@ function DetailDrawer({ resourceName, detail, error, onClose, onRetry }: {
             <section>
               <h3>Classification</h3>
               <dl>
-                <Data label="Gender ID" value={detail.character.gender_id} />
-                <Data label="Race ID" value={detail.character.race_id} />
-                <Data label="Class ID" value={detail.character.class_id} />
-                <Data label="Alignment ID" value={detail.character.alignment_id} />
+                <Data label="Gender" value={formatDefinition(detail.character.gender_label, detail.character.gender_id)} />
+                <Data label="Race" value={formatDefinition(detail.character.race_label, detail.character.race_id)} />
+                <Data label="Class" value={formatDefinition(detail.character.class_label, detail.character.class_id)} />
+                <Data label="Alignment" value={formatDefinition(detail.character.alignment_label, detail.character.alignment_id)} />
+                <Data label="Enemy / ally" value={formatDefinition(detail.character.enemy_ally_label, detail.character.enemy_ally_id)} />
+                <Data label="General" value={formatDefinition(detail.character.general_label, detail.character.general_id)} />
+                <Data label="Specific" value={formatDefinition(detail.character.specific_label, detail.character.specific_id)} />
+                <Data label="Animation" value={formatDefinition(detail.character.animation_label, detail.character.animation_id)} />
+                <Data label="Racial enemy" value={formatDefinition(detail.character.racial_enemy_label, detail.character.racial_enemy_id)} />
+                <Data label="Kit" value={formatOptionalDefinition(detail.character.kit_label, detail.character.kit_ids_value)} />
+                <Data label="Raw CRE kit" value={formatHex(detail.character.cre_kit_value)} />
+                <Data label="Class levels" value={formatClassLevels(detail.character)} />
               </dl>
+            </section>
+            <section>
+              <h3>Voice/personality signals</h3>
+              <div className="metric-grid">
+                <Metric label="Strength" value={detail.character.strength} />
+                <Metric label="Strength bonus" value={detail.character.strength_bonus} />
+                <Metric label="Intelligence" value={detail.character.intelligence} />
+                <Metric label="Wisdom" value={detail.character.wisdom} />
+                <Metric label="Dexterity" value={detail.character.dexterity} />
+                <Metric label="Constitution" value={detail.character.constitution} />
+                <Metric label="Charisma" value={detail.character.charisma} />
+                <Metric label="Morale" value={detail.character.morale} />
+                <Metric label="Morale break" value={detail.character.morale_break} />
+                <Metric label="Morale recovery" value={detail.character.morale_recovery_time} />
+                <Metric label="Reputation" value={detail.character.reputation} />
+              </div>
             </section>
             <section>
               <h3>Source path</h3>
@@ -965,14 +927,47 @@ function Data({ label, value }: { label: string; value: string | number }) {
   return <div><dt>{label}</dt><dd>{value}</dd></div>;
 }
 
+function ResolvedValue({ label, id, secondary = false }: {
+  label: string | null;
+  id: number | null;
+  secondary?: boolean;
+}) {
+  return (
+    <span className={`resolved-value ${secondary ? "resolved-value-secondary" : ""}`}>
+      <strong>{label ?? "Unresolved"}</strong>
+      <span className="mono">ID {formatCount(id)}</span>
+    </span>
+  );
+}
+
+function DialogueCoverage({ resolved, declared }: {
+  resolved: number | null;
+  declared: number | null;
+}) {
+  return (
+    <span className="dialogue-coverage" title="Resolved / declared dialogue resources">
+      <strong>{formatCount(resolved)}</strong>
+      <span>/ {formatCount(declared)}</span>
+    </span>
+  );
+}
+
+function formatDefinition(label: string, id: number): string {
+  return `${label} [${id}]`;
+}
+
+function formatOptionalDefinition(label: string | null, id: number | null): string {
+  return label == null || id == null ? "—" : formatDefinition(label, id);
+}
+
+function formatClassLevels(character: CharacterDetailResponse["character"]): string {
+  return [
+    character.first_class_level,
+    character.second_class_level,
+    character.third_class_level,
+  ].join(" / ");
+}
+
 function Metric({ label, value }: { label: string; value: number }) {
   return <div><strong>{formatCount(value)}</strong><span>{label}</span></div>;
-}
-
-function countFilters(...values: string[]): number {
-  return values.filter(Boolean).length;
-}
-
-function errorMessage(reason: unknown): string {
-  return reason instanceof Error ? reason.message : "Unknown error";
 }

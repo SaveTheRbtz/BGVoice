@@ -110,6 +110,27 @@ def test_dump_requires_the_requested_resource_name(
     ]
 
 
+def test_dump_resource_identity_is_case_insensitive(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    responses = iter(
+        [
+            make_dump("aerie.cre").model_dump_json(by_alias=True),
+            make_dialogue_dump("aerie.dlg").model_dump_json(by_alias=True),
+        ]
+    )
+
+    def run(command: list[str], **_options: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(command, 0, stdout=next(responses), stderr="")
+
+    monkeypatch.setattr(subprocess, "run", run)
+    client = IeCli(tmp_path / "iecli.exe")
+
+    assert client.dump_creature(tmp_path, "AERIE.CRE").resource_name == "aerie.cre"
+    assert client.dump_dialogue(tmp_path, "AERIE.DLG").resource_name == "aerie.dlg"
+
+
 def test_invalid_json_propagates_pydantic_validation_errors(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -125,6 +146,84 @@ def test_invalid_json_propagates_pydantic_validation_errors(
         client.list_creatures(tmp_path)
     with pytest.raises(ValidationError):
         client.dump_dialogue(tmp_path, "AERIE.DLG")
+
+
+def test_iecli_reads_raw_text_resources_and_resolves_tlk(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    executable = tmp_path / "iecli.exe"
+    game_root = tmp_path / "game"
+    calls: list[list[str]] = []
+
+    def run(command: list[str], **_options: object) -> subprocess.CompletedProcess[str]:
+        calls.append(command)
+        if command[1] == "dump-raw":
+            output = Path(command[command.index("--output") + 1])
+            output.write_bytes(b"IDS V1.0\r\n1 CAF\xe9\r\n")
+            stdout = "future non-JSON dump metadata"
+        else:
+            stdout = json.dumps(
+                {
+                    "strref": 7193,
+                    "text": "human",
+                    "future_tlk_metadata": {"sound": "HUMAN"},
+                }
+            )
+        return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
+
+    monkeypatch.setattr(subprocess, "run", run)
+    client = IeCli(executable)
+
+    assert client.read_text_resource(game_root, "RACE.IDS") == "IDS V1.0\r\n1 CAFé\r\n"
+    assert client.resolve_string(game_root, 7193).model_dump() == {
+        "strref": 7193,
+        "text": "human",
+    }
+    assert calls[0][1:7] == [
+        "dump-raw",
+        "--game",
+        str(game_root),
+        "--resource",
+        "RACE.IDS",
+        "--output",
+    ]
+    assert calls[1][1:] == ["tlk", "--game", str(game_root), "--strref", "7193"]
+
+
+def test_tlk_result_must_match_the_requested_strref(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    response = {
+        "dialog_tlk": str(tmp_path / "dialog.tlk"),
+        "language": "en_US",
+        "strref": 2,
+        "text": "wrong",
+    }
+
+    def run(command: list[str], **_options: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(command, 0, stdout=json.dumps(response), stderr="")
+
+    monkeypatch.setattr(subprocess, "run", run)
+
+    with pytest.raises(AssertionError, match="requested strref 1"):
+        IeCli(tmp_path / "iecli.exe").resolve_string(tmp_path, 1)
+
+
+def test_tlk_result_preserves_unresolved_text(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    response = {
+        "strref": 1,
+        "text": None,
+    }
+
+    def run(command: list[str], **_options: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(command, 0, stdout=json.dumps(response), stderr="")
+
+    monkeypatch.setattr(subprocess, "run", run)
+
+    assert IeCli(tmp_path / "iecli.exe").resolve_string(tmp_path, 1).text is None
 
 
 @pytest.mark.parametrize(

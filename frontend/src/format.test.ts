@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { formatBytes, formatCount, formatDate } from "./format";
+import { formatBytes, formatCount, formatDate, formatHex } from "./format";
 
 describe("formatters", () => {
   it("distinguishes missing and zero values", () => {
@@ -21,5 +21,9 @@ describe("formatters", () => {
   it("uses stable English number and date formats", () => {
     expect(formatCount(1_234_567)).toBe("1,234,567");
     expect(formatDate("2026-08-26T12:34:00")).toBe("Aug 26, 2026, 12:34 PM");
+  });
+
+  it("formats engine identifiers as padded uppercase hexadecimal", () => {
+    expect(formatHex(0x400a)).toBe("0x0000400A");
   });
 });

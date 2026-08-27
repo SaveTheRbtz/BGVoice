@@ -11,6 +11,7 @@ import pytest
 import bgvoice.pipeline as pipeline
 from bgvoice.database import ExtractionRunRecord, PipelineDatabase
 from bgvoice.models import (
+    BanterTimingSettings,
     CharacterDetail,
     CreDump,
     CreResource,
@@ -18,12 +19,44 @@ from bgvoice.models import (
     DlgResource,
     ExtractionProgress,
     ExtractionSummary,
+    MetadataExtraction,
     RunKind,
+    StringReference,
 )
-from bgvoice.pipeline import extract_characters, extract_dialogues
+from bgvoice.pipeline import extract_characters, extract_dialogues, extract_metadata
 from tests.factories import make_dialogue_dump, make_dialogue_resource, make_dump, make_resource
 
 type Extractor = Callable[..., ExtractionSummary]
+
+
+def _empty_metadata(source_count: int = 3) -> MetadataExtraction:
+    return MetadataExtraction(
+        source_resource_count=source_count,
+        resolved_strref_count=0,
+        identifiers=[],
+        campaigns=[],
+        campaign_resource_bindings=[],
+        character_resource_links=[],
+        interaction_rules=[],
+        soundset_lines=[],
+        sound_slot_suffixes=[],
+        sound_slot_groups=[],
+        favored_enemies=[],
+        happiness_rules=[],
+        banter_timing=BanterTimingSettings(
+            source_resource="BANTTIMG.2DA",
+            frequency=1,
+            probability=0,
+            replay_delay=1,
+            special_probability=0,
+        ),
+        engine_strings=[],
+        months=[],
+        campaign_calendars=[],
+        race_text_rows=[],
+        class_text_rows=[],
+        kits=[],
+    )
 
 
 class FakeIeCli:
@@ -55,6 +88,12 @@ class FakeIeCli:
         self._record_dump(resource_name)
         return make_dialogue_dump(resource_name)
 
+    def read_text_resource(self, game_root: Path, resource_name: str) -> str:
+        raise AssertionError("metadata builder is replaced in pipeline lifecycle tests")
+
+    def resolve_string(self, game_root: Path, strref: int) -> StringReference:
+        raise AssertionError("metadata builder is replaced in pipeline lifecycle tests")
+
     def _record_dump(self, resource_name: str) -> None:
         self.dumped.append(resource_name)
         if resource_name in self.failures:
@@ -63,6 +102,69 @@ class FakeIeCli:
     def _raise_inventory_failure(self, run_kind: RunKind) -> None:
         if self.inventory_failure == run_kind:
             raise RuntimeError(f"cannot list {run_kind}")
+
+
+def test_metadata_extraction_replaces_all_metadata_and_records_its_run(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    client = FakeIeCli()
+    database = PipelineDatabase(tmp_path / "metadata.lancedb")
+    calls: list[tuple[Path, int]] = []
+
+    def build(_client: object, game_root: Path, *, workers: int) -> MetadataExtraction:
+        calls.append((game_root, workers))
+        return _empty_metadata()
+
+    monkeypatch.setattr(pipeline, "build_metadata", build)
+    summary = extract_metadata(client, database, tmp_path, workers=6)
+
+    assert calls == [(tmp_path.resolve(), 6)]
+    assert (summary.discovered, summary.attempted, summary.extracted, summary.status) == (
+        3,
+        3,
+        3,
+        "complete",
+    )
+    run = (
+        lancedb.connect(database.path)
+        .open_table("extraction_runs")
+        .search()
+        .to_pydantic(ExtractionRunRecord)
+    )[0]
+    assert (run.run_kind, run.resources_discovered, run.details_extracted) == (
+        RunKind.METADATA,
+        3,
+        3,
+    )
+
+
+def test_metadata_extraction_failure_is_finalized_and_propagated(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    expected = RuntimeError("cannot import metadata")
+
+    def fail(*_args: object, **_options: object) -> MetadataExtraction:
+        raise expected
+
+    monkeypatch.setattr(pipeline, "build_metadata", fail)
+    database = PipelineDatabase(tmp_path / "metadata-failure.lancedb")
+    with pytest.raises(RuntimeError) as raised:
+        extract_metadata(FakeIeCli(), database, tmp_path)
+
+    assert raised.value is expected
+    run = (
+        lancedb.connect(database.path)
+        .open_table("extraction_runs")
+        .search()
+        .to_pydantic(ExtractionRunRecord)
+    )[0]
+    assert (run.run_kind, run.status, run.error) == (
+        RunKind.METADATA,
+        "failed",
+        str(expected),
+    )
 
 
 def test_character_inventory_can_skip_detail_extraction(tmp_path: Path) -> None:

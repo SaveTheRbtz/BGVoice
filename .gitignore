@@ -3,6 +3,7 @@ __pycache__/
 *.py[cod]
 /.venv/
 /.pytest_cache/
+/.tmp/
 /.ruff_cache/
 /.coverage
 /coverage.xml

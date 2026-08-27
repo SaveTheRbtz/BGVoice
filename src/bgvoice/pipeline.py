@@ -7,7 +7,8 @@ from pathlib import Path
 from pydantic import PositiveInt
 
 from bgvoice.database import PipelineDatabase
-from bgvoice.iecli import CharacterIeCliClient, DialogueIeCliClient
+from bgvoice.iecli import CharacterIeCliClient, DialogueIeCliClient, MetadataIeCliClient
+from bgvoice.metadata import build_metadata
 from bgvoice.models import (
     CharacterDetail,
     CreResource,
@@ -25,6 +26,57 @@ type CommitCallback = Callable[[int, int], None]
 type Failure = tuple[str, str]
 
 _WRITE_BATCH_SIZE = 100
+
+
+def extract_metadata(
+    client: MetadataIeCliClient,
+    database: PipelineDatabase,
+    game_root: Path,
+    *,
+    workers: PositiveInt = 8,
+) -> ExtractionSummary:
+    """Import engine identifiers and campaign-specific resources."""
+    root = game_root.expanduser().resolve()
+    iecli_version = client.version()
+    run_id = database.start_run(root, iecli_version, run_kind=RunKind.METADATA)
+    discovered = 0
+
+    try:
+        metadata = build_metadata(client, root, workers=int(workers))
+        discovered = metadata.source_resource_count
+        database.replace_metadata(run_id, metadata)
+        database.finish_run(
+            run_id,
+            status=RunStatus.COMPLETE,
+            attempted=discovered,
+            extracted=discovered,
+            failures=0,
+        )
+        return ExtractionSummary(
+            run_id=run_id,
+            game_root=root,
+            database_path=database.path,
+            iecli_version=iecli_version,
+            discovered=discovered,
+            attempted=discovered,
+            extracted=discovered,
+            failed=0,
+            skipped=0,
+            status=RunStatus.COMPLETE,
+        )
+    except BaseException as error:
+        try:
+            database.finish_run(
+                run_id,
+                status=RunStatus.FAILED,
+                attempted=discovered,
+                extracted=0,
+                failures=0,
+                error=str(error),
+            )
+        except BaseException as finalization_error:
+            error.add_note(f"Failed to finalize extraction run {run_id}: {finalization_error!r}")
+        raise
 
 
 def extract_characters(
