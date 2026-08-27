@@ -1,34 +1,118 @@
+import { create } from "@bufbuild/protobuf";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import { LineContext, VoiceLink } from "./App";
+import { VoiceSchema } from "./gen/bgvoice/v1/pipeline_pb";
 import {
-  ResourceList,
+  ResourceLinks,
   ScriptText,
   SoundSlot,
-  StarterPrompt,
-  VoiceIdChip,
+  VoiceAvatar,
+  VoiceCard,
+  VoiceDetail,
 } from "./PipelineBrowsers";
 
-describe("pipeline context labels", () => {
-  it("shows a readable starter prompt and collapsible grouped resources", () => {
-    const html = renderToStaticMarkup(
-      <>
-        <StarterPrompt value={"Warm, measured alto.\nRestrained Amnian accent."} />
-        <ResourceList
-          count={2}
-          values={["AERIE.CRE", "AERIE10.CRE"]}
-          noun="characters"
-        />
-      </>,
-    );
+const voice = create(VoiceSchema, {
+  name: "installations/bg2ee-eet/voices/imoen",
+  voiceId: "imoen",
+  displayName: "Imoen",
+  prompt: "Warm, quick-witted and mischievous. Keep an easy Amnian cadence.",
+  characters: [
+    {
+      name: "installations/bg2ee-eet/characters/IMOEN.CRE",
+      engineResourceName: "IMOEN.CRE",
+      displayName: "Imoen",
+      npcLineCount: 6108n,
+    },
+    {
+      name: "installations/bg2ee-eet/characters/IMOEN15.CRE",
+      engineResourceName: "IMOEN15.CRE",
+      displayName: "Imoen",
+      npcLineCount: 812n,
+    },
+  ],
+  dialogues: [
+    {
+      name: "installations/bg2ee-eet/dialogues/IMOEN2J.DLG",
+      engineResourceName: "IMOEN2J.DLG",
+      npcLineCount: 5758n,
+    },
+  ],
+  portrait: "installations/bg2ee-eet/portraits/NIMOENL",
+  biography: "installations/bg2ee-eet/characterSounds/imoen-biography",
+  characterCount: 2,
+  dialogueCount: 1,
+  npcLineCount: 6108n,
+  serializedSize: 912n,
+});
 
-    expect(html).toContain("Warm, measured alto.\nRestrained Amnian accent.");
-    expect(html).toContain("2 characters");
-    expect(html).toContain("AERIE.CRE");
-    expect(html).toContain("AERIE10.CRE");
+describe("voice workspace", () => {
+  it("uses a lazy portrait with a visible initials fallback", () => {
+    const html = renderToStaticMarkup(<VoiceAvatar voice={voice} />);
+
+    expect(html).toContain("IM");
+    expect(html).toContain('loading="lazy"');
+    expect(html).toContain(
+      "/v1/installations/bg2ee-eet/portraits/NIMOENL:download",
+    );
   });
 
+  it("deep-links cards by canonical resource name", () => {
+    const html = renderToStaticMarkup(
+      <VoiceCard voice={voice} selected search="?page_size=50" />,
+    );
+
+    expect(html).toContain(
+      'href="/voices/imoen?page_size=50"',
+    );
+    expect(html).toContain('aria-current="page"');
+    expect(html).toContain("6,108 NPC lines");
+  });
+
+  it("keeps the prompt and source resources visible in voice detail", () => {
+    const html = renderToStaticMarkup(
+      <VoiceDetail
+        voice={voice}
+        requestedId={voice.name}
+        error={null}
+        search="?filter=search%28%22imoen%22%29"
+      />,
+    );
+
+    expect(html).toContain(voice.prompt);
+    expect(html).toContain("IMOEN.CRE");
+    expect(html).toContain("IMOEN2J.DLG");
+    expect(html).toContain("VOICE CREATION PROMPT");
+    expect(html).toContain("Includes imoen-biography");
+    expect(html).toContain(
+      'href="/voices?filter=search%28%22imoen%22%29"',
+    );
+  });
+
+  it("renders canonical character and dialogue links rather than chips", () => {
+    const characters = renderToStaticMarkup(
+      <ResourceLinks title="Characters" references={voice.characters} kind="character" />,
+    );
+    const dialogues = renderToStaticMarkup(
+      <ResourceLinks title="Dialogues" references={voice.dialogues} kind="dialogue" />,
+    );
+
+    expect(characters).toContain(
+      "/characters/IMOEN.CRE",
+    );
+    expect(characters).toContain(">IMOEN × 6,108</a>");
+    expect(characters.indexOf("IMOEN × 6,108")).toBeLessThan(
+      characters.indexOf("IMOEN15 × 812"),
+    );
+    expect(dialogues).toContain(
+      "/dialogues/IMOEN2J.DLG",
+    );
+    expect(dialogues).toContain(">IMOEN2J × 5,758</a>");
+  });
+});
+
+describe("pipeline context labels", () => {
   it("shows sound-slot aliases and every matching SPEECH group", () => {
     const html = renderToStaticMarkup(
       <SoundSlot
@@ -46,17 +130,17 @@ describe("pipeline context labels", () => {
   it("keeps unresolved transition and state-trigger indexes visible", () => {
     expect(
       renderToStaticMarkup(
-        <ScriptText index={17} text={null} empty="Unconditional" />,
+        <ScriptText index={17} text={undefined} empty="Unconditional" />,
       ),
     ).toContain("Index 17 · unresolved");
     expect(
       renderToStaticMarkup(
-        <LineContext tokens={[]} triggerIndex={23} triggerText={null} />,
+        <LineContext tokens={[]} triggerIndex={23} triggerText={undefined} />,
       ),
     ).toContain("State trigger 23 · unresolved");
   });
 
-  it("groups line context by descending occurrence count", () => {
+  it("deduplicates context and orders it by descending occurrence count", () => {
     const html = renderToStaticMarkup(
       <LineContext
         tokens={[
@@ -69,8 +153,8 @@ describe("pipeline context labels", () => {
           "CHARNAME",
           "PLAYER1",
         ]}
-        triggerIndex={null}
-        triggerText={null}
+        triggerIndex={undefined}
+        triggerText={undefined}
       />,
     );
 
@@ -78,26 +162,17 @@ describe("pipeline context labels", () => {
     expect(html).toContain("CHARNAME×3");
     expect(html).toContain("PLAYER1×2");
     expect(html).toContain("PLAYER2×2");
-    expect(html).not.toContain("DAY×1");
     expect(html.indexOf("CHARNAME")).toBeLessThan(html.indexOf("PLAYER1"));
     expect(html.indexOf("PLAYER1")).toBeLessThan(html.indexOf("PLAYER2"));
     expect(html.indexOf("PLAYER2")).toBeLessThan(html.indexOf("DAY"));
   });
 
-  it("deep-links a character to its canonical voice search", () => {
-    const html = renderToStaticMarkup(
-      <VoiceLink voiceId="imoen" onOpen={() => undefined} />,
+  it("links characters to their canonical voice resource", () => {
+    const html = renderToStaticMarkup(<VoiceLink voice={voice.name} />);
+
+    expect(html).toContain(
+      'href="/voices/imoen"',
     );
-
-    expect(html).toContain('href="?tab=voices&amp;voice_id=imoen"');
     expect(html).toContain("imoen");
-  });
-
-  it("shows an exact voice ID independently from BM25 search", () => {
-    const html = renderToStaticMarkup(<VoiceIdChip voiceId="imoen" />);
-
-    expect(html).toContain("Exact voice");
-    expect(html).toContain("imoen");
-    expect(renderToStaticMarkup(<VoiceIdChip voiceId="" />)).toBe("");
   });
 });

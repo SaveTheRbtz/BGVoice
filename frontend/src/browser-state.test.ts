@@ -1,83 +1,114 @@
 import { describe, expect, it } from "vitest";
 
-import { browserQuery, browserSearch, browserTab } from "./browser-state";
-import type { CharacterQuery, SoundQuery, VoiceQuery } from "./types";
+import {
+  characterPath,
+  countFilters,
+  filterSearch,
+  filterValue,
+  listQuery,
+  listSearch,
+  dialoguePath,
+  routeFromPath,
+  setExactFilter,
+  setFilterSearch,
+  voicePath,
+} from "./browser-state";
 
-const characterDefaults: CharacterQuery = {
-  page: 1,
-  page_size: 25,
-  q: "",
-  status: "",
-  source_kind: "",
-  has_dialog: "",
-  gender_id: "",
-  race_id: "",
-  class_id: "",
-  attribution_status: "",
-  sort: "",
-  direction: "desc",
-};
-
-const voiceDefaults: VoiceQuery = {
-  page: 1,
-  page_size: 25,
-  q: "",
-  voice_id: "",
-  sort: "",
-  direction: "desc",
-};
-
-const soundDefaults: SoundQuery = {
-  page: 1,
-  page_size: 25,
-  q: "",
-  slot_id: "",
-  sort: "",
-  direction: "desc",
-};
-
-describe("browser URL state", () => {
-  it("restores the active tab and its typed pagination and filter values", () => {
-    const search = "?tab=voices&page=3&page_size=50&q=warm&voice_id=aerie";
-
-    expect(browserTab(search)).toBe("voices");
-    expect(browserQuery(voiceDefaults, search)).toEqual({
-      ...voiceDefaults,
-      page: 3,
-      page_size: 50,
-      q: "warm",
-      voice_id: "aerie",
+describe("resource routes", () => {
+  it("uses voices as the root and restores canonical detail routes", () => {
+    expect(routeFromPath("/")).toEqual({ name: "voices", voiceId: null });
+    expect(routeFromPath("/voices")).toEqual({ name: "voices", voiceId: null });
+    expect(routeFromPath("/voices/imoen")).toEqual({
+      name: "voices",
+      voiceId: "installations/bg2ee-eet/voices/imoen",
+    });
+    expect(routeFromPath("/characters/AERIE.CRE")).toEqual({
+      name: "characters",
+      resourceName: "installations/bg2ee-eet/characters/AERIE.CRE",
+    });
+    expect(
+      routeFromPath("/dialogues/IMOEN2J.DLG"),
+    ).toEqual({
+      name: "dialogues",
+      resourceName: "installations/bg2ee-eet/dialogues/IMOEN2J.DLG",
     });
   });
 
-  it("uses voices as the root view and restores explicit character links", () => {
-    const restored = browserQuery(
-      characterDefaults,
-      "?page=2&attribution_status=matched&sort=dialogue_transition_count",
-    );
-
-    expect(browserTab("?page=2&attribution_status=matched")).toBe("voices");
-    expect(browserTab("?tab=characters&page=2")).toBe("characters");
-    expect(browserSearch("characters", restored, characterDefaults)).toBe(
-      "?tab=characters&page=2&attribution_status=matched&sort=dialogue_transition_count",
-    );
-  });
-
-  it("restores the independent sound-slot browser", () => {
-    const search = "?tab=sounds&page=2&q=battle+cry&slot_id=9";
-
-    expect(browserTab(search)).toBe("sounds");
-    expect(browserQuery(soundDefaults, search)).toEqual({
-      ...soundDefaults,
-      page: 2,
-      q: "battle cry",
-      slot_id: "9",
+  it("groups definition resources under one stable path", () => {
+    expect(routeFromPath("/definitions/races")).toEqual({ name: "races" });
+    expect(routeFromPath("/definitions/character-classes")).toEqual({
+      name: "character-classes",
     });
+    expect(routeFromPath("/definitions/unknown")).toEqual({ name: "not-found" });
   });
 
-  it("ignores invalid numeric URL values", () => {
-    expect(browserQuery(voiceDefaults, "?page=zero&page_size=-1")).toEqual(
-      voiceDefaults,
+  it("encodes canonical resource names into one route segment", () => {
+    expect(voicePath("installations/bg2ee-eet/voices/imoen")).toBe("/voices/imoen");
+    expect(voicePath("installations/bg2ee-eet/voices/imoen", "?page_size=50")).toBe("/voices/imoen?page_size=50");
+    expect(characterPath("installations/bg2ee-eet/characters/AERIE.CRE")).toBe(
+      "/characters/AERIE.CRE",
     );
+    expect(dialoguePath("installations/bg2ee-eet/dialogues/IMOEN2J.DLG")).toBe(
+      "/dialogues/IMOEN2J.DLG",
+    );
+  });
+});
+
+describe("list URL state", () => {
+  it("round-trips the public filter, order, size, and opaque cursor fields", () => {
+    const query = {
+      filter: 'search("warm alto") AND source_kind = "override"',
+      orderBy: "npc_line_count desc",
+      pageSize: 50,
+      pageToken: "eyJvZmZzZXQiOjUwfQ==",
+    };
+    const search = listSearch(query);
+
+    expect(new URLSearchParams(search).get("order_by")).toBe("npc_line_count desc");
+    expect(listQuery(search)).toEqual(query);
+  });
+
+  it("keeps defaults out of compact shareable URLs", () => {
+    expect(listSearch({
+      filter: "",
+      orderBy: "npc_line_count desc",
+      pageSize: 25,
+      pageToken: "",
+    }, "npc_line_count desc")).toBe("");
+  });
+
+  it("uses BM25 relevance when a search has no explicit order", () => {
+    expect(
+      listQuery('?filter=search%28%22imoen%22%29', "npc_line_count desc").orderBy,
+    ).toBe("");
+  });
+
+  it("ignores unsupported page sizes", () => {
+    expect(listQuery("?page_size=37").pageSize).toBe(25);
+  });
+});
+
+describe("typed filter composition", () => {
+  it("composes search, enum, number, and boolean clauses", () => {
+    let filter = setFilterSearch("", "  Imoen  ");
+    filter = setExactFilter(filter, "source_kind", "override");
+    filter = setExactFilter(filter, "race_id", 1);
+    filter = setExactFilter(filter, "attributed", true);
+
+    expect(filter).toBe(
+      'search("Imoen") AND source_kind = "override" AND race_id = 1 AND attributed = true',
+    );
+    expect(filterSearch(filter)).toBe("Imoen");
+    expect(filterValue(filter, "race_id")).toBe("1");
+    expect(countFilters(filter)).toBe(4);
+  });
+
+  it("removes only the selected exact clause", () => {
+    const filter = setExactFilter(
+      'search("Imoen") AND source_kind = "override"',
+      "source_kind",
+      "",
+    );
+    expect(filter).toBe('search("Imoen")');
   });
 });

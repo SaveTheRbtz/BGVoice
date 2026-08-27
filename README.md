@@ -19,6 +19,22 @@ cd ..
 From the repository root, place `iecli.exe` at
 `.tools/iecli/v0.3.0-rc.1/iecli.exe`, or pass `--iecli PATH` to extraction commands.
 
+### Shared API generation
+
+[`proto/bgvoice/v1/pipeline.proto`](proto/bgvoice/v1/pipeline.proto) is the single transport
+contract. Buf generates Protobuf-ES models for React and standard Protobuf, type stubs, Connect,
+and Pydantic v2 models for Python. The remote plugins are pinned in `buf.gen.yaml`; local
+generation uses Buf 1.72.0 and `protoc-gen-pydantic` 0.18.0 on `PATH`:
+
+```powershell
+buf lint
+buf generate
+```
+
+Generated files under `frontend/src/gen` and `src/bgvoice/v1` are committed and never edited by
+hand. The authored pipeline models remain the source of truth for extraction and LanceDB storage;
+the generated models own the service boundary shared by the Python backend and TypeScript UI.
+
 ## Pipeline
 
 Run the stages in order:
@@ -50,8 +66,10 @@ uv run bgvoice attribute-dialogues
    case-insensitive display name and publishes only groups with NPC lines. Each voice retains its
    CRE membership and the distinct NPC-bearing DLGs attributed to any member, then receives a
    deterministic prompt from one real representative CRE's name, gender, race, class, optional
-   non-trueclass kit, and alignment metadata. The browser resolves DLG metrics without copying them
-   into the voice record.
+   non-trueclass kit, and alignment metadata. When member CREs provide `BIOGRAPHY_TEXT` in sound
+   slot 74, the longest distinct biography is appended to the prompt and retained as a reference
+   to its owning character sound. The browser resolves DLG metrics without copying them into the
+   voice record.
 
 The effective EET `TOKENTXT.2DA` currently has no rows, so there is nothing useful to persist from
 it. Runtime tokens found in DLG text are retained verbatim instead; the engine and calendar tables
@@ -69,12 +87,12 @@ versions; typed LanceModel rows define the stored schema. The pipeline keeps its
 state in typed LanceDB tables with native full-text indexes. CRE and DLG rows own only their
 resource envelope and nested extraction result; child lines, transitions, and sounds own their
 intrinsic coordinates and content. Referenced portrait images are normalized to PNG and stored once
-while characters retain their native portrait resrefs. Dialogue attribution and voice membership are published as one
-run-scoped generation, with the completed run marker written last. Canonical IDS values are
-normalized separately from campaign-specific race and class text, and duplicate IDS aliases are
-preserved. Generated databases are local and reproducible, so schema changes are handled by
-rebuilding from the EET installation rather than migrations. They are ignored because they contain
-game text; see [`data/README.md`](data/README.md).
+while characters retain their native portrait resrefs. Dialogue attribution and voice membership
+are published as one run-scoped generation, with the completed run marker written last. Canonical
+IDS values are normalized separately from campaign-specific race and class text, and duplicate IDS
+aliases are preserved. Generated databases are local and reproducible, so schema changes are
+handled by rebuilding from the EET installation rather than migrations. They are ignored because
+they contain game text; see [`data/README.md`](data/README.md).
 
 ## Read-only browser
 
@@ -87,14 +105,19 @@ cd ..
 uv run bgvoice web
 ```
 
-Open `http://127.0.0.1:8000`. The server exposes a read-only API over committed LanceDB table
-versions, so it can browse while extraction writes new snapshots. Native full-text indexes require
-no mirror tables or triggers. Search uses the English tokenizer with stemming, 64-character tokens,
-case and ASCII folding, and retained stop words. Results default to LanceDB's BM25 relevance;
-clicking a column explicitly overrides relevance. Characters display resolved race, class, gender,
-alignment, allegiance, animation, and kit labels while retaining their raw IDs. Characters,
-Voices, Dialogues, Lines, CRE Sounds, and Transitions have dedicated pipeline views; Races,
-Classes, Kits, and Identifiers expose the imported engine metadata.
+Open `http://127.0.0.1:8000`. The server exposes an async, read-only Connect API over committed
+LanceDB table versions, so it can browse while extraction writes new snapshots. The contract uses
+canonical resource names, direct Get methods, cursor-based List methods, one structured `filter`,
+and `order_by`; request-bound cursors remain stable across local server restarts, while UI routes
+remain separate, human-facing links. Voices are the first workspace and link to their characters,
+dialogues, selected biography sounds, and stored PNG portraits. Dialogue resources, lines,
+transitions, CRE sounds, engine definitions, and extraction runs each have a focused routed view.
+
+Native full-text indexes require no mirror tables or triggers. Search uses the English tokenizer
+with stemming, 64-character tokens, case and ASCII folding, and retained stop words. Results
+default to LanceDB's BM25 relevance; choosing a column explicitly overrides relevance. Characters
+display resolved race, class, gender, alignment, allegiance, animation, and kit labels while
+retaining their raw engine IDs.
 
 ## Quality checks
 
@@ -104,6 +127,7 @@ uv run ruff check .
 uv run ty check
 uv run pytest
 uv build
+buf lint
 
 cd frontend
 pnpm typecheck
@@ -116,6 +140,14 @@ pnpm build
 
 - [LanceDB Python API](https://lancedb.github.io/lancedb/python/python/)
 - [LanceDB full-text search](https://docs.lancedb.com/search/full-text-search)
+- [Buf code generation](https://buf.build/docs/generate/)
+- [`protoc-gen-pydantic`](https://github.com/cjermain/protoc-gen-pydantic)
+- [Connect for Python](https://connectrpc.com/docs/python/getting-started/)
+- [Connect for Web](https://connectrpc.com/docs/web/getting-started/)
+- [Google API resource design](https://google.aip.dev/121)
+- [Google API resource names](https://google.aip.dev/122)
+- [Google API List methods](https://google.aip.dev/132)
+- [Google API filtering](https://google.aip.dev/160)
 - [`ie-cli`](https://github.com/emm-n-m/ie-cli), using
   [`v0.3.0-rc.1`](https://github.com/emm-n-m/ie-cli/releases/tag/v0.3.0-rc.1)
 - [IESDP file format index](https://gibberlings3.github.io/iesdp/file_formats/index.htm)

@@ -145,11 +145,13 @@ def test_voice_resource_owns_members_and_derived_fields() -> None:
         prompt="Name: Hexxat\nGender: Female",
         variant_resource_names=["OHHEX8.CRE", "OHHEX25.CRE"],
         dialogue_resrefs=["HEXXA25A", "HEXXAT"],
+        biography_sound_id="OHHEX8.CRE:74",
     )
 
     assert voice.variant_count == 2
     assert voice.search_text == (
-        "hexxat Hexxat Name: Hexxat\nGender: Female OHHEX8.CRE OHHEX25.CRE HEXXA25A HEXXAT"
+        "hexxat Hexxat Name: Hexxat\nGender: Female OHHEX8.CRE:74 "
+        "OHHEX8.CRE OHHEX25.CRE HEXXA25A HEXXAT"
     )
 
 

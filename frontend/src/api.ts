@@ -1,129 +1,216 @@
-import type {
-  CharacterDetailResponse,
-  CharacterPage,
-  CharacterQuery,
-  ClassPage,
-  ClassQuery,
-  DialogueLinePage,
-  DialoguePage,
-  DialogueQuery,
-  FilterOptions,
-  IdentifierPage,
-  IdentifierQuery,
-  KitPage,
-  KitQuery,
-  LineQuery,
-  PipelineStats,
-  RacePage,
-  RaceQuery,
-  SoundPage,
-  SoundQuery,
-  TransitionPage,
-  TransitionQuery,
-  VoicePage,
-  VoiceQuery,
-} from "./types";
+import { createClient } from "@connectrpc/connect";
+import { createConnectTransport } from "@connectrpc/connect-web";
 
-type ApiQuery =
-  | CharacterQuery
-  | DialogueQuery
-  | LineQuery
-  | RaceQuery
-  | ClassQuery
-  | KitQuery
-  | IdentifierQuery
-  | VoiceQuery
-  | SoundQuery
-  | TransitionQuery;
+import {
+  PipelineService,
+  View,
+  type Character,
+  type CharacterClass,
+  type CharacterSound,
+  type Dialogue,
+  type DialogueLine,
+  type DialogueTransition,
+  type ExtractionRun,
+  type IdentifierDefinition,
+  type Installation,
+  type Kit,
+  type Race,
+  type Voice,
+} from "./gen/bgvoice/v1/pipeline_pb";
 
-async function fetchJson<T>(path: string, signal?: AbortSignal): Promise<T> {
-  const response = await fetch(path, {
-    headers: { Accept: "application/json" },
-    signal,
-  });
-  if (!response.ok) {
-    const status = `${response.status} ${response.statusText}`.trim();
-    const body = (await response.text()).trim();
-    throw new Error(body ? `${status}: ${body}` : status);
-  }
-  return (await response.json()) as T;
+export const INSTALLATION_NAME = "installations/bg2ee-eet";
+
+export interface ListQuery {
+  filter?: string;
+  orderBy?: string;
+  pageSize?: number;
+  pageToken?: string;
+  view?: View;
 }
 
-export function withQuery(path: string, query: ApiQuery): string {
-  const parameters = new URLSearchParams();
-  for (const [key, value] of Object.entries(query)) {
-    if (value !== "") parameters.set(key, String(value));
-  }
-  const serialized = parameters.toString();
-  return serialized ? `${path}?${serialized}` : path;
+export interface ListResult<T> {
+  items: T[];
+  nextPageToken: string;
+  totalSize: bigint;
 }
 
-export function getStats(signal?: AbortSignal): Promise<PipelineStats> {
-  return fetchJson<PipelineStats>("/api/stats", signal);
+const client = createClient(
+  PipelineService,
+  createConnectTransport({ baseUrl: "/connect" }),
+);
+
+function listRequest(query: ListQuery): {
+  parent: string;
+  pageSize: number;
+  pageToken: string;
+  filter: string;
+  orderBy: string;
+  view: View;
+} {
+  return {
+    parent: INSTALLATION_NAME,
+    pageSize: query.pageSize ?? 25,
+    pageToken: query.pageToken ?? "",
+    filter: query.filter ?? "",
+    orderBy: query.orderBy ?? "",
+    view: query.view ?? View.BASIC,
+  };
 }
 
-export function getFilterOptions(signal?: AbortSignal): Promise<FilterOptions> {
-  return fetchJson<FilterOptions>("/api/filter-options", signal);
+function options(signal?: AbortSignal): { signal?: AbortSignal } {
+  return signal === undefined ? {} : { signal };
 }
 
-export function getCharacters(
-  query: CharacterQuery,
-  signal?: AbortSignal,
-): Promise<CharacterPage> {
-  return fetchJson<CharacterPage>(withQuery("/api/characters", query), signal);
-}
+export const pipelineData = {
+  getInstallation(signal?: AbortSignal): Promise<Installation> {
+    return client.getInstallation({ name: INSTALLATION_NAME }, options(signal));
+  },
 
-export function getCharacterDetail(
-  resourceName: string,
-  signal?: AbortSignal,
-): Promise<CharacterDetailResponse> {
-  return fetchJson<CharacterDetailResponse>(
-    `/api/characters/${encodeURIComponent(resourceName)}`,
-    signal,
-  );
-}
+  async listVoices(query: ListQuery, signal?: AbortSignal): Promise<ListResult<Voice>> {
+    const response = await client.listVoices(listRequest(query), options(signal));
+    return {
+      items: response.voices,
+      nextPageToken: response.nextPageToken,
+      totalSize: response.totalSize,
+    };
+  },
 
-export function getDialogues(
-  query: DialogueQuery,
-  signal?: AbortSignal,
-): Promise<DialoguePage> {
-  return fetchJson<DialoguePage>(withQuery("/api/dialogues", query), signal);
-}
+  getVoice(name: string, signal?: AbortSignal): Promise<Voice> {
+    return client.getVoice({ name, view: View.FULL }, options(signal));
+  },
 
-export function getLines(query: LineQuery, signal?: AbortSignal): Promise<DialogueLinePage> {
-  return fetchJson<DialogueLinePage>(withQuery("/api/lines", query), signal);
-}
+  async listCharacters(
+    query: ListQuery,
+    signal?: AbortSignal,
+  ): Promise<ListResult<Character>> {
+    const response = await client.listCharacters(listRequest(query), options(signal));
+    return {
+      items: response.characters,
+      nextPageToken: response.nextPageToken,
+      totalSize: response.totalSize,
+    };
+  },
 
-export function getRaces(query: RaceQuery, signal?: AbortSignal): Promise<RacePage> {
-  return fetchJson<RacePage>(withQuery("/api/races", query), signal);
-}
+  getCharacter(name: string, signal?: AbortSignal): Promise<Character> {
+    return client.getCharacter({ name, view: View.FULL }, options(signal));
+  },
 
-export function getClasses(query: ClassQuery, signal?: AbortSignal): Promise<ClassPage> {
-  return fetchJson<ClassPage>(withQuery("/api/classes", query), signal);
-}
+  async listDialogues(
+    query: ListQuery,
+    signal?: AbortSignal,
+  ): Promise<ListResult<Dialogue>> {
+    const response = await client.listDialogues(listRequest(query), options(signal));
+    return {
+      items: response.dialogues,
+      nextPageToken: response.nextPageToken,
+      totalSize: response.totalSize,
+    };
+  },
 
-export function getKits(query: KitQuery, signal?: AbortSignal): Promise<KitPage> {
-  return fetchJson<KitPage>(withQuery("/api/kits", query), signal);
-}
+  getDialogue(name: string, signal?: AbortSignal): Promise<Dialogue> {
+    return client.getDialogue({ name, view: View.FULL }, options(signal));
+  },
 
-export function getIdentifiers(
-  query: IdentifierQuery,
-  signal?: AbortSignal,
-): Promise<IdentifierPage> {
-  return fetchJson<IdentifierPage>(withQuery("/api/identifiers", query), signal);
-}
+  async listDialogueLines(
+    query: ListQuery,
+    signal?: AbortSignal,
+  ): Promise<ListResult<DialogueLine>> {
+    const response = await client.listDialogueLines(listRequest(query), options(signal));
+    return {
+      items: response.dialogueLines,
+      nextPageToken: response.nextPageToken,
+      totalSize: response.totalSize,
+    };
+  },
 
-export function getVoices(query: VoiceQuery, signal?: AbortSignal): Promise<VoicePage> {
-  return fetchJson<VoicePage>(withQuery("/api/voices", query), signal);
-}
+  async listCharacterSounds(
+    query: ListQuery,
+    signal?: AbortSignal,
+  ): Promise<ListResult<CharacterSound>> {
+    const response = await client.listCharacterSounds(listRequest(query), options(signal));
+    return {
+      items: response.characterSounds,
+      nextPageToken: response.nextPageToken,
+      totalSize: response.totalSize,
+    };
+  },
 
-export function getSounds(query: SoundQuery, signal?: AbortSignal): Promise<SoundPage> {
-  return fetchJson<SoundPage>(withQuery("/api/sounds", query), signal);
-}
+  async listDialogueTransitions(
+    query: ListQuery,
+    signal?: AbortSignal,
+  ): Promise<ListResult<DialogueTransition>> {
+    const response = await client.listDialogueTransitions(
+      listRequest(query),
+      options(signal),
+    );
+    return {
+      items: response.dialogueTransitions,
+      nextPageToken: response.nextPageToken,
+      totalSize: response.totalSize,
+    };
+  },
 
-export function getTransitions(
-  query: TransitionQuery,
-  signal?: AbortSignal,
-): Promise<TransitionPage> {
-  return fetchJson<TransitionPage>(withQuery("/api/transitions", query), signal);
+  async listRaces(query: ListQuery, signal?: AbortSignal): Promise<ListResult<Race>> {
+    const response = await client.listRaces(listRequest(query), options(signal));
+    return {
+      items: response.races,
+      nextPageToken: response.nextPageToken,
+      totalSize: response.totalSize,
+    };
+  },
+
+  async listCharacterClasses(
+    query: ListQuery,
+    signal?: AbortSignal,
+  ): Promise<ListResult<CharacterClass>> {
+    const response = await client.listCharacterClasses(listRequest(query), options(signal));
+    return {
+      items: response.characterClasses,
+      nextPageToken: response.nextPageToken,
+      totalSize: response.totalSize,
+    };
+  },
+
+  async listKits(query: ListQuery, signal?: AbortSignal): Promise<ListResult<Kit>> {
+    const response = await client.listKits(listRequest(query), options(signal));
+    return {
+      items: response.kits,
+      nextPageToken: response.nextPageToken,
+      totalSize: response.totalSize,
+    };
+  },
+
+  async listIdentifierDefinitions(
+    query: ListQuery,
+    signal?: AbortSignal,
+  ): Promise<ListResult<IdentifierDefinition>> {
+    const response = await client.listIdentifierDefinitions(
+      listRequest(query),
+      options(signal),
+    );
+    return {
+      items: response.identifierDefinitions,
+      nextPageToken: response.nextPageToken,
+      totalSize: response.totalSize,
+    };
+  },
+
+  async listExtractionRuns(
+    query: ListQuery,
+    signal?: AbortSignal,
+  ): Promise<ListResult<ExtractionRun>> {
+    const response = await client.listExtractionRuns(
+      listRequest(query),
+      options(signal),
+    );
+    return {
+      items: response.extractionRuns,
+      nextPageToken: response.nextPageToken,
+      totalSize: response.totalSize,
+    };
+  },
+};
+
+export function portraitUrl(name: string): string {
+  return `/v1/${name}:download`;
 }

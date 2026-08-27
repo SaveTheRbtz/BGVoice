@@ -1,0 +1,868 @@
+syntax = "proto3";
+
+package bgvoice.v1;
+
+import "google/api/field_behavior.proto";
+import "google/api/resource.proto";
+import "google/protobuf/timestamp.proto";
+
+// Read-only views over one generated EET pipeline database.
+service PipelineService {
+  rpc GetInstallation(GetInstallationRequest) returns (Installation);
+
+  rpc ListVoices(ListVoicesRequest) returns (ListVoicesResponse);
+  rpc GetVoice(GetVoiceRequest) returns (Voice);
+
+  rpc ListCharacters(ListCharactersRequest) returns (ListCharactersResponse);
+  rpc GetCharacter(GetCharacterRequest) returns (Character);
+
+  rpc ListDialogues(ListDialoguesRequest) returns (ListDialoguesResponse);
+  rpc GetDialogue(GetDialogueRequest) returns (Dialogue);
+
+  rpc ListDialogueLines(ListDialogueLinesRequest) returns (ListDialogueLinesResponse);
+  rpc GetDialogueLine(GetDialogueLineRequest) returns (DialogueLine);
+
+  rpc ListCharacterSounds(ListCharacterSoundsRequest) returns (ListCharacterSoundsResponse);
+  rpc GetCharacterSound(GetCharacterSoundRequest) returns (CharacterSound);
+
+  rpc ListDialogueTransitions(ListDialogueTransitionsRequest) returns (ListDialogueTransitionsResponse);
+  rpc GetDialogueTransition(GetDialogueTransitionRequest) returns (DialogueTransition);
+
+  rpc ListPortraits(ListPortraitsRequest) returns (ListPortraitsResponse);
+  rpc GetPortrait(GetPortraitRequest) returns (Portrait);
+  rpc DownloadPortrait(DownloadPortraitRequest) returns (PortraitContent);
+
+  rpc ListRaces(ListRacesRequest) returns (ListRacesResponse);
+  rpc GetRace(GetRaceRequest) returns (Race);
+
+  rpc ListCharacterClasses(ListCharacterClassesRequest) returns (ListCharacterClassesResponse);
+  rpc GetCharacterClass(GetCharacterClassRequest) returns (CharacterClass);
+
+  rpc ListKits(ListKitsRequest) returns (ListKitsResponse);
+  rpc GetKit(GetKitRequest) returns (Kit);
+
+  rpc ListIdentifierDefinitions(ListIdentifierDefinitionsRequest) returns (ListIdentifierDefinitionsResponse);
+  rpc GetIdentifierDefinition(GetIdentifierDefinitionRequest) returns (IdentifierDefinition);
+
+  rpc ListCampaigns(ListCampaignsRequest) returns (ListCampaignsResponse);
+  rpc GetCampaign(GetCampaignRequest) returns (Campaign);
+
+  rpc ListExtractionRuns(ListExtractionRunsRequest) returns (ListExtractionRunsResponse);
+  rpc GetExtractionRun(GetExtractionRunRequest) returns (ExtractionRun);
+}
+
+enum View {
+  VIEW_UNSPECIFIED = 0;
+  VIEW_BASIC = 1;
+  VIEW_FULL = 2;
+}
+
+enum SourceKind {
+  SOURCE_KIND_UNSPECIFIED = 0;
+  SOURCE_KIND_OVERRIDE = 1;
+  SOURCE_KIND_BIF = 2;
+  SOURCE_KIND_DLC = 3;
+}
+
+enum DetailStatus {
+  DETAIL_STATUS_UNSPECIFIED = 0;
+  DETAIL_STATUS_PENDING = 1;
+  DETAIL_STATUS_COMPLETE = 2;
+  DETAIL_STATUS_FAILED = 3;
+}
+
+enum AttributionStatus {
+  ATTRIBUTION_STATUS_UNSPECIFIED = 0;
+  ATTRIBUTION_STATUS_MATCHED = 1;
+  ATTRIBUTION_STATUS_PARTIAL_MATCH = 2;
+  ATTRIBUTION_STATUS_MISSING_DIALOGUE = 3;
+  ATTRIBUTION_STATUS_NO_DIALOGUE = 4;
+  ATTRIBUTION_STATUS_CHARACTER_UNAVAILABLE = 5;
+}
+
+enum AttributionPublicationStatus {
+  ATTRIBUTION_PUBLICATION_STATUS_UNSPECIFIED = 0;
+  ATTRIBUTION_PUBLICATION_STATUS_MISSING = 1;
+  ATTRIBUTION_PUBLICATION_STATUS_STALE = 2;
+  ATTRIBUTION_PUBLICATION_STATUS_PUBLISHED = 3;
+}
+
+enum DialogueLineKind {
+  DIALOGUE_LINE_KIND_UNSPECIFIED = 0;
+  DIALOGUE_LINE_KIND_NPC = 1;
+  DIALOGUE_LINE_KIND_PLAYER = 2;
+  DIALOGUE_LINE_KIND_JOURNAL = 3;
+}
+
+enum IdentifierKind {
+  IDENTIFIER_KIND_UNSPECIFIED = 0;
+  IDENTIFIER_KIND_RACE = 1;
+  IDENTIFIER_KIND_CLASS = 2;
+  IDENTIFIER_KIND_GENDER = 3;
+  IDENTIFIER_KIND_ALIGNMENT = 4;
+  IDENTIFIER_KIND_ENEMY_ALLY = 5;
+  IDENTIFIER_KIND_GENERAL = 6;
+  IDENTIFIER_KIND_SPECIFIC = 7;
+  IDENTIFIER_KIND_ANIMATION = 8;
+  IDENTIFIER_KIND_KIT = 9;
+  IDENTIFIER_KIND_SOUND_SLOT = 10;
+}
+
+enum RunKind {
+  RUN_KIND_UNSPECIFIED = 0;
+  RUN_KIND_CHARACTERS = 1;
+  RUN_KIND_DIALOGUES = 2;
+  RUN_KIND_PORTRAITS = 3;
+  RUN_KIND_METADATA = 4;
+  RUN_KIND_ATTRIBUTION = 5;
+}
+
+enum RunStatus {
+  RUN_STATUS_UNSPECIFIED = 0;
+  RUN_STATUS_RUNNING = 1;
+  RUN_STATUS_COMPLETE = 2;
+  RUN_STATUS_COMPLETE_WITH_ERRORS = 3;
+  RUN_STATUS_FAILED = 4;
+}
+
+message ResourceSource {
+  SourceKind kind = 1;
+  string path = 2;
+}
+
+message ExtractionState {
+  DetailStatus status = 1;
+  optional string error = 2;
+  google.protobuf.Timestamp updated_at = 3;
+  string run = 4 [(google.api.resource_reference).type = "bgvoice.local/ExtractionRun"];
+}
+
+message PipelineSummary {
+  uint64 voices = 1;
+  uint64 characters = 2;
+  uint64 dialogues = 3;
+  uint64 dialogue_lines = 4;
+  uint64 character_sounds = 5;
+  uint64 dialogue_transitions = 6;
+  uint64 races = 7;
+  uint64 character_classes = 8;
+  uint64 kits = 9;
+  uint64 identifier_definitions = 10;
+  uint64 matched_characters = 11;
+  uint64 partially_matched_characters = 12;
+  uint64 missing_dialogue_characters = 13;
+  uint64 unattributed_dialogues = 14;
+  uint64 unattributed_dialogue_lines = 15;
+}
+
+message Installation {
+  option (google.api.resource) = {
+    type: "bgvoice.local/Installation"
+    pattern: "installations/{installation}"
+  };
+
+  string name = 1;
+  string display_name = 2;
+  string database_path = 3;
+  uint64 database_size = 4;
+  AttributionPublicationStatus attribution_publication = 5;
+  optional google.protobuf.Timestamp attribution_completed_at = 6;
+  PipelineSummary summary = 7;
+}
+
+message CharacterReference {
+  string name = 1 [(google.api.resource_reference).type = "bgvoice.local/Character"];
+  string engine_resource_name = 2;
+  string display_name = 3;
+  uint64 npc_line_count = 4;
+}
+
+message DialogueReference {
+  string name = 1 [(google.api.resource_reference).type = "bgvoice.local/Dialogue"];
+  string engine_resource_name = 2;
+  uint64 npc_line_count = 3;
+}
+
+message Voice {
+  option (google.api.resource) = {
+    type: "bgvoice.local/Voice"
+    pattern: "installations/{installation}/voices/{voice}"
+  };
+
+  string name = 1;
+  string voice_id = 2;
+  string display_name = 3;
+  string prompt = 4;
+  repeated CharacterReference characters = 5;
+  repeated DialogueReference dialogues = 6;
+  optional string portrait = 7 [(google.api.resource_reference).type = "bgvoice.local/Portrait"];
+  uint32 character_count = 8;
+  uint32 dialogue_count = 9;
+  uint64 npc_line_count = 10;
+  uint64 serialized_size = 11;
+  optional string biography = 12 [(google.api.resource_reference).type = "bgvoice.local/CharacterSound"];
+}
+
+message CharacterDialogueSummary {
+  uint32 declared_dialogue_count = 1;
+  uint32 resolved_dialogue_count = 2;
+  uint64 dialogue_line_count = 3;
+  uint64 npc_line_count = 4;
+  uint64 player_line_count = 5;
+  uint64 journal_line_count = 6;
+  uint64 state_count = 7;
+  uint64 transition_count = 8;
+  uint64 serialized_size = 9;
+}
+
+message CharacterClassLevels {
+  uint32 first_class = 1;
+  uint32 second_class = 2;
+  uint32 third_class = 3;
+}
+
+message CharacterBaseAttributes {
+  uint32 strength = 1;
+  uint32 strength_bonus = 2;
+  uint32 intelligence = 3;
+  uint32 wisdom = 4;
+  uint32 dexterity = 5;
+  uint32 constitution = 6;
+  uint32 charisma = 7;
+}
+
+message CharacterDetail {
+  optional string short_name = 1;
+  uint32 short_name_strref = 2;
+  optional string long_name = 3;
+  uint32 long_name_strref = 4;
+  optional string death_variable = 5;
+  optional string dialog_resref = 6;
+  uint32 gender_id = 7;
+  string gender_label = 8;
+  uint32 race_id = 9;
+  string race_label = 10;
+  string race = 11 [(google.api.resource_reference).type = "bgvoice.local/Race"];
+  uint32 class_id = 12;
+  string class_label = 13;
+  string character_class = 14 [(google.api.resource_reference).type = "bgvoice.local/CharacterClass"];
+  uint32 alignment_id = 15;
+  string alignment_label = 16;
+  uint32 enemy_ally_id = 17;
+  string enemy_ally_label = 18;
+  uint32 general_id = 19;
+  string general_label = 20;
+  uint32 specific_id = 21;
+  string specific_label = 22;
+  uint32 animation_id = 23;
+  string animation_label = 24;
+  uint32 racial_enemy_id = 25;
+  string racial_enemy_label = 26;
+  uint32 cre_kit_value = 27;
+  optional uint32 kit_ids_value = 28;
+  optional string kit_label = 29;
+  CharacterClassLevels class_levels = 30;
+  CharacterBaseAttributes base_attributes = 31;
+  uint32 morale = 32;
+  uint32 morale_break = 33;
+  uint32 morale_recovery_time = 34;
+  uint32 reputation = 35;
+  optional string override_script = 36;
+  optional string class_script = 37;
+  optional string race_script = 38;
+  optional string general_script = 39;
+  optional string default_script = 40;
+  optional string small_portrait_resref = 41;
+  optional string large_portrait_resref = 42;
+  string cre_version = 43;
+}
+
+message Character {
+  option (google.api.resource) = {
+    type: "bgvoice.local/Character"
+    pattern: "installations/{installation}/characters/{character}"
+  };
+
+  string name = 1;
+  string engine_resource_name = 2;
+  string resref = 3;
+  optional string display_name = 4;
+  optional string voice = 5 [(google.api.resource_reference).type = "bgvoice.local/Voice"];
+  optional string portrait = 6 [(google.api.resource_reference).type = "bgvoice.local/Portrait"];
+  ResourceSource source = 7;
+  ExtractionState extraction = 8;
+  optional AttributionStatus attribution_status = 9;
+  optional uint64 serialized_size = 10;
+  CharacterDialogueSummary dialogue = 11;
+  optional CharacterDetail detail = 12;
+  optional string direct_dialogue = 13 [(google.api.resource_reference).type = "bgvoice.local/Dialogue"];
+  optional string biography = 14 [(google.api.resource_reference).type = "bgvoice.local/CharacterSound"];
+}
+
+message DialogueDetail {
+  string dlg_version = 1;
+  uint64 state_count = 2;
+  uint64 transition_count = 3;
+  uint64 npc_line_count = 4;
+  uint64 player_line_count = 5;
+  uint64 journal_line_count = 6;
+  uint64 dialogue_line_count = 7;
+}
+
+message Dialogue {
+  option (google.api.resource) = {
+    type: "bgvoice.local/Dialogue"
+    pattern: "installations/{installation}/dialogues/{dialogue}"
+  };
+
+  string name = 1;
+  string engine_resource_name = 2;
+  string resref = 3;
+  ResourceSource source = 4;
+  ExtractionState extraction = 5;
+  optional uint64 serialized_size = 6;
+  uint32 character_count = 7;
+  optional DialogueDetail detail = 8;
+}
+
+message DialogueLine {
+  option (google.api.resource) = {
+    type: "bgvoice.local/DialogueLine"
+    pattern: "installations/{installation}/dialogueLines/{dialogue_line}"
+  };
+
+  string name = 1;
+  string dialogue = 2 [(google.api.resource_reference).type = "bgvoice.local/Dialogue"];
+  string dialogue_resref = 3;
+  SourceKind source_kind = 4;
+  DialogueLineKind line_kind = 5;
+  uint32 state_index = 6;
+  optional uint32 state_trigger_index = 7;
+  optional string state_trigger_text = 8;
+  optional uint32 transition_index = 9;
+  uint32 strref = 10;
+  optional string text = 11;
+  repeated string tokens = 12;
+  uint64 serialized_size = 13;
+  uint32 character_count = 14;
+}
+
+message CharacterSound {
+  option (google.api.resource) = {
+    type: "bgvoice.local/CharacterSound"
+    pattern: "installations/{installation}/characterSounds/{character_sound}"
+  };
+
+  string name = 1;
+  string character = 2 [(google.api.resource_reference).type = "bgvoice.local/Character"];
+  string character_display_name = 3;
+  uint32 slot_id = 4;
+  repeated string slot_symbols = 5;
+  repeated string slot_groups = 6;
+  uint32 strref = 7;
+  optional string text = 8;
+  uint64 serialized_size = 9;
+}
+
+message DialogueTransition {
+  option (google.api.resource) = {
+    type: "bgvoice.local/DialogueTransition"
+    pattern: "installations/{installation}/dialogueTransitions/{dialogue_transition}"
+  };
+
+  string name = 1;
+  string dialogue = 2 [(google.api.resource_reference).type = "bgvoice.local/Dialogue"];
+  string dialogue_resref = 3;
+  SourceKind source_kind = 4;
+  uint32 state_index = 5;
+  uint32 transition_index = 6;
+  uint32 flags_raw = 7;
+  repeated string flags_decoded = 8;
+  optional uint32 trigger_index = 9;
+  optional string trigger_text = 10;
+  optional uint32 action_index = 11;
+  optional string action_text = 12;
+  optional string next_dialogue_resref = 13;
+  optional uint32 next_state_index = 14;
+  bool terminates_dialogue = 15;
+  uint64 serialized_size = 16;
+  optional string next_dialogue = 17 [(google.api.resource_reference).type = "bgvoice.local/Dialogue"];
+}
+
+message Portrait {
+  option (google.api.resource) = {
+    type: "bgvoice.local/Portrait"
+    pattern: "installations/{installation}/portraits/{portrait}"
+  };
+
+  string name = 1;
+  string resref = 2;
+  ResourceSource source = 3;
+  uint32 width = 4;
+  uint32 height = 5;
+  string media_type = 6;
+}
+
+message PortraitContent {
+  string portrait = 1 [(google.api.resource_reference).type = "bgvoice.local/Portrait"];
+  bytes png = 2;
+}
+
+message RaceText {
+  string source_resource = 1;
+  repeated string campaigns = 2;
+  optional string row_name = 3;
+  optional uint32 name_strref = 4;
+  optional string display_name = 5;
+  optional uint32 description_strref = 6;
+  optional string description = 7;
+  optional uint32 uppercase_name_strref = 8;
+  optional string uppercase_name = 9;
+  optional uint32 biography_strref = 10;
+  optional string biography = 11;
+}
+
+message Race {
+  option (google.api.resource) = {
+    type: "bgvoice.local/Race"
+    pattern: "installations/{installation}/races/{race}"
+  };
+
+  string name = 1;
+  uint32 race_id = 2;
+  repeated string symbols = 3;
+  string display_name = 4;
+  repeated RaceText texts = 5;
+}
+
+message CharacterClassText {
+  string source_resource = 1;
+  repeated string campaigns = 2;
+  optional string row_name = 3;
+  optional uint32 class_text_kit_id = 4;
+  optional uint32 lower_name_strref = 5;
+  optional string lower_name = 6;
+  optional uint32 description_strref = 7;
+  optional string description = 8;
+  optional uint32 mixed_name_strref = 9;
+  optional string mixed_name = 10;
+  optional uint32 biography_strref = 11;
+  optional string biography = 12;
+  optional bool fallen = 13;
+  optional uint32 brief_description_strref = 14;
+  optional string brief_description = 15;
+  optional uint32 fallen_notice_strref = 16;
+  optional string fallen_notice = 17;
+}
+
+message CharacterClass {
+  option (google.api.resource) = {
+    type: "bgvoice.local/CharacterClass"
+    pattern: "installations/{installation}/characterClasses/{character_class}"
+  };
+
+  string name = 1;
+  uint32 class_id = 2;
+  repeated string symbols = 3;
+  string display_name = 4;
+  repeated CharacterClassText texts = 5;
+}
+
+message Kit {
+  option (google.api.resource) = {
+    type: "bgvoice.local/Kit"
+    pattern: "installations/{installation}/kits/{kit}"
+  };
+
+  string name = 1;
+  uint32 row_id = 2;
+  string row_name = 3;
+  string source_resource = 4;
+  optional string lower_name = 5;
+  optional string mixed_name = 6;
+  string display_name = 7;
+  optional string help_text = 8;
+  optional string character_class = 9 [(google.api.resource_reference).type = "bgvoice.local/CharacterClass"];
+  repeated string class_symbols = 10;
+  optional uint32 kit_ids_value = 11;
+  repeated string kit_symbols = 12;
+  optional string abilities_resref = 13;
+  optional uint32 proficiency_column = 14;
+  optional uint32 unusable_mask = 15;
+}
+
+message IdentifierDefinition {
+  option (google.api.resource) = {
+    type: "bgvoice.local/IdentifierDefinition"
+    pattern: "installations/{installation}/identifierDefinitions/{identifier_definition}"
+  };
+
+  string name = 1;
+  IdentifierKind kind = 2;
+  uint32 value = 3;
+  repeated string symbols = 4;
+  string source_resource = 5;
+  string display_name = 6;
+}
+
+message Campaign {
+  option (google.api.resource) = {
+    type: "bgvoice.local/Campaign"
+    pattern: "installations/{installation}/campaigns/{campaign}"
+  };
+
+  string name = 1;
+  string campaign_id = 2;
+  uint32 ordinal = 3;
+  string display_name = 4;
+}
+
+message ExtractionRun {
+  option (google.api.resource) = {
+    type: "bgvoice.local/ExtractionRun"
+    pattern: "installations/{installation}/extractionRuns/{extraction_run}"
+  };
+
+  string name = 1;
+  string run_id = 2;
+  RunKind run_kind = 3;
+  google.protobuf.Timestamp started_at = 4;
+  optional google.protobuf.Timestamp completed_at = 5;
+  RunStatus status = 6;
+  uint64 resources_discovered = 7;
+  uint64 details_attempted = 8;
+  uint64 details_extracted = 9;
+  uint64 failures = 10;
+  optional string error = 11;
+}
+
+message GetInstallationRequest {
+  string name = 1 [
+    (google.api.field_behavior) = REQUIRED,
+    (google.api.resource_reference).type = "bgvoice.local/Installation"
+  ];
+}
+
+// Every List method uses the same read contract: page_size defaults to 25 and
+// is capped at 100; page_token is an opaque cursor bound to the other request
+// fields; filter accepts search("text") plus documented equality predicates;
+// order_by accepts one documented field with an optional "desc" suffix; and
+// an unspecified view means VIEW_BASIC. Search results keep BM25 relevance
+// order unless order_by is explicitly set.
+message ListVoicesRequest {
+  string parent = 1 [
+    (google.api.field_behavior) = REQUIRED,
+    (google.api.resource_reference).child_type = "bgvoice.local/Voice"
+  ];
+  int32 page_size = 2;
+  string page_token = 3;
+  string filter = 4;
+  string order_by = 5;
+  View view = 6;
+}
+message ListVoicesResponse {
+  repeated Voice voices = 1;
+  string next_page_token = 2;
+  int64 total_size = 3;
+}
+message GetVoiceRequest {
+  string name = 1 [
+    (google.api.field_behavior) = REQUIRED,
+    (google.api.resource_reference).type = "bgvoice.local/Voice"
+  ];
+  View view = 2;
+}
+
+message ListCharactersRequest {
+  string parent = 1 [
+    (google.api.field_behavior) = REQUIRED,
+    (google.api.resource_reference).child_type = "bgvoice.local/Character"
+  ];
+  int32 page_size = 2;
+  string page_token = 3;
+  string filter = 4;
+  string order_by = 5;
+  View view = 6;
+}
+message ListCharactersResponse {
+  repeated Character characters = 1;
+  string next_page_token = 2;
+  int64 total_size = 3;
+}
+message GetCharacterRequest {
+  string name = 1 [
+    (google.api.field_behavior) = REQUIRED,
+    (google.api.resource_reference).type = "bgvoice.local/Character"
+  ];
+  View view = 2;
+}
+
+message ListDialoguesRequest {
+  string parent = 1 [
+    (google.api.field_behavior) = REQUIRED,
+    (google.api.resource_reference).child_type = "bgvoice.local/Dialogue"
+  ];
+  int32 page_size = 2;
+  string page_token = 3;
+  string filter = 4;
+  string order_by = 5;
+  View view = 6;
+}
+message ListDialoguesResponse {
+  repeated Dialogue dialogues = 1;
+  string next_page_token = 2;
+  int64 total_size = 3;
+}
+message GetDialogueRequest {
+  string name = 1 [
+    (google.api.field_behavior) = REQUIRED,
+    (google.api.resource_reference).type = "bgvoice.local/Dialogue"
+  ];
+  View view = 2;
+}
+
+message ListDialogueLinesRequest {
+  string parent = 1 [
+    (google.api.field_behavior) = REQUIRED,
+    (google.api.resource_reference).child_type = "bgvoice.local/DialogueLine"
+  ];
+  int32 page_size = 2;
+  string page_token = 3;
+  string filter = 4;
+  string order_by = 5;
+  View view = 6;
+}
+message ListDialogueLinesResponse {
+  repeated DialogueLine dialogue_lines = 1;
+  string next_page_token = 2;
+  int64 total_size = 3;
+}
+message GetDialogueLineRequest {
+  string name = 1 [
+    (google.api.field_behavior) = REQUIRED,
+    (google.api.resource_reference).type = "bgvoice.local/DialogueLine"
+  ];
+  View view = 2;
+}
+
+message ListCharacterSoundsRequest {
+  string parent = 1 [
+    (google.api.field_behavior) = REQUIRED,
+    (google.api.resource_reference).child_type = "bgvoice.local/CharacterSound"
+  ];
+  int32 page_size = 2;
+  string page_token = 3;
+  string filter = 4;
+  string order_by = 5;
+  View view = 6;
+}
+message ListCharacterSoundsResponse {
+  repeated CharacterSound character_sounds = 1;
+  string next_page_token = 2;
+  int64 total_size = 3;
+}
+message GetCharacterSoundRequest {
+  string name = 1 [
+    (google.api.field_behavior) = REQUIRED,
+    (google.api.resource_reference).type = "bgvoice.local/CharacterSound"
+  ];
+  View view = 2;
+}
+
+message ListDialogueTransitionsRequest {
+  string parent = 1 [
+    (google.api.field_behavior) = REQUIRED,
+    (google.api.resource_reference).child_type = "bgvoice.local/DialogueTransition"
+  ];
+  int32 page_size = 2;
+  string page_token = 3;
+  string filter = 4;
+  string order_by = 5;
+  View view = 6;
+}
+message ListDialogueTransitionsResponse {
+  repeated DialogueTransition dialogue_transitions = 1;
+  string next_page_token = 2;
+  int64 total_size = 3;
+}
+message GetDialogueTransitionRequest {
+  string name = 1 [
+    (google.api.field_behavior) = REQUIRED,
+    (google.api.resource_reference).type = "bgvoice.local/DialogueTransition"
+  ];
+  View view = 2;
+}
+
+message ListPortraitsRequest {
+  string parent = 1 [
+    (google.api.field_behavior) = REQUIRED,
+    (google.api.resource_reference).child_type = "bgvoice.local/Portrait"
+  ];
+  int32 page_size = 2;
+  string page_token = 3;
+  string filter = 4;
+  string order_by = 5;
+  View view = 6;
+}
+message ListPortraitsResponse {
+  repeated Portrait portraits = 1;
+  string next_page_token = 2;
+  int64 total_size = 3;
+}
+message GetPortraitRequest {
+  string name = 1 [
+    (google.api.field_behavior) = REQUIRED,
+    (google.api.resource_reference).type = "bgvoice.local/Portrait"
+  ];
+  View view = 2;
+}
+message DownloadPortraitRequest {
+  string name = 1 [
+    (google.api.field_behavior) = REQUIRED,
+    (google.api.resource_reference).type = "bgvoice.local/Portrait"
+  ];
+}
+
+message ListRacesRequest {
+  string parent = 1 [
+    (google.api.field_behavior) = REQUIRED,
+    (google.api.resource_reference).child_type = "bgvoice.local/Race"
+  ];
+  int32 page_size = 2;
+  string page_token = 3;
+  string filter = 4;
+  string order_by = 5;
+  View view = 6;
+}
+message ListRacesResponse {
+  repeated Race races = 1;
+  string next_page_token = 2;
+  int64 total_size = 3;
+}
+message GetRaceRequest {
+  string name = 1 [
+    (google.api.field_behavior) = REQUIRED,
+    (google.api.resource_reference).type = "bgvoice.local/Race"
+  ];
+  View view = 2;
+}
+
+message ListCharacterClassesRequest {
+  string parent = 1 [
+    (google.api.field_behavior) = REQUIRED,
+    (google.api.resource_reference).child_type = "bgvoice.local/CharacterClass"
+  ];
+  int32 page_size = 2;
+  string page_token = 3;
+  string filter = 4;
+  string order_by = 5;
+  View view = 6;
+}
+message ListCharacterClassesResponse {
+  repeated CharacterClass character_classes = 1;
+  string next_page_token = 2;
+  int64 total_size = 3;
+}
+message GetCharacterClassRequest {
+  string name = 1 [
+    (google.api.field_behavior) = REQUIRED,
+    (google.api.resource_reference).type = "bgvoice.local/CharacterClass"
+  ];
+  View view = 2;
+}
+
+message ListKitsRequest {
+  string parent = 1 [
+    (google.api.field_behavior) = REQUIRED,
+    (google.api.resource_reference).child_type = "bgvoice.local/Kit"
+  ];
+  int32 page_size = 2;
+  string page_token = 3;
+  string filter = 4;
+  string order_by = 5;
+  View view = 6;
+}
+message ListKitsResponse {
+  repeated Kit kits = 1;
+  string next_page_token = 2;
+  int64 total_size = 3;
+}
+message GetKitRequest {
+  string name = 1 [
+    (google.api.field_behavior) = REQUIRED,
+    (google.api.resource_reference).type = "bgvoice.local/Kit"
+  ];
+  View view = 2;
+}
+
+message ListIdentifierDefinitionsRequest {
+  string parent = 1 [
+    (google.api.field_behavior) = REQUIRED,
+    (google.api.resource_reference).child_type = "bgvoice.local/IdentifierDefinition"
+  ];
+  int32 page_size = 2;
+  string page_token = 3;
+  string filter = 4;
+  string order_by = 5;
+  View view = 6;
+}
+message ListIdentifierDefinitionsResponse {
+  repeated IdentifierDefinition identifier_definitions = 1;
+  string next_page_token = 2;
+  int64 total_size = 3;
+}
+message GetIdentifierDefinitionRequest {
+  string name = 1 [
+    (google.api.field_behavior) = REQUIRED,
+    (google.api.resource_reference).type = "bgvoice.local/IdentifierDefinition"
+  ];
+  View view = 2;
+}
+
+message ListCampaignsRequest {
+  string parent = 1 [
+    (google.api.field_behavior) = REQUIRED,
+    (google.api.resource_reference).child_type = "bgvoice.local/Campaign"
+  ];
+  int32 page_size = 2;
+  string page_token = 3;
+  string filter = 4;
+  string order_by = 5;
+  View view = 6;
+}
+message ListCampaignsResponse {
+  repeated Campaign campaigns = 1;
+  string next_page_token = 2;
+  int64 total_size = 3;
+}
+message GetCampaignRequest {
+  string name = 1 [
+    (google.api.field_behavior) = REQUIRED,
+    (google.api.resource_reference).type = "bgvoice.local/Campaign"
+  ];
+  View view = 2;
+}
+
+message ListExtractionRunsRequest {
+  string parent = 1 [
+    (google.api.field_behavior) = REQUIRED,
+    (google.api.resource_reference).child_type = "bgvoice.local/ExtractionRun"
+  ];
+  int32 page_size = 2;
+  string page_token = 3;
+  string filter = 4;
+  string order_by = 5;
+  View view = 6;
+}
+message ListExtractionRunsResponse {
+  repeated ExtractionRun extraction_runs = 1;
+  string next_page_token = 2;
+  int64 total_size = 3;
+}
+message GetExtractionRunRequest {
+  string name = 1 [
+    (google.api.field_behavior) = REQUIRED,
+    (google.api.resource_reference).type = "bgvoice.local/ExtractionRun"
+  ];
+  View view = 2;
+}

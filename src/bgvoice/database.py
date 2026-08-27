@@ -17,6 +17,7 @@ from lancedb.table import Table
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from bgvoice.models import (
+    BIOGRAPHY_SOUND_SLOT_ID,
     AttributionStatus,
     AttributionSummary,
     CampaignDefinition,
@@ -492,6 +493,7 @@ class VoiceResourceRecord(_Record):
     prompt: str = Field(min_length=1)
     variant_resource_names: list[str] = Field(min_length=1)
     dialogue_resrefs: list[str]
+    biography_sound_id: str | None = None
     search_text: str
 
     @staticmethod
@@ -1383,6 +1385,7 @@ class PipelineDatabase:
             characters = self._records(_CHARACTERS, CharacterRecord)
             characters_total = len(characters)
             dialogues = self._records(_DIALOGUES, DialogueRecord)
+            character_sounds = self._records(_CHARACTER_SOUNDS, CharacterSoundRecord)
             links = self._records(_CHARACTER_RESOURCE_LINKS, CharacterResourceLinkRecord)
             identifiers = self._records(_IDENTIFIER_DEFINITIONS, IdentifierDefinitionRecord)
             dialogues_by_resref = {dialogue.resref.casefold(): dialogue for dialogue in dialogues}
@@ -1411,6 +1414,7 @@ class PipelineDatabase:
                 for resource in _voice_resources(
                     characters,
                     dialogues,
+                    character_sounds,
                     identifiers,
                     attribution_records,
                 )
@@ -1941,6 +1945,7 @@ def _character_sound_record(
 def _voice_resources(
     characters: Sequence[CharacterRecord],
     dialogues: Sequence[DialogueRecord],
+    character_sounds: Sequence[CharacterSoundRecord],
     identifiers: Sequence[IdentifierDefinitionRecord],
     attributions: Sequence[CharacterAttributionRecord],
 ) -> list[VoiceResource]:
@@ -1961,6 +1966,13 @@ def _voice_resources(
         )
         for definition in identifiers
     }
+    biography_sounds = [
+        sound
+        for sound in character_sounds
+        if sound.slot_id == BIOGRAPHY_SOUND_SLOT_ID
+        and sound.text is not None
+        and bool(sound.text.strip())
+    ]
     resources: list[VoiceResource] = []
     for voice_id, unsorted_members in sorted(members_by_voice.items()):
         members = sorted(unsorted_members, key=lambda member: member.resource_name.casefold())
@@ -1975,11 +1987,17 @@ def _voice_resources(
                     voice_dialogues.setdefault(dialogue.resref.casefold(), dialogue)
         if not voice_dialogues:
             continue
+        biography = _voice_biography(members, biography_sounds)
+        prompt = _voice_prompt(representative, labels)
+        if biography is not None:
+            biography_text = biography.text
+            assert biography_text is not None
+            prompt = f"{prompt}\n\nBiography:\n{biography_text.strip()}"
         resources.append(
             VoiceResource(
                 id=VoiceId(voice_id),
                 display_name=representative.detail.display_name,
-                prompt=_voice_prompt(representative, labels),
+                prompt=prompt,
                 variant_resource_names=[member.resource_name for member in members],
                 dialogue_resrefs=[
                     dialogue.resref
@@ -1988,9 +2006,50 @@ def _voice_resources(
                         key=lambda dialogue: dialogue.resref.casefold(),
                     )
                 ],
+                biography_sound_id=biography.id if biography is not None else None,
             )
         )
     return resources
+
+
+def _voice_biography(
+    members: Sequence[CharacterRecord],
+    character_sounds: Sequence[CharacterSoundRecord],
+) -> CharacterSoundRecord | None:
+    """Choose the longest distinct personal biography among a voice's CREs."""
+    member_names = {member.resource_name.casefold() for member in members}
+    by_text: dict[str, CharacterSoundRecord] = {}
+    for sound in character_sounds:
+        if (
+            sound.character_resource_name.casefold() not in member_names
+            or sound.slot_id != BIOGRAPHY_SOUND_SLOT_ID
+            or sound.text is None
+            or not sound.text.strip()
+        ):
+            continue
+        text = sound.text.strip()
+        candidate_key = (
+            sound.strref,
+            sound.character_resource_name.casefold(),
+            sound.character_resource_name,
+        )
+        if text not in by_text or candidate_key < (
+            by_text[text].strref,
+            by_text[text].character_resource_name.casefold(),
+            by_text[text].character_resource_name,
+        ):
+            by_text[text] = sound
+    if not by_text:
+        return None
+    return min(
+        by_text.items(),
+        key=lambda item: (
+            -len(item[0]),
+            item[1].strref,
+            item[1].character_resource_name.casefold(),
+            item[1].character_resource_name,
+        ),
+    )[1]
 
 
 def _voice_representative(members: Sequence[CharacterRecord]) -> CharacterRecord:
@@ -2059,6 +2118,7 @@ def _voice_resource_record(
         prompt=resource.prompt,
         variant_resource_names=resource.variant_resource_names,
         dialogue_resrefs=resource.dialogue_resrefs,
+        biography_sound_id=resource.biography_sound_id,
         search_text=resource.search_text,
     )
 

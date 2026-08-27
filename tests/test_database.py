@@ -41,6 +41,7 @@ from bgvoice.database import (
     VoiceResourceRecord,
 )
 from bgvoice.models import (
+    BIOGRAPHY_SOUND_SLOT_ID,
     AlignmentId,
     BanterTimingSettings,
     CampaignCalendarDefinition,
@@ -50,6 +51,7 @@ from bgvoice.models import (
     CharacterExtraction,
     CharacterResourceLink,
     CharacterResourceRole,
+    CharacterSound,
     ClassId,
     ClassTextKitId,
     ClassTextRow,
@@ -460,6 +462,17 @@ def _with_character_detail(
     **updates: object,
 ) -> CharacterExtraction:
     return extraction.model_copy(update={"detail": extraction.detail.model_copy(update=updates)})
+
+
+def _with_biography(
+    extraction: CharacterExtraction,
+    *,
+    strref: int,
+    text: str,
+) -> CharacterExtraction:
+    sounds = [sound for sound in extraction.sounds if sound.slot_id != BIOGRAPHY_SOUND_SLOT_ID]
+    sounds.append(CharacterSound(slot_id=BIOGRAPHY_SOUND_SLOT_ID, strref=strref, text=text))
+    return extraction.model_copy(update={"sounds": sounds})
 
 
 def test_database_creates_exact_typed_schemas_and_native_indexes(tmp_path: Path) -> None:
@@ -1529,6 +1542,20 @@ def test_attribution_builds_voice_resources_from_shared_cre_variants(
                     )
                 }
             )
+        biographies = (
+            (900, "Short history."),
+            (700, "A much longer personal biography."),
+            (700, "  A much longer personal biography.  "),
+            None,
+            (600, "   "),
+        )
+        biography = biographies[index]
+        if biography is not None:
+            extraction = _with_biography(
+                extraction,
+                strref=biography[0],
+                text=biography[1],
+            )
         details.append(extraction)
     database.apply_detail_batch(character_run, details, [])
 
@@ -1561,9 +1588,10 @@ def test_attribution_builds_voice_resources_from_shared_cre_variants(
         [resource.resource_name for resource in resources], key=str.casefold
     )
     assert voice.dialogue_resrefs == ["HEXXA25A", "HEXXAT"]
+    assert voice.biography_sound_id == "OHHEX25.CRE:74"
     assert voice.prompt == (
         "Name: Hexxat\nGender: Female\nRace: Elf\nClass: Cleric Mage\nKit: Berserker\n"
-        "Alignment: Lawful Good"
+        "Alignment: Lawful Good\n\nBiography:\nA much longer personal biography."
     )
     voice_table = lancedb.connect(path).open_table("voice_resources")
     assert voice_table.search("Hexxat", query_type="fts").limit(10).to_arrow().num_rows == 1

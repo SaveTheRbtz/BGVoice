@@ -1,478 +1,381 @@
-import { getClasses, getIdentifiers, getKits, getRaces } from "./api";
 import {
-  FacetFilter,
+  NumberFilter,
   SelectFilter,
   TableBrowser,
+  TextFilter,
 } from "./browser";
-import { formatCount, formatHex } from "./format";
-import type {
-  ClassQuery,
-  ClassRow,
-  ClassSort,
-  FacetValue,
-  IdentifierQuery,
-  IdentifierRow,
-  IdentifierSort,
-  KitQuery,
-  KitRow,
-  KitSort,
-  PaginatedQuery,
-  RaceQuery,
-  RaceRow,
-  RaceSort,
-  SimpleIdentifierKind,
-} from "./types";
 import type { Column, TableBrowserProps } from "./browser";
+import type { ListQuery, ListResult } from "./api";
+import { formatCount, formatHex } from "./format";
+import { IdentifierKind } from "./gen/bgvoice/v1/pipeline_pb";
+import type {
+  CharacterClass,
+  IdentifierDefinition,
+  Kit,
+  Race,
+} from "./gen/bgvoice/v1/pipeline_pb";
 
 const BOOLEAN_FILTERS = ["true", "false"] as const;
+const IDENTIFIER_KINDS = [
+  "gender",
+  "alignment",
+  "enemy_ally",
+  "general",
+  "specific",
+  "animation",
+  "sound_slot",
+] as const;
 
-const DEFAULT_RACE_QUERY: RaceQuery = {
-  page: 1,
-  page_size: 25,
-  q: "",
-  sort: "",
-  direction: "asc",
-  campaign: "",
-};
-
-const DEFAULT_CLASS_QUERY: ClassQuery = {
-  page: 1,
-  page_size: 25,
-  q: "",
-  sort: "",
-  direction: "asc",
-  campaign: "",
-  fallen: "",
-  class_id: "",
-};
-
-const DEFAULT_KIT_QUERY: KitQuery = {
-  page: 1,
-  page_size: 25,
-  q: "",
-  sort: "",
-  direction: "asc",
-  class_id: "",
-};
-
-const DEFAULT_IDENTIFIER_QUERY: IdentifierQuery = {
-  page: 1,
-  page_size: 25,
-  q: "",
-  sort: "",
-  direction: "asc",
-  kind: "",
-};
+type RaceOrder = "race_id" | "display_name";
+type ClassOrder = "class_id" | "display_name";
+type KitOrder = "row_id" | "display_name" | "character_class";
+type IdentifierOrder = "kind" | "value" | "display_name" | "source_resource";
 
 const RACE_COLUMNS = [
   {
     label: "ID",
-    sort: "race_id",
+    orderBy: "race_id",
     numeric: true,
-    render: (row) => <span className="mono">{row.race_id}</span>,
+    render: (race) => <span className="mono">{race.raceId}</span>,
   },
   {
     label: "Race",
-    sort: "name",
-    render: (row) => <DefinitionName name={row.name ?? row.row_name} symbols={row.symbols} />,
+    orderBy: "display_name",
+    render: (race) => <DefinitionName name={race.displayName} symbols={race.symbols} />,
   },
   {
-    label: "Row",
-    sort: "row_name",
-    render: (row) => <NullableCode value={row.row_name} />,
-  },
-  {
-    label: "Campaigns",
-    render: (row) => <Tags values={row.campaigns} />,
-  },
-  {
-    label: "Source",
-    sort: "source_resource",
-    render: (row) => <SourceCell resource={row.source_resource} ordinal={row.ordinal} />,
-  },
-  {
-    label: "Text",
-    render: (row) => (
-      <TextDetails
-        fields={[
-          ["Name", row.name, row.name_strref],
-          ["Uppercase", row.uppercase_name, row.uppercase_name_strref],
-          ["Description", row.description, row.description_strref],
-          ["Biography", row.biography, row.biography_strref],
-        ]}
+    label: "Campaign text",
+    render: (race) => (
+      <TextCollection
+        items={race.texts.map((text) => ({
+          title: text.rowName ?? text.sourceResource,
+          meta: [...text.campaigns, text.sourceResource],
+          fields: [
+            ["Name", text.displayName, text.nameStrref],
+            ["Uppercase", text.uppercaseName, text.uppercaseNameStrref],
+            ["Description", text.description, text.descriptionStrref],
+            ["Biography", text.biography, text.biographyStrref],
+          ],
+        }))}
       />
     ),
   },
-] satisfies readonly Column<RaceRow, RaceSort>[];
+] satisfies readonly Column<Race, RaceOrder>[];
 
 const CLASS_COLUMNS = [
   {
     label: "ID",
-    sort: "class_id",
+    orderBy: "class_id",
     numeric: true,
-    render: (row) => <span className="mono">{row.class_id}</span>,
+    render: (characterClass) => <span className="mono">{characterClass.classId}</span>,
   },
   {
     label: "Class",
-    sort: "lower_name",
-    render: (row) => (
-      <DefinitionName name={row.mixed_name ?? row.lower_name ?? row.row_name} symbols={row.symbols} />
+    orderBy: "display_name",
+    render: (characterClass) => (
+      <DefinitionName name={characterClass.displayName} symbols={characterClass.symbols} />
     ),
   },
   {
-    label: "Row",
-    sort: "row_name",
-    render: (row) => <NullableCode value={row.row_name} />,
-  },
-  {
-    label: "Kit ID",
-    numeric: true,
-    render: (row) => formatCount(row.class_text_kit_id),
-  },
-  {
-    label: "Campaigns",
-    render: (row) => <Tags values={row.campaigns} />,
-  },
-  {
-    label: "Source",
-    render: (row) => <SourceCell resource={row.source_resource} ordinal={row.ordinal} />,
-  },
-  {
-    label: "Fallen",
-    sort: "fallen",
-    render: (row) => row.fallen == null ? "—" : row.fallen ? "Yes" : "No",
-  },
-  {
-    label: "Text",
-    render: (row) => (
-      <TextDetails
-        fields={[
-          ["Lower name", row.lower_name, row.lower_name_strref],
-          ["Mixed name", row.mixed_name, row.mixed_name_strref],
-          ["Description", row.description, row.description_strref],
-          ["Brief description", row.brief_description, row.brief_description_strref],
-          ["Biography", row.biography, row.biography_strref],
-          ["Fallen notice", row.fallen_notice, row.fallen_notice_strref],
-        ]}
+    label: "Campaign text",
+    render: (characterClass) => (
+      <TextCollection
+        items={characterClass.texts.map((text) => ({
+          title: text.rowName ?? text.sourceResource,
+          meta: [...text.campaigns, text.sourceResource],
+          fields: [
+            ["Lower name", text.lowerName, text.lowerNameStrref],
+            ["Mixed name", text.mixedName, text.mixedNameStrref],
+            ["Description", text.description, text.descriptionStrref],
+            ["Brief description", text.briefDescription, text.briefDescriptionStrref],
+            ["Biography", text.biography, text.biographyStrref],
+            ["Fallen notice", text.fallenNotice, text.fallenNoticeStrref],
+          ],
+        }))}
       />
     ),
   },
-] satisfies readonly Column<ClassRow, ClassSort>[];
+] satisfies readonly Column<CharacterClass, ClassOrder>[];
 
 const KIT_COLUMNS = [
   {
     label: "Row",
-    sort: "row_id",
+    orderBy: "row_id",
     numeric: true,
-    render: (row) => <span className="mono">{row.row_id}</span>,
+    render: (kit) => <span className="mono">{kit.rowId}</span>,
   },
   {
     label: "Kit",
-    sort: "lower_name",
-    render: (row) => (
-      <DefinitionName name={row.mixed_name ?? row.lower_name ?? row.row_name} symbols={row.kit_symbols} />
-    ),
-  },
-  {
-    label: "Row name",
-    sort: "row_name",
-    render: (row) => <span className="mono">{row.row_name}</span>,
+    orderBy: "display_name",
+    render: (kit) => <DefinitionName name={kit.displayName} symbols={kit.kitSymbols} />,
   },
   {
     label: "Class",
-    sort: "class_id",
-    render: (row) => <ClassDefinition classId={row.class_id} symbols={row.class_symbols} />,
+    orderBy: "character_class",
+    render: (kit) => (
+      <div className="definition-name">
+        <strong>{kit.classSymbols[0]?.replaceAll("_", " ") ?? "Unassigned"}</strong>
+        {kit.characterClass != null && <span className="mono">{kit.characterClass}</span>}
+      </div>
+    ),
   },
   {
     label: "KITIDS",
     numeric: true,
-    render: (row) => (
+    render: (kit) => (
       <span className="mono">
-        {row.kit_ids_value == null ? "—" : formatHex(row.kit_ids_value)}
+        {kit.kitIdsValue == null ? "—" : formatHex(kit.kitIdsValue)}
       </span>
     ),
   },
   {
-    label: "Abilities",
-    render: (row) => <NullableCode value={row.abilities_resref} />,
-  },
-  {
     label: "Source",
-    render: (row) => <SourceCell resource={row.source_resource} ordinal={row.ordinal} />,
+    render: (kit) => (
+      <div className="definition-name">
+        <span className="mono">{kit.sourceResource}</span>
+        <span>{kit.rowName}</span>
+      </div>
+    ),
   },
   {
     label: "Details",
-    render: (row) => (
-      <TextDetails
-        fields={[
-          ["Lower name", row.lower_name, row.lower_name_strref],
-          ["Mixed name", row.mixed_name, row.mixed_name_strref],
-          ["Help", row.help_text, row.help_strref],
-          ["Proficiency column", formatNullableNumber(row.proficiency_column)],
-          ["Unusable mask", row.unusable_mask == null ? null : formatHex(row.unusable_mask)],
-          ["CLASTEXT kit ID", formatNullableNumber(row.class_text_kit_id)],
-        ]}
+    render: (kit) => (
+      <TextCollection
+        items={[{
+          title: kit.displayName,
+          meta: [kit.abilitiesResref ?? "No ability table"],
+          fields: [
+            ["Lower name", kit.lowerName],
+            ["Mixed name", kit.mixedName],
+            ["Help", kit.helpText],
+            ["Proficiency column", nullableNumber(kit.proficiencyColumn)],
+            ["Unusable mask", kit.unusableMask == null ? undefined : formatHex(kit.unusableMask)],
+          ],
+        }]}
       />
     ),
   },
-] satisfies readonly Column<KitRow, KitSort>[];
+] satisfies readonly Column<Kit, KitOrder>[];
 
 const IDENTIFIER_COLUMNS = [
   {
     label: "Kind",
-    sort: "kind",
-    render: (row) => <span className="identifier-kind">{row.kind.replaceAll("_", " ")}</span>,
+    orderBy: "kind",
+    render: (definition) => <span className="identifier-kind">{identifierKindLabel(definition.kind)}</span>,
   },
   {
     label: "Value",
-    sort: "value",
+    orderBy: "value",
     numeric: true,
-    render: (row) => (
-      <span className="mono identifier-value">{row.value} <small>{formatHex(row.value)}</small></span>
+    render: (definition) => (
+      <span className="mono identifier-value">
+        {definition.value} <small>{formatHex(definition.value)}</small>
+      </span>
     ),
   },
   {
-    label: "Symbols",
-    render: (row) => <Tags values={row.symbols} mono />,
+    label: "Definition",
+    orderBy: "display_name",
+    render: (definition) => (
+      <DefinitionName name={definition.displayName} symbols={definition.symbols} />
+    ),
   },
   {
     label: "Source",
-    sort: "source_resource",
-    render: (row) => <NullableCode value={row.source_resource} />,
+    orderBy: "source_resource",
+    render: (definition) => <span className="mono">{definition.sourceResource}</span>,
   },
-] satisfies readonly Column<IdentifierRow, IdentifierSort>[];
+] satisfies readonly Column<IdentifierDefinition, IdentifierOrder>[];
 
-export function RaceBrowser({ campaigns, active }: {
-  campaigns: readonly string[];
-  active: boolean;
+export function RaceBrowser({ loadPage }: {
+  loadPage: (query: ListQuery, signal: AbortSignal) => Promise<ListResult<Race>>;
 }) {
   return (
     <MetadataTable
-      tab="races"
-      active={active}
-      defaultQuery={DEFAULT_RACE_QUERY}
-      loadPage={getRaces}
+      defaultOrderBy="race_id asc"
+      loadPage={loadPage}
       columns={RACE_COLUMNS}
-      eyebrow="CAMPAIGN RACE DEFINITIONS"
+      eyebrow="ENGINE DEFINITIONS"
       title="Races"
-      description="Canonical RACE.IDS values enriched with campaign-specific names and text."
+      description="Canonical RACE.IDS values with every campaign-specific name, description, and biography."
       noun="races"
       searchPlaceholder="Search race symbols, names, and descriptions…"
-      renderFilters={({ query, update }) => (
-        <SelectFilter
+      renderFilters={({ value, update }) => (
+        <TextFilter
           label="Campaign"
-          value={query.campaign}
-          values={campaigns}
-          onChange={(value) => update("campaign", value)}
+          value={value("campaign")}
+          placeholder="soa"
+          onChange={(next) => update("campaign", next)}
         />
       )}
-      filterValues={(query) => [query.campaign]}
     />
   );
 }
 
-export function ClassBrowser({
-  campaigns,
-  classIds,
-  active,
-}: {
-  campaigns: readonly string[];
-  classIds: FacetValue[];
-  active: boolean;
+export function ClassBrowser({ loadPage }: {
+  loadPage: (query: ListQuery, signal: AbortSignal) => Promise<ListResult<CharacterClass>>;
 }) {
   return (
     <MetadataTable
-      tab="classes"
-      active={active}
-      defaultQuery={DEFAULT_CLASS_QUERY}
-      loadPage={getClasses}
+      defaultOrderBy="class_id asc"
+      loadPage={loadPage}
       columns={CLASS_COLUMNS}
-      eyebrow="CAMPAIGN CLASS DEFINITIONS"
-      title="Classes"
-      description="CLASS.IDS values joined to localized CLASTEXT definitions."
+      eyebrow="ENGINE DEFINITIONS"
+      title="Character classes"
+      description="CLASS.IDS definitions joined to all localized CLASTEXT variants."
       noun="classes"
       searchPlaceholder="Search class symbols, names, and descriptions…"
-      renderFilters={({ query, update }) => (
+      renderFilters={({ value, update }) => (
         <>
-          <SelectFilter
+          <TextFilter
             label="Campaign"
-            value={query.campaign}
-            values={campaigns}
-            onChange={(value) => update("campaign", value)}
+            value={value("campaign")}
+            placeholder="soa"
+            onChange={(next) => update("campaign", next)}
           />
-          <FacetFilter
-            label="Class"
-            value={query.class_id}
-            values={classIds}
-            onChange={(value) => update("class_id", value)}
+          <NumberFilter
+            label="Class ID"
+            value={value("class_id")}
+            onChange={(next) => update("class_id", next)}
           />
           <SelectFilter
             label="Fallen"
-            value={query.fallen}
+            value={value("fallen") as "" | "true" | "false"}
             values={BOOLEAN_FILTERS}
             labels={{ true: "Fallen", false: "Not fallen" }}
-            onChange={(value) => update("fallen", value)}
+            onChange={(next) => update("fallen", next === "" ? "" : next === "true")}
           />
         </>
       )}
-      filterValues={(query) => [query.campaign, query.class_id, query.fallen]}
     />
   );
 }
 
-export function KitBrowser({ classIds, active }: {
-  classIds: FacetValue[];
-  active: boolean;
+export function KitBrowser({ loadPage }: {
+  loadPage: (query: ListQuery, signal: AbortSignal) => Promise<ListResult<Kit>>;
 }) {
   return (
     <MetadataTable
-      tab="kits"
-      active={active}
-      defaultQuery={DEFAULT_KIT_QUERY}
-      loadPage={getKits}
+      defaultOrderBy="row_id asc"
+      loadPage={loadPage}
       columns={KIT_COLUMNS}
-      eyebrow="KITLIST DEFINITIONS"
+      eyebrow="ENGINE DEFINITIONS"
       title="Kits"
-      description="KITLIST rows joined to class and KIT.IDS symbols with resolved display text."
+      description="KITLIST rows joined to their class and KIT.IDS symbols."
       noun="kits"
       searchPlaceholder="Search kit names, symbols, and ability tables…"
-      renderFilters={({ query, update }) => (
-        <FacetFilter
-          label="Class"
-          value={query.class_id}
-          values={classIds}
-          onChange={(value) => update("class_id", value)}
+      renderFilters={({ value, update }) => (
+        <NumberFilter
+          label="Class ID"
+          value={value("class_id")}
+          onChange={(next) => update("class_id", next)}
         />
       )}
-      filterValues={(query) => [query.class_id]}
     />
   );
 }
 
-export function IdentifierBrowser({ kinds, active }: {
-  kinds: readonly SimpleIdentifierKind[];
-  active: boolean;
+export function IdentifierBrowser({ loadPage }: {
+  loadPage: (
+    query: ListQuery,
+    signal: AbortSignal,
+  ) => Promise<ListResult<IdentifierDefinition>>;
 }) {
   return (
     <MetadataTable
-      tab="identifiers"
-      active={active}
-      defaultQuery={DEFAULT_IDENTIFIER_QUERY}
-      loadPage={getIdentifiers}
+      defaultOrderBy="kind asc"
+      loadPage={loadPage}
       columns={IDENTIFIER_COLUMNS}
-      eyebrow="CRE IDENTIFIER DEFINITIONS"
-      title="Identifiers"
-      description="Canonical IDS definitions across every extracted CRE metadata category."
-      noun="identifiers"
-      searchPlaceholder="Search identifier symbols and source resources…"
-      renderFilters={({ query, update }) => (
+      eyebrow="ENGINE DEFINITIONS"
+      title="Identifier definitions"
+      description="Readable IDS values used by extracted CRE metadata."
+      noun="definitions"
+      searchPlaceholder="Search symbols and source resources…"
+      renderFilters={({ value, update }) => (
         <SelectFilter
           label="Kind"
-          value={query.kind}
-          values={kinds}
-          labels={{ enemy_ally: "Enemy / ally" }}
-          onChange={(value) => update("kind", value)}
+          value={value("kind") as "" | (typeof IDENTIFIER_KINDS)[number]}
+          values={IDENTIFIER_KINDS}
+          labels={{ enemy_ally: "Enemy / ally", sound_slot: "Sound slot" }}
+          onChange={(next) => update("kind", next)}
         />
       )}
-      filterValues={(query) => [query.kind]}
     />
   );
 }
 
-function MetadataTable<
-  Row extends { key: string },
-  Sort extends string,
-  Query extends PaginatedQuery<Sort>,
->(props: Omit<TableBrowserProps<Row, Sort, Query>, "rowKey" | "className" | "tableClassName">) {
+function MetadataTable<Row extends { name: string }, Order extends string>(
+  props: Omit<TableBrowserProps<Row, Order>, "rowKey" | "className" | "tableClassName">,
+) {
   return (
     <TableBrowser
       {...props}
-      rowKey={(row) => row.key}
+      rowKey={(row) => row.name}
       className="metadata-browser"
       tableClassName="metadata-table"
     />
   );
 }
 
-function DefinitionName({ name, symbols }: { name: string | null; symbols: string[] }) {
+function DefinitionName({ name, symbols }: { name: string; symbols: readonly string[] }) {
   return (
     <div className="definition-name">
-      <strong>{name ?? symbols[0] ?? "Unnamed"}</strong>
+      <strong>{name}</strong>
       {symbols.length > 0 && <span className="mono">{symbols.join(", ")}</span>}
     </div>
   );
 }
 
-function ClassDefinition({ classId, symbols }: { classId: number | null; symbols: string[] }) {
-  const [primary, ...aliases] = symbols;
-  return (
-    <div className="definition-name">
-      <strong>
-        {primary == null
-          ? classId == null ? "Unassigned class" : `Class ${classId}`
-          : prettifySymbol(primary)}
-      </strong>
-      <span className="mono">
-        ID {formatCount(classId)}{aliases.length === 0 ? "" : ` · ${aliases.join(", ")}`}
-      </span>
-    </div>
-  );
+interface TextItem {
+  title: string;
+  meta: readonly string[];
+  fields: ReadonlyArray<readonly [string, string | undefined, (number | undefined)?]>;
 }
 
-function NullableCode({ value }: { value: string | null }) {
-  return value == null ? <span className="muted">—</span> : <span className="mono">{value}</span>;
-}
-
-function SourceCell({ resource, ordinal }: { resource: string | null; ordinal: number | null }) {
-  return (
-    <div className="definition-name">
-      <NullableCode value={resource} />
-      {ordinal != null && <span>Row {ordinal}</span>}
-    </div>
-  );
-}
-
-function Tags({ values, mono = false }: { values: string[]; mono?: boolean }) {
-  if (values.length === 0) return <span className="muted">—</span>;
-  return (
-    <div className="definition-tags">
-      {values.map((value) => (
-        <span key={value} className={mono ? "mono" : undefined}>{value}</span>
-      ))}
-    </div>
-  );
-}
-
-function TextDetails({
-  fields,
-}: {
-  fields: ReadonlyArray<readonly [string, string | null, (number | null)?]>;
-}) {
-  const available = fields.filter(([, value, strref]) => value != null || strref != null);
-  if (available.length === 0) return <span className="muted">No text</span>;
+function TextCollection({ items }: { items: readonly TextItem[] }) {
+  if (items.length === 0) return <span className="muted">No localized text</span>;
   return (
     <details className="metadata-details">
-      <summary>Read</summary>
-      <dl>
-        {available.map(([label, value, strref]) => (
-          <div key={label}>
-            <dt>{label}{strref == null ? "" : ` · #${strref}`}</dt>
-            <dd>{value ?? <span className="muted">Unresolved</span>}</dd>
-          </div>
+      <summary>Read {formatCount(items.length)} {items.length === 1 ? "entry" : "entries"}</summary>
+      <div className="metadata-text-list">
+        {items.map((item, index) => (
+          <section key={`${item.title}:${index}`}>
+            <h3>{item.title}</h3>
+            <Tags values={item.meta} />
+            <dl>
+              {item.fields
+                .filter(([, value, strref]) => value != null || strref != null)
+                .map(([label, value, strref]) => (
+                  <div key={label}>
+                    <dt>{label}{strref == null ? "" : ` · #${strref}`}</dt>
+                    <dd>{value ?? <span className="muted">Unresolved</span>}</dd>
+                  </div>
+                ))}
+            </dl>
+          </section>
         ))}
-      </dl>
+      </div>
     </details>
   );
 }
 
-function formatNullableNumber(value: number | null): string | null {
-  return value == null ? null : String(value);
+function Tags({ values }: { values: readonly string[] }) {
+  const unique = [...new Set(values.filter(Boolean))];
+  if (unique.length === 0) return null;
+  return (
+    <div className="definition-tags">
+      {unique.map((value) => <span key={value}>{value}</span>)}
+    </div>
+  );
 }
 
-function prettifySymbol(value: string): string {
-  return value
-    .toLowerCase()
-    .split("_")
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(" ");
+function nullableNumber(value: number | undefined): string | undefined {
+  return value == null ? undefined : String(value);
+}
+
+function identifierKindLabel(value: IdentifierKind): string {
+  return IdentifierKind[value]
+    .replace("IDENTIFIER_KIND_", "")
+    .replaceAll("_", " ")
+    .toLowerCase();
 }

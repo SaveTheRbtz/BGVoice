@@ -1,59 +1,49 @@
 import type { ReactNode } from "react";
+import type { ListQuery, ListResult } from "./api";
 
+import {
+  countFilters,
+  filterValue,
+  PAGE_SIZES,
+  useBrowser,
+} from "./browser-state";
 import { formatCount } from "./format";
-import type {
-  FacetValue,
-  Page,
-  PaginatedQuery,
-  SortDirection,
-} from "./types";
-import { countFilters, useBrowser } from "./browser-state";
-import type { BrowserTab } from "./browser-state";
 
-const PAGE_SIZES = [10, 25, 50, 100] as const;
+export interface FacetOption {
+  value: string | number;
+  label: string | null;
+  count: number;
+}
 
-export interface Column<Row, Sort extends string> {
+export interface Column<Row, Order extends string> {
   label: string;
-  sort?: Sort;
+  orderBy?: Order;
   numeric?: boolean;
   render: (row: Row) => ReactNode;
 }
 
-interface FilterControls<Query> {
-  query: Query;
-  update: <Key extends keyof Query>(key: Key, value: Query[Key]) => void;
+export interface FilterControls {
+  value: (field: string) => string;
+  update: (field: string, value: string | number | boolean) => void;
 }
 
-export interface TableBrowserProps<
-  Row,
-  Sort extends string,
-  Query extends PaginatedQuery<Sort>,
-> {
-  defaultQuery: Query;
-  tab: BrowserTab;
-  active: boolean;
-  loadPage: (query: Query, signal: AbortSignal) => Promise<Page<Row, Sort>>;
-  columns: readonly Column<Row, Sort>[];
+export interface TableBrowserProps<Row, Order extends string> {
+  defaultOrderBy?: "" | `${Order} asc` | `${Order} desc`;
+  loadPage: (query: ListQuery, signal: AbortSignal) => Promise<ListResult<Row>>;
+  columns: readonly Column<Row, Order>[];
   rowKey: (row: Row) => string;
   eyebrow: string;
   title: string;
   description: string;
   noun: string;
   searchPlaceholder: string;
-  renderFilters: (controls: FilterControls<Query>) => ReactNode;
-  filterValues: (query: Query) => string[];
+  renderFilters?: (controls: FilterControls) => ReactNode;
   className?: string;
   tableClassName?: string;
 }
 
-export function TableBrowser<
-  Row,
-  Sort extends string,
-  Query extends PaginatedQuery<Sort>,
->({
-  defaultQuery,
-  tab,
-  active,
+export function TableBrowser<Row, Order extends string>({
+  defaultOrderBy = "",
   loadPage,
   columns,
   rowKey,
@@ -63,22 +53,25 @@ export function TableBrowser<
   noun,
   searchPlaceholder,
   renderFilters,
-  filterValues,
   className = "",
   tableClassName = "",
-}: TableBrowserProps<Row, Sort, Query>) {
-  const browser = useBrowser(tab, active, defaultQuery, loadPage);
-  const { query, page, loading } = browser;
-  const activeFilters = countFilters(browser.search, ...filterValues(query));
+}: TableBrowserProps<Row, Order>) {
+  const browser = useBrowser(defaultOrderBy, loadPage);
+  const { query, result, loading } = browser;
+  const activeFilters = countFilters(query.filter);
+  const controls: FilterControls = {
+    value: (field) => filterValue(query.filter, field),
+    update: browser.updateFilter,
+  };
 
   return (
-    <section className={`browser-card tab-panel ${className}`}>
+    <section className={`browser-card resource-page ${className}`}>
       <BrowserHeading
         eyebrow={eyebrow}
         title={title}
         description={description}
         loading={loading}
-        count={page.total}
+        count={Number(result.totalSize)}
         noun={noun}
       />
       {browser.error != null && <ErrorBanner message={browser.error} />}
@@ -91,23 +84,28 @@ export function TableBrowser<
         />
         <RelevanceButton
           visible={browser.search.trim().length > 0}
-          active={query.sort === ""}
+          active={query.orderBy === ""}
           onClick={browser.sortByRelevance}
         />
       </div>
-      <div className="filters" aria-label={`${title} filters`}>
-        {renderFilters({ query, update: browser.update })}
-        {activeFilters > 0 && (
-          <button className="clear-filters" type="button" onClick={browser.reset}>
-            Clear {activeFilters}
-          </button>
-        )}
-      </div>
-      <div className={`table-wrap ${tableClassName} ${loading ? "is-loading" : ""}`}>
+      {(renderFilters != null || activeFilters > 0) && (
+        <div className="filters" aria-label={`${title} filters`}>
+          {renderFilters?.(controls)}
+          {activeFilters > 0 && (
+            <button className="clear-filters" type="button" onClick={browser.reset}>
+              Clear {activeFilters}
+            </button>
+          )}
+        </div>
+      )}
+      <div
+        className={`table-wrap ${tableClassName} ${loading ? "is-loading" : ""}`}
+        aria-busy={loading}
+      >
         <table>
           <thead>
             <tr>
-              {columns.map((column) => column.sort == null ? (
+              {columns.map((column) => column.orderBy == null ? (
                 <th key={column.label} className={column.numeric ? "numeric" : undefined}>
                   {column.label}
                 </th>
@@ -115,8 +113,8 @@ export function TableBrowser<
                 <SortHeader
                   key={column.label}
                   label={column.label}
-                  sort={column.sort}
-                  query={page}
+                  orderBy={column.orderBy}
+                  activeOrderBy={query.orderBy}
                   onSort={browser.sortBy}
                   numeric={column.numeric}
                 />
@@ -124,7 +122,7 @@ export function TableBrowser<
             </tr>
           </thead>
           <tbody>
-            {page.items.map((row) => (
+            {result.items.map((row) => (
               <tr key={rowKey(row)}>
                 {columns.map((column) => (
                   <td key={column.label} className={column.numeric ? "numeric" : undefined}>
@@ -133,42 +131,29 @@ export function TableBrowser<
                 ))}
               </tr>
             ))}
-            {!loading && page.items.length === 0 && (
+            {!loading && result.items.length === 0 && (
               <tr>
                 <td className="empty-state" colSpan={columns.length}>
-                  No {noun} match these filters.
+                  No {noun} match this filter.
                 </td>
               </tr>
             )}
           </tbody>
         </table>
       </div>
-      <Pagination
-        page={page}
+      <CursorPagination
+        pageSize={query.pageSize}
+        visibleCount={result.items.length}
+        totalSize={Number(result.totalSize)}
         loading={loading}
-        label={`${title} table pagination`}
-        onPageChange={browser.goToPage}
-        onPageSizeChange={(size) => browser.update("page_size", size)}
+        hasPrevious={browser.hasPreviousPage}
+        hasNext={result.nextPageToken !== ""}
+        label={`${title} pagination`}
+        onPrevious={browser.previousPage}
+        onNext={browser.nextPage}
+        onPageSizeChange={browser.setPageSize}
       />
     </section>
-  );
-}
-
-export function RelevanceButton({ visible, active, onClick }: {
-  visible: boolean;
-  active: boolean;
-  onClick: () => void;
-}) {
-  if (!visible) return null;
-  return (
-    <button
-      className="relevance-sort"
-      type="button"
-      aria-pressed={active}
-      onClick={onClick}
-    >
-      Relevance
-    </button>
   );
 }
 
@@ -184,7 +169,7 @@ export function BrowserHeading({ eyebrow, title, description, loading, count, no
     <div className="section-head">
       <div>
         <p className="eyebrow">{eyebrow}</p>
-        <h2>{title}</h2>
+        <h1>{title}</h1>
         <p>{description}</p>
       </div>
       <ResultCount loading={loading} count={count} noun={noun} />
@@ -212,6 +197,24 @@ export function SearchBox({ value, onChange, placeholder, label }: {
   );
 }
 
+export function RelevanceButton({ visible, active, onClick }: {
+  visible: boolean;
+  active: boolean;
+  onClick: () => void;
+}) {
+  if (!visible) return null;
+  return (
+    <button
+      className="relevance-sort"
+      type="button"
+      aria-pressed={active}
+      onClick={onClick}
+    >
+      Relevance
+    </button>
+  );
+}
+
 export function ResultCount({ loading, count, noun }: {
   loading: boolean;
   count: number;
@@ -224,25 +227,40 @@ export function ResultCount({ loading, count, noun }: {
   );
 }
 
-export function SortHeader<Sort extends string>({ label, sort, query, onSort, numeric = false }: {
+export function SortHeader<Order extends string>({
+  label,
+  orderBy,
+  activeOrderBy,
+  onSort,
+  numeric = false,
+}: {
   label: string;
-  sort: Sort;
-  query: { sort: Sort | "relevance"; direction: SortDirection };
-  onSort: (sort: Sort) => void;
+  orderBy: Order;
+  activeOrderBy: string;
+  onSort: (field: string) => void;
   numeric?: boolean;
 }) {
-  const active = query.sort === sort;
-  const direction = query.direction === "asc" ? "ascending" : "descending";
+  const [activeField, direction] = activeOrderBy.split(" ");
+  const active = activeField === orderBy;
   return (
-    <th className={numeric ? "numeric" : undefined} aria-sort={active ? direction : "none"}>
-      <button type="button" onClick={() => onSort(sort)}>
-        {label}<span>{active ? (query.direction === "asc" ? "↑" : "↓") : "↕"}</span>
+    <th
+      className={numeric ? "numeric" : undefined}
+      aria-sort={active ? (direction === "asc" ? "ascending" : "descending") : "none"}
+    >
+      <button type="button" onClick={() => onSort(orderBy)}>
+        {label}<span>{active ? (direction === "asc" ? "↑" : "↓") : "↕"}</span>
       </button>
     </th>
   );
 }
 
-export function SelectFilter<Value extends string>({ label, value, values, labels = {}, onChange }: {
+export function SelectFilter<Value extends string>({
+  label,
+  value,
+  values,
+  labels = {},
+  onChange,
+}: {
   label: string;
   value: "" | Value;
   values: readonly Value[];
@@ -265,19 +283,21 @@ export function SelectFilter<Value extends string>({ label, value, values, label
   );
 }
 
-export function FacetFilter<Value extends string>({ label, value, values, onChange }: {
+export function FacetFilter({
+  label,
+  value,
+  values,
+  onChange,
+}: {
   label: string;
-  value: "" | Value;
-  values?: FacetValue[];
-  onChange: (value: "" | Value) => void;
+  value: string;
+  values?: readonly FacetOption[];
+  onChange: (value: string) => void;
 }) {
   return (
     <label className="filter">
       <span>{label}</span>
-      <select
-        value={value}
-        onChange={(event) => onChange(event.target.value as "" | Value)}
-      >
+      <select value={value} onChange={(event) => onChange(event.target.value)}>
         <option value="">All</option>
         {values?.map((item) => (
           <option key={item.value} value={item.value}>
@@ -289,36 +309,90 @@ export function FacetFilter<Value extends string>({ label, value, values, onChan
   );
 }
 
-export function Pagination({ page, loading, label, onPageChange, onPageSizeChange }: {
-  page: Page<unknown, string>;
+export function TextFilter({ label, value, placeholder, onChange }: {
   label: string;
+  value: string;
+  placeholder?: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label className="filter">
+      <span>{label}</span>
+      <input
+        type="text"
+        value={value}
+        placeholder={placeholder}
+        onChange={(event) => onChange(event.target.value)}
+      />
+    </label>
+  );
+}
+
+export function NumberFilter({ label, value, onChange }: {
+  label: string;
+  value: string;
+  onChange: (value: "" | number) => void;
+}) {
+  return (
+    <label className="filter filter-number">
+      <span>{label}</span>
+      <input
+        type="number"
+        min="0"
+        value={value}
+        onChange={(event) => onChange(
+          event.target.value === "" ? "" : Number(event.target.value),
+        )}
+      />
+    </label>
+  );
+}
+
+export function CursorPagination({
+  pageSize,
+  visibleCount,
+  totalSize,
+  loading,
+  hasPrevious,
+  hasNext,
+  label,
+  onPrevious,
+  onNext,
+  onPageSizeChange,
+}: {
+  pageSize: number;
+  visibleCount: number;
+  totalSize: number;
   loading: boolean;
-  onPageChange: (page: number) => void;
+  hasPrevious: boolean;
+  hasNext: boolean;
+  label: string;
+  onPrevious: () => void;
+  onNext: () => void;
   onPageSizeChange: (pageSize: number) => void;
 }) {
-  const start = page.items.length === 0 ? 0 : (page.page - 1) * page.page_size + 1;
-  const end = (page.page - 1) * page.page_size + page.items.length;
   return (
     <div className="pagination" aria-busy={loading}>
       <div>
         <label>
           Rows
           <select
-            value={page.page_size}
+            value={pageSize}
             disabled={loading}
             onChange={(event) => onPageSizeChange(Number(event.target.value))}
           >
             {PAGE_SIZES.map((size) => <option key={size} value={size}>{size}</option>)}
           </select>
         </label>
-        <span>{formatCount(start)}–{formatCount(end)} of {formatCount(page.total)}</span>
+        <span>{formatCount(visibleCount)} shown · {formatCount(totalSize)} total</span>
       </div>
       <nav aria-label={label}>
-        <button type="button" onClick={() => onPageChange(1)} disabled={loading || page.page <= 1}>«</button>
-        <button type="button" onClick={() => onPageChange(page.page - 1)} disabled={loading || page.page <= 1}>‹</button>
-        <span>Page <strong>{page.page}</strong> of {page.page_count}</span>
-        <button type="button" onClick={() => onPageChange(page.page + 1)} disabled={loading || page.page >= page.page_count}>›</button>
-        <button type="button" onClick={() => onPageChange(page.page_count)} disabled={loading || page.page >= page.page_count}>»</button>
+        <button type="button" onClick={onPrevious} disabled={loading || !hasPrevious}>
+          ← Previous
+        </button>
+        <button type="button" onClick={onNext} disabled={loading || !hasNext}>
+          Next →
+        </button>
       </nav>
     </div>
   );
@@ -330,8 +404,7 @@ export function ErrorBanner({ message, onDismiss }: {
 }) {
   return (
     <div className="error-banner" role="alert">
-      {onDismiss != null && <strong>Couldn’t refresh the database view.</strong>}
-      {onDismiss != null && " "}{message}
+      {message}
       {onDismiss != null && (
         <button type="button" onClick={onDismiss} aria-label="Dismiss error">×</button>
       )}

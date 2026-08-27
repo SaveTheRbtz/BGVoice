@@ -1,103 +1,263 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { MouseEvent } from "react";
+import { INSTALLATION_NAME } from "./api";
+import type { ListQuery, ListResult } from "./api";
 
-import type { Page, PaginatedQuery } from "./types";
+export const PAGE_SIZES = [10, 25, 50, 100] as const;
 
-export const BROWSER_TABS = [
-  "voices",
-  "characters",
-  "dialogues",
-  "lines",
-  "sounds",
-  "transitions",
-  "races",
-  "classes",
-  "kits",
-  "identifiers",
-] as const;
-
-export type BrowserTab = (typeof BROWSER_TABS)[number];
-
-const savedSearches = new Map<BrowserTab, string>();
-
-export function browserTab(search: string = window.location.search): BrowserTab {
-  const value = new URLSearchParams(search).get("tab");
-  return BROWSER_TABS.find((tab) => tab === value) ?? "voices";
+export interface BrowserQuery {
+  filter: string;
+  orderBy: string;
+  pageSize: number;
+  pageToken: string;
 }
 
-export function browserQuery<
-  Sort extends string,
-  Query extends PaginatedQuery<Sort>,
->(defaults: Query, search: string): Query {
+export type AppRoute =
+  | { name: "voices"; voiceId: string | null }
+  | { name: "characters"; resourceName: string | null }
+  | { name: "dialogues"; resourceName: string | null }
+  | { name: "dialogue-lines" }
+  | { name: "dialogue-transitions" }
+  | { name: "character-sounds" }
+  | { name: "races" }
+  | { name: "character-classes" }
+  | { name: "kits" }
+  | { name: "identifier-definitions" }
+  | { name: "pipeline" }
+  | { name: "not-found" };
+
+const NAVIGATION_EVENT = "bgvoice:navigate";
+const DEFAULT_PAGE_SIZE = 25;
+
+export function routeFromPath(pathname: string = window.location.pathname): AppRoute {
+  const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
+  const [collection, resource, ...rest] = segments;
+  if (collection == null) return { name: "voices", voiceId: null };
+  if (collection === "voices" && rest.length === 0) {
+    return {
+      name: "voices",
+      voiceId: resource == null ? null : canonicalName("voices", resource),
+    };
+  }
+  if (collection === "characters" && rest.length === 0) {
+    return {
+      name: "characters",
+      resourceName: resource == null ? null : canonicalName("characters", resource),
+    };
+  }
+  if (collection === "dialogues" && rest.length === 0) {
+    return {
+      name: "dialogues",
+      resourceName: resource == null ? null : canonicalName("dialogues", resource),
+    };
+  }
+  if (segments.length === 1) {
+    switch (collection) {
+      case "dialogue-lines": return { name: "dialogue-lines" };
+      case "dialogue-transitions": return { name: "dialogue-transitions" };
+      case "character-sounds": return { name: "character-sounds" };
+      case "pipeline": return { name: "pipeline" };
+      default: return { name: "not-found" };
+    }
+  }
+  if (collection === "definitions" && segments.length === 2) {
+    switch (resource) {
+      case "races": return { name: "races" };
+      case "character-classes": return { name: "character-classes" };
+      case "kits": return { name: "kits" };
+      case "identifier-definitions": return { name: "identifier-definitions" };
+      default: return { name: "not-found" };
+    }
+  }
+  return { name: "not-found" };
+}
+
+export function voicePath(id?: string, search = ""): string {
+  const path = id == null ? "/voices" : `/voices/${encodeURIComponent(resourceId(id))}`;
+  return `${path}${search}`;
+}
+
+export function characterPath(resourceName?: string): string {
+  return resourceName == null
+    ? "/characters"
+    : `/characters/${encodeURIComponent(resourceId(resourceName))}`;
+}
+
+export function resourceId(resourceName: string): string {
+  return resourceName.slice(resourceName.lastIndexOf("/") + 1);
+}
+
+export function dialoguePath(resourceName?: string): string {
+  return resourceName == null
+    ? "/dialogues"
+    : `/dialogues/${encodeURIComponent(resourceId(resourceName))}`;
+}
+
+function canonicalName(collection: "voices" | "characters" | "dialogues", id: string): string {
+  return `${INSTALLATION_NAME}/${collection}/${id}`;
+}
+
+export function navigate(href: string, replace = false): void {
+  const current = `${window.location.pathname}${window.location.search}`;
+  if (current === href) return;
+  window.history[replace ? "replaceState" : "pushState"](null, "", href);
+  window.dispatchEvent(new Event(NAVIGATION_EVENT));
+}
+
+export function followLink(event: MouseEvent<HTMLAnchorElement>, href: string): void {
+  if (
+    event.button !== 0
+    || event.metaKey
+    || event.ctrlKey
+    || event.shiftKey
+    || event.altKey
+  ) return;
+  event.preventDefault();
+  navigate(href);
+}
+
+export function useRoute(): AppRoute {
+  const [route, setRoute] = useState(() => routeFromPath());
+  useEffect(() => {
+    const restore = () => setRoute(routeFromPath());
+    window.addEventListener("popstate", restore);
+    window.addEventListener(NAVIGATION_EVENT, restore);
+    return () => {
+      window.removeEventListener("popstate", restore);
+      window.removeEventListener(NAVIGATION_EVENT, restore);
+    };
+  }, []);
+  return route;
+}
+
+export function listQuery(
+  search: string = window.location.search,
+  defaultOrderBy = "",
+): BrowserQuery {
   const parameters = new URLSearchParams(search);
-  const restored = { ...defaults };
-  for (const key of Object.keys(defaults) as Array<keyof Query>) {
-    const value = parameters.get(String(key));
-    if (value == null) continue;
-    const fallback = defaults[key];
-    if (typeof fallback === "number") {
-      const parsed = Number(value);
-      if (Number.isInteger(parsed) && parsed > 0) {
-        restored[key] = parsed as Query[typeof key];
+  const requestedSize = Number(parameters.get("page_size"));
+  const filter = parameters.get("filter") ?? "";
+  const requestedOrder = parameters.get("order_by");
+  return {
+    filter,
+    orderBy: requestedOrder ?? (filterSearch(filter) === "" ? defaultOrderBy : ""),
+    pageSize: PAGE_SIZES.includes(requestedSize as (typeof PAGE_SIZES)[number])
+      ? requestedSize
+      : DEFAULT_PAGE_SIZE,
+    pageToken: parameters.get("page_token") ?? "",
+  };
+}
+
+export function listSearch(query: BrowserQuery, defaultOrderBy = ""): string {
+  const parameters = new URLSearchParams();
+  if (query.filter !== "") parameters.set("filter", query.filter);
+  if (query.orderBy !== "" && query.orderBy !== defaultOrderBy) {
+    parameters.set("order_by", query.orderBy);
+  }
+  if (query.pageSize !== DEFAULT_PAGE_SIZE) {
+    parameters.set("page_size", String(query.pageSize));
+  }
+  if (query.pageToken !== "") parameters.set("page_token", query.pageToken);
+  const serialized = parameters.toString();
+  return serialized === "" ? "" : `?${serialized}`;
+}
+
+type FilterScalar = string | number | boolean;
+
+interface FilterParts {
+  search: string;
+  exact: Map<string, FilterScalar>;
+}
+
+export function filterSearch(filter: string): string {
+  return parseFilter(filter).search;
+}
+
+export function filterValue(filter: string, field: string): string {
+  const value = parseFilter(filter).exact.get(field);
+  return value == null ? "" : String(value);
+}
+
+export function setFilterSearch(filter: string, value: string): string {
+  const parts = parseFilter(filter);
+  parts.search = value.trim();
+  return serializeFilter(parts);
+}
+
+export function setExactFilter(
+  filter: string,
+  field: string,
+  value: FilterScalar,
+): string {
+  const parts = parseFilter(filter);
+  if (value === "") parts.exact.delete(field);
+  else parts.exact.set(field, value);
+  return serializeFilter(parts);
+}
+
+export function countFilters(filter: string): number {
+  const parts = parseFilter(filter);
+  return Number(parts.search !== "") + parts.exact.size;
+}
+
+function parseFilter(filter: string): FilterParts {
+  const parts: FilterParts = { search: "", exact: new Map() };
+  for (const clause of filter.split(" AND ").filter(Boolean)) {
+    if (clause.startsWith("search(") && clause.endsWith(")")) {
+      const serialized = clause.slice(7, -1);
+      try {
+        const parsed: unknown = JSON.parse(serialized);
+        if (typeof parsed === "string") parts.search = parsed;
+      } catch {
+        // The API will report malformed URL filters.
       }
-    } else {
-      restored[key] = value as Query[typeof key];
+      continue;
+    }
+    const separator = clause.indexOf(" = ");
+    if (separator < 1) continue;
+    const field = clause.slice(0, separator);
+    const serialized = clause.slice(separator + 3);
+    if (serialized === "true" || serialized === "false") {
+      parts.exact.set(field, serialized === "true");
+      continue;
+    }
+    const numeric = Number(serialized);
+    if (serialized !== "" && Number.isFinite(numeric)) {
+      parts.exact.set(field, numeric);
+      continue;
+    }
+    try {
+      const parsed: unknown = JSON.parse(serialized);
+      if (typeof parsed === "string") parts.exact.set(field, parsed);
+    } catch {
+      // The API will report malformed URL filters.
     }
   }
-  return restored;
+  return parts;
 }
 
-export function browserSearch<
-  Sort extends string,
-  Query extends PaginatedQuery<Sort>,
->(tab: BrowserTab, query: Query, defaults: Query): string {
-  const parameters = new URLSearchParams({ tab });
-  for (const key of Object.keys(defaults) as Array<keyof Query>) {
-    const value = query[key];
-    if (value !== "" && value !== defaults[key]) {
-      parameters.set(String(key), String(value));
-    }
+function serializeFilter(parts: FilterParts): string {
+  const clauses: string[] = [];
+  if (parts.search !== "") clauses.push(`search(${JSON.stringify(parts.search)})`);
+  for (const [field, value] of parts.exact) {
+    clauses.push(`${field} = ${typeof value === "string" ? JSON.stringify(value) : value}`);
   }
-  return `?${parameters.toString()}`;
+  return clauses.join(" AND ");
 }
 
-export function navigateToTab(tab: BrowserTab): void {
-  const url = new URL(window.location.href);
-  url.search = savedSearches.get(tab) ?? `?tab=${tab}`;
-  window.history.pushState(null, "", url);
-}
-
-function initialQuery<Sort extends string, Query extends PaginatedQuery<Sort>>(
-  tab: BrowserTab,
-  defaults: Query,
-): Query {
-  const search = browserTab() === tab
-    ? window.location.search
-    : savedSearches.get(tab) ?? "";
-  return browserQuery(defaults, search);
-}
-
-export function useBrowser<
-  Item,
-  Sort extends string,
-  Query extends PaginatedQuery<Sort>,
->(
-  tab: BrowserTab,
-  active: boolean,
-  defaultQuery: Query,
-  loadPage: (query: Query, signal: AbortSignal) => Promise<Page<Item, Sort>>,
+export function useBrowser<Item>(
+  defaultOrderBy: string,
+  loadPage: (query: ListQuery, signal: AbortSignal) => Promise<ListResult<Item>>,
 ) {
-  const [query, setQuery] = useState(() => initialQuery(tab, defaultQuery));
-  const [search, setSearch] = useState(query.q);
-  const [page, setPage] = useState<Page<Item, Sort>>(() => ({
+  const [query, setQuery] = useState(() => listQuery(window.location.search, defaultOrderBy));
+  const [search, setSearch] = useState(() => filterSearch(query.filter));
+  const [result, setResult] = useState<ListResult<Item>>({
     items: [],
-    page: 1,
-    page_size: defaultQuery.page_size,
-    total: 0,
-    page_count: 1,
-    sort: "relevance",
-    direction: defaultQuery.direction,
-  }));
-  const [loadedQuery, setLoadedQuery] = useState<Query | null>(null);
+    nextPageToken: "",
+    totalSize: 0n,
+  });
+  const [loadedQuery, setLoadedQuery] = useState<BrowserQuery | null>(null);
+  const [previousTokens, setPreviousTokens] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const restoring = useRef(false);
   const queryRef = useRef(query);
@@ -107,55 +267,60 @@ export function useBrowser<
   }, [query]);
 
   useEffect(() => {
-    if (!active) return undefined;
-
     const restore = () => {
-      if (browserTab() !== tab) return;
-      const next = browserQuery(defaultQuery, window.location.search);
-      savedSearches.set(tab, browserSearch(tab, next, defaultQuery));
+      const next = listQuery(window.location.search, defaultOrderBy);
+      const current = queryRef.current;
       if (
-        (Object.keys(defaultQuery) as Array<keyof Query>)
-          .some((key) => queryRef.current[key] !== next[key])
-      ) {
-        restoring.current = true;
-        setQuery(next);
-        setSearch(next.q);
-      }
+        next.filter === current.filter
+        && next.orderBy === current.orderBy
+        && next.pageSize === current.pageSize
+        && next.pageToken === current.pageToken
+      ) return;
+      restoring.current = true;
+      setQuery(next);
+      setSearch(filterSearch(next.filter));
+      setPreviousTokens([]);
     };
-
-    restore();
     window.addEventListener("popstate", restore);
-    return () => window.removeEventListener("popstate", restore);
-  }, [active, defaultQuery, tab]);
+    window.addEventListener(NAVIGATION_EVENT, restore);
+    return () => {
+      window.removeEventListener("popstate", restore);
+      window.removeEventListener(NAVIGATION_EVENT, restore);
+    };
+  }, [defaultOrderBy]);
 
   useEffect(() => {
-    const nextSearch = browserSearch(tab, query, defaultQuery);
-    savedSearches.set(tab, nextSearch);
-    if (!active || browserTab() !== tab) return;
     if (restoring.current) {
       restoring.current = false;
       return;
     }
-    const url = new URL(window.location.href);
-    url.search = nextSearch;
-    window.history.replaceState(null, "", url);
-  }, [active, defaultQuery, query, tab]);
+    const next = `${window.location.pathname}${listSearch(query, defaultOrderBy)}`;
+    window.history.replaceState(null, "", next);
+  }, [defaultOrderBy, query]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
-      const q = search.trim();
-      setQuery((current) =>
-        current.q === q ? current : { ...current, q, page: 1 },
-      );
+      setQuery((current) => {
+        const filter = setFilterSearch(current.filter, search);
+        if (filter === current.filter) return current;
+        const previousSearch = filterSearch(current.filter);
+        const orderBy = search === "" && current.orderBy === ""
+          ? defaultOrderBy
+          : previousSearch === "" && current.orderBy === defaultOrderBy
+            ? ""
+            : current.orderBy;
+        return { ...current, filter, orderBy, pageToken: "" };
+      });
+      setPreviousTokens([]);
     }, 250);
     return () => window.clearTimeout(timer);
-  }, [search]);
+  }, [defaultOrderBy, search]);
 
   useEffect(() => {
     const controller = new AbortController();
     loadPage(query, controller.signal)
-      .then((result) => {
-        setPage(result);
+      .then((next) => {
+        setResult(next);
         setError(null);
       })
       .catch((reason: unknown) => {
@@ -167,61 +332,80 @@ export function useBrowser<
     return () => controller.abort();
   }, [loadPage, query]);
 
-  function update<Key extends keyof Query>(key: Key, value: Query[Key]) {
-    setQuery((current) => ({ ...current, [key]: value, page: 1 }));
-  }
-
-  function sortBy(sort: Sort) {
+  const updateFilter = useCallback((field: string, value: FilterScalar) => {
     setQuery((current) => ({
       ...current,
-      page: 1,
-      sort,
-      direction:
-        page.sort === sort && page.direction === "desc" ? "asc" : "desc",
+      filter: setExactFilter(current.filter, field, value),
+      pageToken: "",
     }));
-  }
+    setPreviousTokens([]);
+  }, []);
 
-  function sortByRelevance() {
-    setQuery((current) => ({
-      ...current,
-      page: 1,
-      sort: "",
-      direction: defaultQuery.direction,
-    }));
-  }
+  const sortBy = useCallback((field: string) => {
+    setQuery((current) => {
+      const [activeField, activeDirection] = current.orderBy.split(" ");
+      const direction = activeField === field && activeDirection === "desc" ? "asc" : "desc";
+      return { ...current, orderBy: `${field} ${direction}`, pageToken: "" };
+    });
+    setPreviousTokens([]);
+  }, []);
 
-  function reset() {
+  const sortByRelevance = useCallback(() => {
+    setQuery((current) => ({ ...current, orderBy: "", pageToken: "" }));
+    setPreviousTokens([]);
+  }, []);
+
+  const setOrderBy = useCallback((orderBy: string) => {
+    setQuery((current) => ({ ...current, orderBy, pageToken: "" }));
+    setPreviousTokens([]);
+  }, []);
+
+  const reset = useCallback(() => {
     setSearch("");
     setQuery((current) => ({
-      ...defaultQuery,
-      page_size: current.page_size,
+      filter: "",
+      orderBy: defaultOrderBy,
+      pageSize: current.pageSize,
+      pageToken: "",
     }));
-  }
+    setPreviousTokens([]);
+  }, [defaultOrderBy]);
 
-  function goToPage(nextPage: number) {
-    setQuery((current) => ({
-      ...current,
-      page: Math.max(1, Math.min(page.page_count, nextPage)),
-    }));
-  }
+  const setPageSize = useCallback((pageSize: number) => {
+    setQuery((current) => ({ ...current, pageSize, pageToken: "" }));
+    setPreviousTokens([]);
+  }, []);
+
+  const nextPage = useCallback(() => {
+    if (result.nextPageToken === "") return;
+    setPreviousTokens((current) => [...current, query.pageToken]);
+    setQuery((current) => ({ ...current, pageToken: result.nextPageToken }));
+  }, [query.pageToken, result.nextPageToken]);
+
+  const previousPage = useCallback(() => {
+    const previous = previousTokens.at(-1);
+    if (previous == null) return;
+    setPreviousTokens((current) => current.slice(0, -1));
+    setQuery((current) => ({ ...current, pageToken: previous }));
+  }, [previousTokens]);
 
   return {
     query,
     search,
     setSearch,
-    page,
+    result,
     loading: loadedQuery !== query,
     error,
-    update,
+    updateFilter,
     sortBy,
     sortByRelevance,
+    setOrderBy,
     reset,
-    goToPage,
+    setPageSize,
+    nextPage,
+    previousPage,
+    hasPreviousPage: previousTokens.length > 0,
   };
-}
-
-export function countFilters(...values: string[]): number {
-  return values.filter(Boolean).length;
 }
 
 export function errorMessage(reason: unknown): string {

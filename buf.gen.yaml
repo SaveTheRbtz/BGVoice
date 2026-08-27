@@ -1,0 +1,29 @@
+version: v2
+
+managed:
+  enabled: true
+  override:
+    # protoc-gen-pydantic requires a Go import path even when emitting Python.
+    - file_option: go_package_prefix
+      value: bgvoice.local/gen
+
+plugins:
+  - remote: buf.build/bufbuild/es:v2.14.0
+    out: frontend/src/gen
+    include_imports: true
+    opt:
+      - target=ts
+  - remote: buf.build/protocolbuffers/python:v36.0
+    out: src
+  - remote: buf.build/protocolbuffers/pyi:v36.0
+    out: src
+  - remote: buf.build/connectrpc/py:v0.11.1
+    out: src
+    opt:
+      - protobuf=google
+  # Install protoc-gen-pydantic v0.18.0 before regenerating.
+  - local: protoc-gen-pydantic
+    out: src
+    opt:
+      - paths=source_relative
+      - auto_trim_enum_prefix=false

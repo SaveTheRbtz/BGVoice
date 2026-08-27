@@ -97,6 +97,8 @@ KitListRowId = NewType("KitListRowId", int)
 SoundSlotId = NewType("SoundSlotId", int)
 VoiceId = NewType("VoiceId", str)
 
+BIOGRAPHY_SOUND_SLOT_ID = SoundSlotId(74)
+
 type RaceIdField = Annotated[RaceId, Field(ge=0, le=0xFF)]
 type ClassIdField = Annotated[ClassId, Field(ge=0, le=0xFF)]
 type GenderIdField = Annotated[GenderId, Field(ge=0, le=0xFF)]
@@ -609,6 +611,7 @@ class VoiceResource(StrictModel):
     prompt: str = Field(min_length=1)
     variant_resource_names: list[Annotated[str, Field(min_length=1)]] = Field(min_length=1)
     dialogue_resrefs: list[Annotated[str, Field(min_length=1, max_length=8)]]
+    biography_sound_id: str | None = None
 
     @property
     def variant_count(self) -> int:
@@ -620,6 +623,7 @@ class VoiceResource(StrictModel):
             self.id,
             self.display_name,
             self.prompt,
+            self.biography_sound_id,
             *self.variant_resource_names,
             *self.dialogue_resrefs,
         )
