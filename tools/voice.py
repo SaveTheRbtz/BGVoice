@@ -20,7 +20,7 @@ import secrets
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Annotated, Any, Self
+from typing import Annotated, Any, Literal, Self
 from urllib.parse import quote, urlsplit
 
 import httpx
@@ -39,8 +39,22 @@ from pydantic import (
 )
 
 INWORLD_DESIGN_URL = "https://api.inworld.ai/voices/v1/voices:design"
+INWORLD_VOICES_URL = "https://api.inworld.ai/voices/v1/voices"
 INWORLD_TTS_URL = "https://api.inworld.ai/tts/v1/voice"
 INWORLD_TTS_MODEL = "inworld-tts-2"
+
+NARRATOR_DISPLAY_NAME = "Narrator"
+NARRATOR_LANGUAGE_CODE = "en-GB"
+NARRATOR_VOICE_DESCRIPTION = (
+    "An old wise male scholar voice with a clear British accent, speaking at a steady pace and "
+    "neutral tone. The timbre is warm and resonant, conveying a sense of calm and authority, "
+    "suitable for narrations."
+)
+NARRATOR_PREVIEW_TEXT = (
+    "History is a patient teacher. Listen closely as the old stones surrender their secrets, "
+    "and let each measured word guide you through the tale."
+)
+NARRATOR_TAGS = ["bgvoice"]
 
 TTS2_PROMPTING_INSTRUCTIONS = """Your responses will be spoken aloud using inworld-tts-2, which supports
 instruction tags — natural language directions in square brackets placed before
@@ -211,6 +225,8 @@ class VoiceProfile(StrictModel):
         cleaned = " ".join(value.split())
         if ":" in cleaned or "\n" in cleaned or "\r" in cleaned:
             raise ValueError("voice attributes must be single values, not nested fields")
+        if not cleaned.isascii() or any(not 32 <= ord(character) <= 126 for character in cleaned):
+            raise ValueError("voice attributes must contain only visible printable ASCII")
         return cleaned
 
     @model_validator(mode="after")
@@ -344,6 +360,75 @@ class DialogueContextTurn(StrictModel):
     source: Annotated[str, Field(pattern=r"^(graph|state_index_fallback)$")]
 
 
+class NarratorDirectedDialogue(StrictModel):
+    """Choose this result when the source is scene narration rather than character speech."""
+
+    speaker: Annotated[
+        Literal["narrator"],
+        Field(
+            description=(
+                "Select narrator only when the source text is intended to be spoken as scene, "
+                "action, or descriptive narration rather than by the named character."
+            )
+        ),
+    ]
+    directed_dialogue: Annotated[
+        str,
+        Field(
+            min_length=1,
+            max_length=2000,
+            description=(
+                "The narrator's complete spoken text, with concise Inworld TTS-2 square-bracket "
+                "instruction tags and with source-only asterisks, enclosing parentheses, and "
+                "Infinity Engine placeholders removed or naturally rewritten."
+            ),
+        ),
+    ]
+
+
+class CharacterDirectedDialogue(StrictModel):
+    """Choose this result when the named character is the speaker of the source dialogue."""
+
+    speaker: Annotated[
+        Literal["character"],
+        Field(
+            description=(
+                "Select character when the named Baldur's Gate character should speak the line, "
+                "including dialogue preceded by a brief embedded performance direction."
+            )
+        ),
+    ]
+    directed_dialogue: Annotated[
+        str,
+        Field(
+            min_length=1,
+            max_length=2000,
+            description=(
+                "The character's complete spoken text, with concise Inworld TTS-2 square-bracket "
+                "instruction tags and with source-only asterisks and Infinity Engine placeholders "
+                "removed or naturally rewritten."
+            ),
+        ),
+    ]
+
+
+DirectedDialogue = Annotated[
+    NarratorDirectedDialogue | CharacterDirectedDialogue,
+    Field(
+        description=(
+            "Exactly one speaker-routed TTS direction. Choose the variant from the intended "
+            "speaker of the source line, not merely from the presence of punctuation."
+        ),
+    ),
+]
+
+
+class TTSLinePlan(StrictModel):
+    """Luna's structured speaker choice and fully directed Inworld TTS-2 dialogue."""
+
+    result: DirectedDialogue
+
+
 class InworldPreviewVoice(BaseModel):
     """One draft voice returned by Inworld Voice Design."""
 
@@ -371,10 +456,35 @@ class InworldPublishedVoice(BaseModel):
 
     name: str
     voice_id: str = Field(alias="voiceId")
+    language_code: str | None = Field(default=None, alias="langCode")
     display_name: str = Field(alias="displayName")
     description: str | None = None
     tags: list[str] = Field(default_factory=list)
     source: str | None = None
+
+
+class InworldVoiceListResponse(BaseModel):
+    """Validated subset of the current Inworld Voices list response."""
+
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+    voices: list[InworldPublishedVoice] = Field(default_factory=list)
+    next_page_token: str = Field(default="", alias="nextPageToken")
+
+
+class NarratorVoiceResolution(StrictModel):
+    """The deterministic narrator voice selected for synthesis in this run."""
+
+    status: Literal["created", "reused"]
+    voice: InworldPublishedVoice
+
+
+class CharacterVoiceResolution(StrictModel):
+    """How the deterministic character voice was resolved for this run."""
+
+    status: Literal["created", "recreated", "reused"]
+    voice: InworldPublishedVoice
+    replaced_voice_id: str | None = None
 
 
 class InworldSynthesisResponse(BaseModel):
@@ -393,6 +503,11 @@ def _sql_string(value: str) -> str:
 def _slug(value: str) -> str:
     slug = _SAFE_SLUG.sub("-", value.casefold()).strip("-")
     return slug or "character"
+
+
+def is_narrator_like_source(text: str) -> bool:
+    """Identify source forms that should be offered to Luna for speaker routing."""
+    return text.lstrip().startswith(("*", "("))
 
 
 def _row_value(row: Mapping[str, object], key: str) -> object:
@@ -676,13 +791,17 @@ async def _dialogue_candidates(
         text = str(row.get("text") or "").strip()
         if not minimum_characters <= len(text) <= maximum_characters:
             continue
-        if any(mark in text for mark in ("[", "]", "(", ")", "^")):
+        narrator_like = is_narrator_like_source(text)
+        if any(mark in text for mark in ("[", "]", "^")):
             continue
-        spoken_source = _ASTERISK_DIRECTION.sub("", text)
-        if re.search(rf"\b{re.escape(speaker_name)}\b", spoken_source, re.IGNORECASE):
-            continue
-        if not _SPEECH_CUE.search(text):
-            continue
+        if not narrator_like:
+            if "(" in text or ")" in text:
+                continue
+            spoken_source = _ASTERISK_DIRECTION.sub("", text)
+            if re.search(rf"\b{re.escape(speaker_name)}\b", spoken_source, re.IGNORECASE):
+                continue
+            if not _SPEECH_CUE.search(text):
+                continue
         candidates.append(
             DialogueSelection(
                 id=str(_row_value(row, "id")),
@@ -1103,9 +1222,19 @@ async def create_voice_design_plan(
 
 
 def choose_dialogue_line(
-    candidates: list[DialogueSelection], seed: int | None
+    candidates: list[DialogueSelection],
+    seed: int | None,
+    dialogue_id: str | None = None,
 ) -> DialogueSelection:
-    """Choose one eligible line cryptographically, or deterministically with a supplied seed."""
+    """Choose an eligible line randomly, by seed, or by its exact persisted ID."""
+    if dialogue_id is not None:
+        matches = [candidate for candidate in candidates if candidate.id == dialogue_id]
+        if len(matches) != 1:
+            raise ValueError(
+                f"--dialogue-id matched {len(matches)} eligible lines; expected exactly one: "
+                f"{dialogue_id}"
+            )
+        return matches[0]
     if seed is None:
         return secrets.choice(candidates)
     return random.Random(seed).choice(candidates)
@@ -1173,7 +1302,7 @@ def build_tts2_prompt(
     context: CharacterContext,
     dialogue_history: Sequence[DialogueContextTurn] = (),
 ) -> str:
-    """Create Luna's complete prompt from the Inworld TTS-2 guide."""
+    """Create Luna's speaker-routing and direction prompt from the Inworld TTS-2 guide."""
     rendered_history = render_dialogue_history(dialogue_history)
     history_section = ""
     if rendered_history:
@@ -1184,7 +1313,9 @@ otherwise include any of this context in the output. Direct only the target dial
 {rendered_history}
 
 """
-    return f"""Direct the following {context.display_name} dialogue from Baldur's Gate.
+    return f"""Route and direct the following attributed {context.display_name} dialogue from
+Baldur's Gate. The stored NPC line may be either actual character speech or authorial scene
+narration that should use a separate narrator voice.
 
 {TTS2_PROMPTING_INSTRUCTIONS}
 
@@ -1218,8 +1349,25 @@ Output: Do they understand what is happening?
 Input: Tell <PLAYER2> to remain here.
 Output: Tell your companion to remain here.
 
-Treat asterisk-delimited text such as *sighs*, *whispering*, or *looks away* as performance or
-stage directions rather than spoken dialogue.
+First decide who is intended to speak the target line:
+
+- Choose the narrator result when the line is primarily authorial prose describing a scene,
+  action, passage of time, dream, or visual event rather than words spoken by
+  {context.display_name}. Fully enclosing asterisks or parentheses are strong evidence of
+  narration, but punctuation alone is not decisive. Strip those source-only wrappers and retain
+  the narrative prose as spoken narrator text.
+- Choose the character result when direct speech by {context.display_name} is the main content.
+  A brief stage direction such as *sighs* or *whispering* before actual speech does not make the
+  line narration.
+- Use exactly one speaker for the whole result. Never include the speaker choice in the spoken
+  text, and never copy the unspoken scene context into it.
+
+Narrator routing example:
+Input: *The ancient doors grind open, revealing a silent hall beyond.*
+Output: {{"result":{{"speaker":"narrator","directed_dialogue":"[narrate calmly with deliberate pacing and a warm, neutral tone] The ancient doors grind open, revealing a silent hall beyond."}}}}
+
+For a character result, treat embedded asterisk-delimited text such as *sighs*, *whispering*, or
+*looks away* as performance or stage directions rather than spoken dialogue.
 
 - Convert audible actions and vocal directions into concise, neutral instruction tags in square
   brackets.
@@ -1241,9 +1389,10 @@ Input: Oh, *I* know that!
 Output: [emphasize “I”] Oh, I know that!
 
 After rewriting the source text, use the TTS-2 instruction-tag guide above to direct its delivery.
-Do not add spoken content, markdown, emojis, or enclosing quotation marks. Use character metadata
-only to inform delivery; never turn it into spoken content or use it to invent runtime-dependent
-details. Return only the rewritten, TTS-directed dialogue and nothing else.
+Do not add spoken content, markdown, emojis, or enclosing quotation marks inside directed_dialogue.
+Use character metadata only to inform character delivery; never turn it into spoken content or use
+it to invent runtime-dependent details. Return the structured speaker choice and its rewritten,
+TTS-directed dialogue.
 
 Character metadata:
 {context.metadata}
@@ -1257,6 +1406,8 @@ def validate_directed_text(
     original: str,
     directed: str,
     dialogue_history: Sequence[DialogueContextTurn] = (),
+    *,
+    speaker: Literal["narrator", "character"],
 ) -> None:
     """Ensure Luna removed source-only constructs from the spoken result."""
     if not original.strip():
@@ -1269,6 +1420,15 @@ def validate_directed_text(
         raise ValueError("directed dialogue still contains an asterisk-delimited direction")
     if "```" in directed:
         raise ValueError("directed dialogue contains a markdown code fence")
+    if "�" in directed:
+        raise ValueError("directed dialogue contains a Unicode replacement character")
+    stripped_directed = directed.strip()
+    if (
+        speaker == "narrator"
+        and stripped_directed.startswith("(")
+        and stripped_directed.endswith(")")
+    ):
+        raise ValueError("narrator dialogue still has source-only enclosing parentheses")
     normalized_original = " ".join(original.split()).casefold()
     normalized_directed = " ".join(_INSTRUCTION_TAG.sub("", directed).split()).casefold()
     for turn in dialogue_history:
@@ -1289,8 +1449,8 @@ async def create_tts_line_plan(
     dialogue_history: Sequence[DialogueContextTurn] = (),
     *,
     model: str,
-) -> tuple[str, str]:
-    """Ask Luna to direct the selected line according to the TTS-2 guide."""
+) -> tuple[TTSLinePlan, str]:
+    """Ask Luna to choose the speaker and direct the line under a strict Pydantic schema."""
     prompt = build_tts2_prompt(line, context, dialogue_history)
     errors: list[str] = []
     for _attempt in range(3):
@@ -1299,11 +1459,11 @@ async def create_tts_line_plan(
             retry_note = (
                 "\nThe previous result failed validation: "
                 + errors[-1]
-                + " Return only a corrected TTS-directed rewrite that removes placeholder "
-                "tokens and asterisk directions as instructed."
+                + " Return a corrected structured speaker result whose directed_dialogue removes "
+                "source-only wrappers, placeholder tokens, and asterisk directions as instructed."
             )
         try:
-            response = await client.responses.create(
+            response = await client.responses.parse(
                 model=model,
                 reasoning={"effort": "medium"},
                 tools=[],
@@ -1314,29 +1474,58 @@ async def create_tts_line_plan(
                         "role": "developer",
                         "content": (
                             "You direct expressive game dialogue for Inworld TTS-2. "
-                            "Obey the placeholder and stage-direction rewriting rules exactly. "
-                            "Output only the rewritten dialogue with appropriate instruction tags."
+                            "Choose the intended narrator or character speaker, then obey the "
+                            "placeholder and stage-direction rewriting rules exactly. Return only "
+                            "the supplied Structured Output."
                         ),
                     },
                     {"role": "user", "content": prompt + retry_note},
                 ],
+                text_format=TTSLinePlan,
             )
-            directed_text = response.output_text.strip()
-            if not directed_text:
-                raise RuntimeError("Luna returned no TTS-2 direction")
-            if len(directed_text) > 2000:
-                raise ValueError(
-                    f"directed text is {len(directed_text)} characters; Inworld accepts at most 2000"
-                )
-            validate_directed_text(line.text, directed_text, dialogue_history)
-            return directed_text, prompt
-        except (ValueError, RuntimeError) as error:
+            plan = response.output_parsed
+            if plan is None:
+                raise RuntimeError("Luna returned no parsed TTS-2 line plan")
+            result = plan.result
+            validate_directed_text(
+                line.text,
+                result.directed_dialogue,
+                dialogue_history,
+                speaker=result.speaker,
+            )
+            return plan, prompt
+        except (ValidationError, ValueError, RuntimeError) as error:
             errors.append(str(error)[:500])
-    raise RuntimeError("Luna could not rewrite and direct the selected line: " + errors[-1])
+    raise RuntimeError("Luna could not route and direct the selected line: " + errors[-1])
 
 
 def _inworld_authorization(api_key: str) -> str:
     return api_key if api_key.casefold().startswith("basic ") else f"Basic {api_key}"
+
+
+async def _inworld_get(
+    client: httpx.AsyncClient,
+    url: str,
+    api_key: str,
+    *,
+    params: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    response = await client.get(
+        url,
+        headers={"Authorization": _inworld_authorization(api_key)},
+        params=params,
+    )
+    try:
+        response.raise_for_status()
+    except httpx.HTTPStatusError as error:
+        body = response.text[:1000]
+        raise RuntimeError(
+            f"Inworld request failed with HTTP {response.status_code}: {body}"
+        ) from error
+    data = response.json()
+    if not isinstance(data, dict):
+        raise RuntimeError("Inworld returned a non-object JSON response")
+    return data
 
 
 async def _inworld_post(
@@ -1369,7 +1558,10 @@ async def _inworld_post(
 async def design_inworld_voice(
     client: httpx.AsyncClient,
     api_key: str,
-    plan: VoiceDesignPlan,
+    *,
+    language_code: str,
+    design_prompt: str,
+    preview_text: str,
 ) -> InworldDesignResponse:
     """Generate one draft voice preview."""
     data = await _inworld_post(
@@ -1377,9 +1569,9 @@ async def design_inworld_voice(
         INWORLD_DESIGN_URL,
         api_key,
         {
-            "languageCode": plan.language_code,
-            "designPrompt": plan.profile.render(),
-            "previewText": plan.preview_text,
+            "languageCode": language_code,
+            "designPrompt": design_prompt,
+            "previewText": preview_text,
             "voiceDesignConfig": {"numberOfSamples": 1},
         },
     )
@@ -1390,8 +1582,10 @@ async def publish_inworld_voice(
     client: httpx.AsyncClient,
     api_key: str,
     preview: InworldPreviewVoice,
-    plan: VoiceDesignPlan,
-    character: str,
+    *,
+    display_name: str,
+    description: str,
+    tags: Sequence[str],
 ) -> InworldPublishedVoice:
     """Publish the selected draft so it can synthesize TTS."""
     voice_url = (
@@ -1402,12 +1596,158 @@ async def publish_inworld_voice(
         voice_url,
         api_key,
         {
-            "displayName": character,
-            "description": plan.profile.render(),
-            "tags": ["bgvoice"],
+            "displayName": display_name,
+            "description": description,
+            "tags": list(tags),
         },
     )
     return InworldPublishedVoice.model_validate(data)
+
+
+async def list_inworld_workspace_voices(
+    client: httpx.AsyncClient,
+    api_key: str,
+) -> list[InworldPublishedVoice]:
+    """List every workspace-owned designed/cloned voice through the current Voices API."""
+    voices: list[InworldPublishedVoice] = []
+    page_token = ""
+    while True:
+        params: dict[str, Any] = {
+            "filter": 'source = "IVC"',
+            "orderBy": "display_name asc",
+            "pageSize": 2000,
+        }
+        if page_token:
+            params["pageToken"] = page_token
+        data = await _inworld_get(
+            client,
+            INWORLD_VOICES_URL,
+            api_key,
+            params=params,
+        )
+        page = InworldVoiceListResponse.model_validate(data)
+        voices.extend(page.voices)
+        page_token = page.next_page_token
+        if not page_token:
+            return voices
+
+
+def select_named_inworld_voice(
+    voices: Sequence[InworldPublishedVoice],
+    display_name: str,
+    *,
+    preferred_description: str | None = None,
+) -> InworldPublishedVoice | None:
+    """Choose one deterministic workspace voice with the exact display name."""
+    matches = [
+        voice for voice in voices if voice.display_name.casefold() == display_name.casefold()
+    ]
+    if not matches:
+        return None
+    return min(
+        matches,
+        key=lambda voice: (
+            preferred_description is not None and voice.description != preferred_description,
+            voice.voice_id.casefold(),
+            voice.voice_id,
+        ),
+    )
+
+
+def synthesis_language_for_voice(voice: InworldPublishedVoice) -> str:
+    """Convert Inworld's response locale into the BCP-47 form used for synthesis."""
+    raw = (voice.language_code or "en-US").replace("_", "-")
+    if raw.casefold() == "auto":
+        return "en-US"
+    language, separator, region = raw.partition("-")
+    if not separator:
+        return language.casefold()
+    return f"{language.casefold()}-{region.upper()}"
+
+
+async def resolve_character_voice(
+    openai_client: AsyncOpenAI,
+    inworld_client: httpx.AsyncClient,
+    inworld_api_key: str,
+    context: CharacterContext,
+    *,
+    sol_model: str,
+    recreate: bool,
+) -> tuple[CharacterVoiceResolution, VoiceDesignPlan | None, str | None, bytes | None]:
+    """Reuse a named character voice unless explicit regeneration was requested."""
+    existing = select_named_inworld_voice(
+        await list_inworld_workspace_voices(inworld_client, inworld_api_key),
+        context.display_name,
+    )
+    if existing is not None and not recreate:
+        return CharacterVoiceResolution(status="reused", voice=existing), None, None, None
+
+    voice_plan, sol_prompt = await create_voice_design_plan(
+        openai_client,
+        context,
+        model=sol_model,
+    )
+    design = await design_inworld_voice(
+        inworld_client,
+        inworld_api_key,
+        language_code=voice_plan.language_code,
+        design_prompt=voice_plan.profile.render(),
+        preview_text=voice_plan.preview_text,
+    )
+    preview = design.preview_voices[0]
+    preview_audio = decode_audio(preview.preview_audio)
+    published = await publish_inworld_voice(
+        inworld_client,
+        inworld_api_key,
+        preview,
+        display_name=context.display_name,
+        description=voice_plan.profile.render(),
+        tags=["bgvoice"],
+    )
+    status: Literal["created", "recreated"] = "recreated" if existing is not None else "created"
+    return (
+        CharacterVoiceResolution(
+            status=status,
+            voice=published,
+            replaced_voice_id=None if existing is None else existing.voice_id,
+        ),
+        voice_plan,
+        sol_prompt,
+        preview_audio,
+    )
+
+
+async def ensure_narrator_voice(
+    client: httpx.AsyncClient,
+    api_key: str,
+) -> tuple[NarratorVoiceResolution, bytes | None]:
+    """Reuse the deterministic Narrator voice, or design and publish it once."""
+    existing = select_named_inworld_voice(
+        await list_inworld_workspace_voices(client, api_key),
+        NARRATOR_DISPLAY_NAME,
+        preferred_description=NARRATOR_VOICE_DESCRIPTION,
+    )
+    if existing is not None:
+        return NarratorVoiceResolution(status="reused", voice=existing), None
+
+    design = await design_inworld_voice(
+        client,
+        api_key,
+        language_code=NARRATOR_LANGUAGE_CODE,
+        design_prompt=NARRATOR_VOICE_DESCRIPTION,
+        preview_text=NARRATOR_PREVIEW_TEXT,
+    )
+    preview = design.preview_voices[0]
+    preview_audio = decode_audio(preview.preview_audio)
+    published = await publish_inworld_voice(
+        client,
+        api_key,
+        preview,
+        display_name=NARRATOR_DISPLAY_NAME,
+        description=NARRATOR_VOICE_DESCRIPTION,
+        tags=NARRATOR_TAGS,
+    )
+    return NarratorVoiceResolution(status="created", voice=published), preview_audio
 
 
 async def synthesize_inworld_line(
@@ -1483,7 +1823,7 @@ async def run_pipeline(args: argparse.Namespace) -> Path:
         minimum_characters=args.min_line_characters,
         maximum_characters=args.max_line_characters,
     )
-    selected_line = choose_dialogue_line(candidates, args.seed)
+    selected_line = choose_dialogue_line(candidates, args.seed, args.dialogue_id)
     dialogue_history = await load_dialogue_history(database_path, selected_line)
 
     started = datetime.now(UTC)
@@ -1502,47 +1842,73 @@ async def run_pipeline(args: argparse.Namespace) -> Path:
         AsyncOpenAI(api_key=openai_key, timeout=args.timeout_seconds) as openai_client,
         httpx.AsyncClient(timeout=timeout) as inworld_client,
     ):
-        voice_plan, sol_prompt = await create_voice_design_plan(
+        (
+            character_voice_resolution,
+            voice_plan,
+            sol_prompt,
+            preview_audio,
+        ) = await resolve_character_voice(
             openai_client,
-            context,
-            model=args.sol_model,
-        )
-        design = await design_inworld_voice(inworld_client, inworld_key, voice_plan)
-        preview = design.preview_voices[0]
-        preview_audio = decode_audio(preview.preview_audio)
-        preview_path = output_dir / f"voice-preview{audio_suffix(preview_audio)}"
-        await write_bytes(preview_path, preview_audio)
-
-        published = await publish_inworld_voice(
             inworld_client,
             inworld_key,
-            preview,
-            voice_plan,
-            context.display_name,
+            context,
+            sol_model=args.sol_model,
+            recreate=args.recreate_voice,
         )
-        directed_text, luna_prompt = await create_tts_line_plan(
+        character_voice = character_voice_resolution.voice
+        tts_line_plan, luna_prompt = await create_tts_line_plan(
             openai_client,
             selected_line,
             context,
             dialogue_history,
             model=args.luna_model,
         )
+        directed_text = tts_line_plan.result.directed_dialogue
+        narrator_resolution: NarratorVoiceResolution | None = None
+        narrator_preview_audio: bytes | None = None
+        synthesis_voice = character_voice
+        synthesis_language_code = (
+            voice_plan.language_code
+            if voice_plan is not None
+            else synthesis_language_for_voice(character_voice)
+        )
+        if tts_line_plan.result.speaker == "narrator":
+            narrator_resolution, narrator_preview_audio = await ensure_narrator_voice(
+                inworld_client,
+                inworld_key,
+            )
+            synthesis_voice = narrator_resolution.voice
+            synthesis_language_code = NARRATOR_LANGUAGE_CODE
         synthesis = await synthesize_inworld_line(
             inworld_client,
             inworld_key,
-            published.voice_id,
+            synthesis_voice.voice_id,
             directed_text,
-            voice_plan.language_code,
+            synthesis_language_code,
         )
 
     final_audio = decode_audio(synthesis.audio_content)
     if not (final_audio.startswith(b"RIFF") and final_audio[8:12] == b"WAVE"):
         raise RuntimeError("Inworld LINEAR16 synthesis did not return a WAV container")
     final_path = output_dir / "dialogue.wav"
-    profile_path = output_dir / "voice-profile.txt"
-    sol_prompt_path = output_dir / "sol-voice-design-prompt.txt"
+    rendered_voice_profile = (
+        voice_plan.profile.render() if voice_plan is not None else character_voice.description
+    )
+    preview_path = (
+        output_dir / f"voice-preview{audio_suffix(preview_audio)}"
+        if preview_audio is not None
+        else None
+    )
+    profile_path = output_dir / "voice-profile.txt" if rendered_voice_profile else None
+    sol_prompt_path = output_dir / "sol-voice-design-prompt.txt" if sol_prompt is not None else None
     luna_prompt_path = output_dir / "luna-tts2-prompt.txt"
     directed_path = output_dir / "directed-dialogue.txt"
+    tts_line_plan_path = output_dir / "luna-tts2-plan.json"
+    narrator_preview_path = (
+        output_dir / f"narrator-voice-preview{audio_suffix(narrator_preview_audio)}"
+        if narrator_preview_audio is not None
+        else None
+    )
     portrait_path = (
         output_dir / "character-portrait.png"
         if context.representative.portrait is not None
@@ -1553,39 +1919,69 @@ async def run_pipeline(args: argparse.Namespace) -> Path:
         "created_at": started.isoformat(),
         "character": context.model_dump(mode="json"),
         "models": {
-            "voice_design": {"id": args.sol_model, "reasoning_effort": "medium"},
+            "voice_design": {
+                "id": args.sol_model,
+                "reasoning_effort": "medium",
+                "used": voice_plan is not None,
+            },
             "tts_direction": {"id": args.luna_model, "reasoning_effort": "medium"},
             "synthesis": INWORLD_TTS_MODEL,
         },
-        "voice_design": voice_plan.model_dump(mode="json"),
-        "rendered_voice_profile": voice_plan.profile.render(),
-        "inworld_voice": published.model_dump(mode="json"),
+        "voice_design": None if voice_plan is None else voice_plan.model_dump(mode="json"),
+        "rendered_voice_profile": rendered_voice_profile,
+        "inworld_voice": synthesis_voice.model_dump(mode="json"),
+        "inworld_character_voice": character_voice.model_dump(mode="json"),
+        "character_voice_resolution": character_voice_resolution.model_dump(mode="json"),
+        "narrator_voice": (
+            None if narrator_resolution is None else narrator_resolution.model_dump(mode="json")
+        ),
+        "narrator_voice_profile": NARRATOR_VOICE_DESCRIPTION,
         "selected_dialogue": selected_line.model_dump(mode="json"),
+        "selected_dialogue_is_narrator_like": is_narrator_like_source(selected_line.text),
         "dialogue_context": [turn.model_dump(mode="json") for turn in dialogue_history],
+        "tts_line_plan": tts_line_plan.model_dump(mode="json"),
         "tts_direction": directed_text,
         "inworld_usage": synthesis.usage,
         "artifacts": {
-            "voice_preview": preview_path.name,
+            "voice_preview": None if preview_path is None else preview_path.name,
             "final_audio": final_path.name,
-            "voice_profile": profile_path.name,
-            "sol_prompt": sol_prompt_path.name,
+            "voice_profile": None if profile_path is None else profile_path.name,
+            "sol_prompt": None if sol_prompt_path is None else sol_prompt_path.name,
             "luna_prompt": luna_prompt_path.name,
+            "luna_plan": tts_line_plan_path.name,
             "directed_dialogue": directed_path.name,
             "character_portrait": None if portrait_path is None else portrait_path.name,
+            "narrator_voice_preview": (
+                None if narrator_preview_path is None else narrator_preview_path.name
+            ),
         },
     }
     writes = [
         write_bytes(final_path, final_audio),
-        write_text(profile_path, voice_plan.profile.render() + "\n"),
-        write_text(sol_prompt_path, sol_prompt),
         write_text(luna_prompt_path, luna_prompt),
+        write_text(
+            tts_line_plan_path,
+            json.dumps(tts_line_plan.model_dump(mode="json"), indent=2, ensure_ascii=False) + "\n",
+        ),
         write_text(directed_path, directed_text + "\n"),
         write_text(manifest_path, json.dumps(manifest, indent=2, ensure_ascii=False) + "\n"),
     ]
+    if preview_path is not None:
+        assert preview_audio is not None
+        writes.append(write_bytes(preview_path, preview_audio))
+    if profile_path is not None:
+        assert rendered_voice_profile is not None
+        writes.append(write_text(profile_path, rendered_voice_profile + "\n"))
+    if sol_prompt_path is not None:
+        assert sol_prompt is not None
+        writes.append(write_text(sol_prompt_path, sol_prompt))
     if portrait_path is not None:
         portrait = context.representative.portrait
         assert portrait is not None
         writes.append(write_bytes(portrait_path, portrait.png))
+    if narrator_preview_path is not None:
+        assert narrator_preview_audio is not None
+        writes.append(write_bytes(narrator_preview_path, narrator_preview_audio))
     await asyncio.gather(*writes)
     return manifest_path
 
@@ -1599,10 +1995,22 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--database", default="data/bgvoice.lancedb")
     parser.add_argument("--output-dir")
     parser.add_argument("--seed", type=int)
+    parser.add_argument(
+        "--dialogue-id",
+        help="select one exact eligible dialogue line ID instead of choosing randomly",
+    )
     parser.add_argument("--min-line-characters", type=int, default=360)
     parser.add_argument("--max-line-characters", type=int, default=720)
     parser.add_argument("--sol-model", default="gpt-5.6-sol")
     parser.add_argument("--luna-model", default="gpt-5.6-luna")
+    parser.add_argument(
+        "--recreate-voice",
+        action="store_true",
+        help=(
+            "regenerate the named character voice; Inworld replaces the existing same-name "
+            "published voice instead of leaving a copy"
+        ),
+    )
     parser.add_argument("--timeout-seconds", type=float, default=180.0)
     args = parser.parse_args()
     if args.min_line_characters < 1:
