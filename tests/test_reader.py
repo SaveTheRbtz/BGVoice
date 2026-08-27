@@ -7,6 +7,7 @@ import pytest
 
 from bgvoice.character_models import CharacterExtraction
 from bgvoice.database import PipelineDatabase
+from bgvoice.generation_store import GenerationStore
 from bgvoice.model_types import (
     AttributionStatus,
     DetailStatus,
@@ -15,6 +16,7 @@ from bgvoice.model_types import (
     RunKind,
     RunStatus,
     SourceKind,
+    Speaker,
 )
 from bgvoice.reader import PipelineReader
 from bgvoice.reader_models import (
@@ -29,7 +31,14 @@ from bgvoice.reader_models import (
     TransitionQuery,
     VoiceQuery,
 )
-from bgvoice.storage_records import CharacterAttributionRecord
+from bgvoice.storage_records import (
+    CharacterAttributionRecord,
+    DirectedLineRecord,
+    GeneratedAudioRecord,
+    GeneratedVoiceRecord,
+    TtsBatchRecord,
+    VoiceDescription,
+)
 from tests.factories import make_dump, make_resource
 
 
@@ -204,6 +213,110 @@ async def test_dialogue_line_voice_sound_and_transition_queries(
         7,
     )
     assert [row.id for row in terminal.items] == ["AERIE.DLG:0:1", "UNUSED.DLG:0:1"]
+
+
+@pytest.mark.anyio
+async def test_generation_progress_enriches_and_filters_source_resources(
+    scenario_database: Path,
+) -> None:
+    line_id = "AERIE.DLG:npc:0:-"
+    direction = DirectedLineRecord(
+        id=DirectedLineRecord.id_for("aerie", line_id),
+        voice_id="aerie",
+        dialogue_line_id=line_id,
+        speaker=Speaker.CHARACTER,
+        text="[warmly] Hello.",
+        created_at="2026-08-27T10:01:00+00:00",
+    )
+    store = await GenerationStore.open(scenario_database)
+    try:
+        await store.upsert_generated_voices(
+            [
+                GeneratedVoiceRecord(
+                    voice_id="aerie",
+                    inworld_voice_id="voice-aerie",
+                    description=VoiceDescription(
+                        text="A gentle young adventurer with a warm, earnest delivery.",
+                        language_code="en-GB",
+                    ),
+                    created_at="2026-08-27T10:00:00+00:00",
+                ),
+                GeneratedVoiceRecord(
+                    voice_id="narrator",
+                    inworld_voice_id="voice-narrator",
+                    description=VoiceDescription(
+                        text="A restrained storyteller with a clear and neutral delivery.",
+                        language_code="en-GB",
+                    ),
+                    created_at="2026-08-27T10:00:00+00:00",
+                ),
+            ]
+        )
+        await store.upsert_directed_lines([direction])
+        await store.upsert_generated_audio(
+            [
+                GeneratedAudioRecord(
+                    id=direction.id,
+                    voice_id=direction.voice_id,
+                    dialogue_line_id=line_id,
+                    inworld_voice_id="voice-aerie",
+                    batch_operation_name="operations/complete",
+                    audio=b"OggSgenerated audio",
+                    created_at="2026-08-27T10:02:00+00:00",
+                )
+            ]
+        )
+        await store.upsert_batches(
+            [
+                TtsBatchRecord(
+                    operation_name="operations/running",
+                    status=RunStatus.RUNNING,
+                    started_at="2026-08-27T10:02:00+00:00",
+                ),
+                TtsBatchRecord(
+                    operation_name="operations/failed",
+                    status=RunStatus.FAILED,
+                    started_at="2026-08-27T10:02:00+00:00",
+                    completed_at="2026-08-27T10:03:00+00:00",
+                    error="provider rejected the batch",
+                ),
+            ]
+        )
+    finally:
+        store.close()
+
+    reader = await PipelineReader.open(scenario_database)
+    try:
+        voice = (await reader.voices(VoiceQuery(page_size=10))).items[0]
+        dialogue = (await reader.dialogues(DialogueQuery(q="AERIE", page_size=10))).items[0]
+        all_voice_lines = await reader.lines(LineQuery(voice_id="aerie", page_size=10))
+        directed = await reader.lines(LineQuery(voice_id="aerie", directed=True, page_size=10))
+        pending = await reader.lines(LineQuery(voice_id="aerie", voiced=False, page_size=10))
+        by_dialogue = await reader.lines(
+            LineQuery(
+                dialogue_resource_name="AERIE.DLG",
+                line_kind=DialogueLineKind.NPC,
+                voiced=True,
+                page_size=10,
+            )
+        )
+        stats = await reader.stats()
+    finally:
+        reader.close()
+
+    assert voice.generated_voice is not None
+    assert voice.generated_voice.inworld_voice_id == "voice-aerie"
+    assert (voice.directed_line_count, voice.generated_audio_count) == (1, 1)
+    assert (dialogue.directed_line_count, dialogue.generated_audio_count) == (1, 1)
+    assert (all_voice_lines.total, directed.total, pending.total, by_dialogue.total) == (2, 1, 1, 1)
+    assert directed.items[0].directions[0].audio_id == direction.id
+    assert (
+        stats.generated_voices,
+        stats.directed_lines,
+        stats.generated_audios,
+        stats.running_tts_batches,
+        stats.failed_tts_batches,
+    ) == (1, 1, 1, 1, 1)
 
 
 @pytest.mark.anyio

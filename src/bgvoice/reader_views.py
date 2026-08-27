@@ -18,6 +18,8 @@ from bgvoice.reader_models import (
     CharacterRow,
     DialogueLineRow,
     DialogueRow,
+    DirectedLineRow,
+    GeneratedVoiceRow,
     TransitionRow,
     VoiceRow,
 )
@@ -218,7 +220,12 @@ def _dialogue_totals(dialogues: Sequence[DialogueRecord]) -> Counter[str]:
     return totals
 
 
-def dialogue_row(record: DialogueRecord, character_count: int) -> DialogueRow:
+def dialogue_row(
+    record: DialogueRecord,
+    character_count: int,
+    directed_line_count: int = 0,
+    generated_audio_count: int = 0,
+) -> DialogueRow:
     detail = record.detail
     return DialogueRow(
         resource_name=record.resource_name,
@@ -233,6 +240,8 @@ def dialogue_row(record: DialogueRecord, character_count: int) -> DialogueRow:
         player_line_count=None if detail is None else detail.player_line_count,
         journal_line_count=None if detail is None else detail.journal_line_count,
         character_count=character_count,
+        directed_line_count=directed_line_count,
+        generated_audio_count=generated_audio_count,
         updated_at=record.extraction.updated_at,
     )
 
@@ -241,6 +250,7 @@ def dialogue_line_row(
     record: DialogueLineRecord,
     dialogue: DialogueRecord,
     character_count: int,
+    directions: list[DirectedLineRow] | None = None,
 ) -> DialogueLineRow:
     return DialogueLineRow(
         id=record.id,
@@ -257,6 +267,7 @@ def dialogue_line_row(
         tokens=record.tokens,
         serialized_size=record.serialized_size,
         character_count=character_count,
+        directions=directions or [],
     )
 
 
@@ -287,6 +298,9 @@ def transition_row(
 def voice_row(
     record: VoiceResourceRecord,
     dialogues: Mapping[str, DialogueRecord],
+    generated_voice: GeneratedVoiceRow | None = None,
+    directed_line_count: int = 0,
+    generated_audio_count: int = 0,
 ) -> VoiceRow:
     voice = VoiceResource(
         id=VoiceId(record.voice_id),
@@ -312,4 +326,7 @@ def voice_row(
             row.detail.npc_line_count for row in ordered_dialogues if row.detail is not None
         ),
         serialized_size=len(voice.model_dump_json().encode("utf-8")),
+        generated_voice=generated_voice,
+        directed_line_count=directed_line_count,
+        generated_audio_count=generated_audio_count,
     )

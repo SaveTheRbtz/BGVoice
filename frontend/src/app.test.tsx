@@ -13,6 +13,7 @@ import {
   DialogueLineSchema,
   type Installation,
   InstallationSchema,
+  Speaker,
   type Voice,
   VoiceSchema,
 } from "./gen/bgvoice/v1/pipeline_pb";
@@ -57,6 +58,13 @@ const voice = create(VoiceSchema, {
     { name: "installations/bg2ee-eet/dialogues/imoen2j-dlg-789f493a", engineResourceName: "IMOEN2J.DLG", npcLineCount: 5758n },
   ],
   npcLineCount: 6108n,
+  directedLineCount: 100n,
+  generatedAudioCount: 92n,
+  generatedVoice: {
+    description: "Youthful, warm and quick-witted, with a mischievous Amnian lilt.",
+    languageCode: "en-GB",
+    inworldVoiceId: "voice-imoen",
+  },
 });
 
 const character = create(CharacterSchema, {
@@ -73,6 +81,14 @@ const line = create(DialogueLineSchema, {
   text: "Heya! It's me, Imoen!",
   tokens: ["PLAYER2", "CHARNAME", "DAY", "PLAYER1", "CHARNAME", "PLAYER2", "CHARNAME", "PLAYER1"],
   stateTriggerIndex: 23,
+  directions: [{
+    id: "direction-imoen-line-1",
+    voice: voice.name,
+    voiceDisplayName: "Imoen",
+    speaker: Speaker.CHARACTER,
+    text: "[brightly] Heya! It's me, Imoen!",
+    audioUrl: "/v1/installations/bg2ee-eet/generatedAudio/audio-1:download",
+  }],
 });
 
 beforeEach(() => {
@@ -98,6 +114,10 @@ describe("application jobs", () => {
     expect(await screen.findByRole("heading", { name: "Imoen", level: 2 })).toBeTruthy();
     expect(api.getVoice).toHaveBeenCalledWith(voice.name, expect.any(AbortSignal));
     expect(screen.getByText(voice.prompt)).toBeTruthy();
+    expect(screen.getByText(voice.generatedVoice?.description ?? "")).toBeTruthy();
+    expect(screen.getByText("voice-imoen")).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Needs audio" }).getAttribute("href"))
+      .toContain("voice_id");
     expect(screen.getAllByRole("link", { name: /^IMOEN(?:15)? ×/ }).map((link) => link.textContent))
       .toEqual(["IMOEN × 6,108", "IMOEN15 × 812"]);
     expect(screen.getAllByRole("link", { name: /^IMOEN(?:2J|B) ×/ }).map((link) => link.textContent))
@@ -124,6 +144,10 @@ describe("application jobs", () => {
     expect(context?.textContent).toBe(
       "CHARNAME×3PLAYER1×2PLAYER2×2DAYState trigger 23 · unresolved",
     );
+    expect(screen.getByText("[brightly] Heya! It's me, Imoen!")).toBeTruthy();
+    const audio = screen.getByLabelText("Audio sample for Imoen");
+    expect(audio.getAttribute("preload")).toBe("none");
+    expect(audio.getAttribute("src")).toBe(line.directions[0]?.audioUrl);
     expect(api.listDialogueLines).toHaveBeenCalledWith(
       expect.objectContaining({ filter: "", orderBy: "", pageSize: 25 }),
       expect.any(AbortSignal),

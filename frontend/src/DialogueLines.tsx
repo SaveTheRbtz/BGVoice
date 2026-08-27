@@ -9,13 +9,14 @@ import {
   SearchBox,
   SelectFilter,
   SortHeader,
+  TextFilter,
 } from "./browser";
 import { filterValue } from "./filters";
 import { formatCount } from "./format";
-import type { DialogueLine } from "./gen/bgvoice/v1/pipeline_pb";
+import { Speaker, type DialogueLine, type DirectedLine } from "./gen/bgvoice/v1/pipeline_pb";
 import { lineKindLabel, sourceKindLabel } from "./pipeline-labels";
 import { ResourceTitle } from "./resource-ui";
-import { dialoguePath, resourceId } from "./routes";
+import { dialoguePath, followLink, resourceId, voicePath } from "./routes";
 import { useBrowser } from "./use-browser";
 
 const SOURCE_FILTERS = ["override", "bif", "dlc"] as const;
@@ -31,7 +32,7 @@ export function DialogueLineBrowser() {
       <BrowserHeading
         eyebrow="VOICE WORKLOAD"
         title="Dialogue lines"
-        description="Resolved NPC, player, and journal text with stable state-machine coordinates."
+        description="Compare source text with its directed performance and generated audio."
         loading={loading}
         count={Number(result.totalSize)}
         noun="lines"
@@ -111,6 +112,26 @@ function LineFilters({ browser }: {
         labels={{ true: "Attributed", false: "Unattributed" }}
         onChange={(next) => browser.updateFilter("attributed", next === "" ? "" : next === "true")}
       />
+      <TextFilter
+        label="Voice ID"
+        value={filterValue(filter, "voice_id")}
+        placeholder="imoen"
+        onChange={(next) => browser.updateFilter("voice_id", next)}
+      />
+      <SelectFilter
+        label="Direction"
+        value={filterValue(filter, "directed") as "" | "true" | "false"}
+        values={BOOLEAN_FILTERS}
+        labels={{ true: "Directed", false: "Not directed" }}
+        onChange={(next) => browser.updateFilter("directed", next === "" ? "" : next === "true")}
+      />
+      <SelectFilter
+        label="Audio"
+        value={filterValue(filter, "voiced") as "" | "true" | "false"}
+        values={BOOLEAN_FILTERS}
+        labels={{ true: "Generated", false: "Not generated" }}
+        onChange={(next) => browser.updateFilter("voiced", next === "" ? "" : next === "true")}
+      />
       {filter !== "" && (
         <button className="clear-filters" type="button" onClick={browser.reset}>Clear filters</button>
       )}
@@ -156,6 +177,7 @@ function DialogueLineRow({ line, expanded, onToggle }: {
             {line.text}
           </button>
         )}
+        <LineDirections directions={line.directions} />
       </td>
       <td>
         <ResourceTitle
@@ -178,6 +200,46 @@ function DialogueLineRow({ line, expanded, onToggle }: {
       <td className="numeric">{formatCount(line.characterCount)}</td>
     </tr>
   );
+}
+
+function LineDirections({ directions }: { directions: readonly DirectedLine[] }) {
+  if (directions.length === 0) return null;
+  return (
+    <div className="line-directions" aria-label="Generated performances">
+      {directions.map((direction) => (
+        <article className="line-direction" key={direction.id}>
+          <div className="line-direction-head">
+            <a
+              href={voicePath(direction.voice)}
+              onClick={(event) => followLink(event, voicePath(direction.voice))}
+            >
+              {direction.voiceDisplayName}
+            </a>
+            <span>{speakerLabel(direction.speaker)}</span>
+          </div>
+          <p>{direction.text}</p>
+          {direction.audioUrl == null ? (
+            <small>Audio pending</small>
+          ) : (
+            <audio
+              controls
+              preload="none"
+              src={direction.audioUrl}
+              aria-label={`Audio sample for ${direction.voiceDisplayName}`}
+            >
+              <a href={direction.audioUrl}>Download audio</a>
+            </audio>
+          )}
+        </article>
+      ))}
+    </div>
+  );
+}
+
+function speakerLabel(speaker: Speaker): string {
+  if (speaker === Speaker.NARRATOR) return "Narrator";
+  if (speaker === Speaker.CHARACTER) return "Character";
+  return "Speaker";
 }
 
 function LineContext({ tokens, triggerIndex, triggerText }: {

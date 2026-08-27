@@ -1,12 +1,16 @@
 """Command-line interface for BGVoice."""
 
 import argparse
+import asyncio
 import os
 import sys
 from collections.abc import Sequence
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 from bgvoice.database import PipelineDatabase
+from bgvoice.generation import generate
 from bgvoice.iecli import IeCli
 from bgvoice.model_types import RunStatus
 from bgvoice.pipeline import (
@@ -73,6 +77,26 @@ def build_parser() -> argparse.ArgumentParser:
         "--database", type=Path, default=_DEFAULT_DATABASE, help="LanceDB directory"
     )
 
+    generation = commands.add_parser(
+        "generate",
+        help="design voices, direct dialogue, and generate missing audio",
+    )
+    generation.add_argument(
+        "--voice",
+        action="append",
+        required=True,
+        help="canonical voice ID or display name; repeat for multiple voices",
+    )
+    generation.add_argument(
+        "--lines-per-voice",
+        type=_positive_int,
+        default=100,
+        help="deterministic round-robin line target per voice (default: 100)",
+    )
+    generation.add_argument(
+        "--database", type=Path, default=_DEFAULT_DATABASE, help="LanceDB directory"
+    )
+
     web = commands.add_parser("web", help="serve the read-only pipeline browser")
     web.add_argument("--database", type=Path, default=_DEFAULT_DATABASE, help="LanceDB directory")
     web.add_argument("--host", default="127.0.0.1", help="listen address")
@@ -82,6 +106,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     """Run a BGVoice command."""
+    load_dotenv()
     args = build_parser().parse_args(argv)
     if args.command == "web":
         import uvicorn
@@ -95,6 +120,18 @@ def main(argv: Sequence[str] | None = None) -> int:
             f"pipeline database does not exist: {args.database}"
         )
         summary = PipelineDatabase(args.database).rebuild_attributions()
+        print(summary.model_dump_json(indent=2))
+        return 0
+    if args.command == "generate":
+        summary = asyncio.run(
+            generate(
+                args.database,
+                args.voice,
+                args.lines_per_voice,
+                os.environ["OPENAI_API_KEY"],
+                os.environ["INWORLD_API_KEY"],
+            )
+        )
         print(summary.model_dump_json(indent=2))
         return 0
     return _extract(args)

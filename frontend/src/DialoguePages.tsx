@@ -16,7 +16,7 @@ import {
   SourceBadge,
   StatusPill,
 } from "./resource-ui";
-import { dialoguePath, followLink } from "./routes";
+import { dialogueLinesPath, dialoguePath, followLink } from "./routes";
 import { useResource } from "./use-resource";
 
 const SOURCE_FILTERS = ["override", "bif", "dlc"] as const;
@@ -72,6 +72,17 @@ const DIALOGUE_COLUMNS = [
     orderBy: "character_count",
     numeric: true,
     render: (dialogue) => formatCount(dialogue.characterCount),
+  },
+  {
+    label: "Generation",
+    numeric: true,
+    render: (dialogue) => (
+      <GenerationCoverage
+        directed={Number(dialogue.directedLineCount)}
+        audio={Number(dialogue.generatedAudioCount)}
+        total={toNumber(dialogue.detail?.npcLineCount) ?? 0}
+      />
+    ),
   },
   {
     label: "Object size",
@@ -158,11 +169,48 @@ function DialogueDetail({ dialogue }: { dialogue: Dialogue }) {
         <DialogueOverview dialogue={dialogue} />
         <StateMachine dialogue={dialogue} />
       </div>
+      <DialogueGeneration dialogue={dialogue} />
       <section className="detail-card source-card">
         <h2>Source path</h2>
         <code>{dialogue.source?.path ?? "—"}</code>
       </section>
     </>
+  );
+}
+
+function DialogueGeneration({ dialogue }: { dialogue: Dialogue }) {
+  const common = { dialogue_resource_name: dialogue.engineResourceName, line_kind: "npc" };
+  const allHref = dialogueLinesPath(common);
+  const voicedHref = dialogueLinesPath({ ...common, voiced: true });
+  return (
+    <section className="detail-card generation-detail-card">
+      <div>
+        <h2>Voice generation</h2>
+        <p>Track directed performances and completed audio for this dialogue.</p>
+      </div>
+      <GenerationCoverage
+        directed={Number(dialogue.directedLineCount)}
+        audio={Number(dialogue.generatedAudioCount)}
+        total={toNumber(dialogue.detail?.npcLineCount) ?? 0}
+      />
+      <nav className="generation-links" aria-label="Dialogue voice generation">
+        <a href={allHref} onClick={(event) => followLink(event, allHref)}>Browse NPC lines</a>
+        <a href={voicedHref} onClick={(event) => followLink(event, voicedHref)}>Play generated audio</a>
+      </nav>
+    </section>
+  );
+}
+
+function GenerationCoverage({ directed, audio, total }: {
+  directed: number;
+  audio: number;
+  total: number;
+}) {
+  return (
+    <div className="generation-coverage" aria-label={`${audio} audio, ${directed} directed, ${total} source lines`}>
+      <strong>{formatCount(audio)} audio</strong>
+      <span>{formatCount(directed)} directed / {formatCount(total)} source</span>
+    </div>
   );
 }
 

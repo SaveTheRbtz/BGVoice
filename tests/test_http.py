@@ -3,6 +3,7 @@
 from io import BytesIO
 from pathlib import Path
 
+import lancedb
 import pytest
 from fastapi.testclient import TestClient
 from httpx2 import Response
@@ -16,9 +17,16 @@ from bgvoice.model_types import (
     DlgResource,
     PortraitResource,
     RunKind,
+    Speaker,
     StringReference,
 )
 from bgvoice.pipeline import extract_characters, extract_dialogues, extract_portraits
+from bgvoice.storage_records import (
+    DirectedLineRecord,
+    GeneratedAudioRecord,
+    GeneratedVoiceRecord,
+    VoiceDescription,
+)
 from bgvoice.web import create_app
 from tests.factories import (
     make_dialogue_dump,
@@ -83,6 +91,43 @@ def _connect(client: TestClient, method: str, payload: dict[str, object]) -> Res
     )
 
 
+def _seed_generated_audio(path: Path) -> DirectedLineRecord:
+    line_id = "AERIE.DLG:npc:0:-"
+    direction = DirectedLineRecord(
+        id=DirectedLineRecord.id_for("aerie", line_id),
+        voice_id="aerie",
+        dialogue_line_id=line_id,
+        speaker=Speaker.CHARACTER,
+        text="[warmly] Hello.",
+        created_at="2026-08-27T10:01:00+00:00",
+    )
+    records = {
+        "generated_voices": GeneratedVoiceRecord(
+            voice_id="aerie",
+            inworld_voice_id="voice-aerie",
+            description=VoiceDescription(
+                text="A gentle young adventurer with a warm, earnest delivery.",
+                language_code="en-GB",
+            ),
+            created_at="2026-08-27T10:00:00+00:00",
+        ),
+        "directed_lines": direction,
+        "generated_audio": GeneratedAudioRecord(
+            id=direction.id,
+            voice_id=direction.voice_id,
+            dialogue_line_id=line_id,
+            inworld_voice_id="voice-aerie",
+            batch_operation_name="operations/complete",
+            audio=b"OggSgenerated audio",
+            created_at="2026-08-27T10:02:00+00:00",
+        ),
+    }
+    connection = lancedb.connect(path)
+    for table_name, record in records.items():
+        connection.open_table(table_name).add([record.model_dump()])
+    return direction
+
+
 def test_pipeline_output_is_browsable_over_connect_and_portrait_http(tmp_path: Path) -> None:
     path = tmp_path / "pipeline.lancedb"
     game_root = tmp_path / "game"
@@ -122,6 +167,45 @@ def test_pipeline_output_is_browsable_over_connect_and_portrait_http(tmp_path: P
         assert portrait.status_code == 200
         assert portrait.headers["content-type"] == "image/png"
         assert portrait.content.startswith(b"\x89PNG\r\n\x1a\n")
+
+
+def test_generated_work_is_browsable_filterable_and_playable(
+    scenario_database: Path,
+) -> None:
+    direction = _seed_generated_audio(scenario_database)
+
+    with TestClient(create_app(scenario_database)) as client:
+        installation = _connect(client, "GetInstallation", {"name": _PARENT}).json()
+        voice = _connect(
+            client,
+            "ListVoices",
+            {"parent": _PARENT, "filter": 'search("Aerie")'},
+        ).json()["voices"][0]
+        lines = _connect(
+            client,
+            "ListDialogueLines",
+            {
+                "parent": _PARENT,
+                "filter": 'voice_id = "aerie" AND directed = true AND voiced = true',
+            },
+        ).json()["dialogueLines"]
+        audio_url = lines[0]["directions"][0]["audioUrl"]
+        audio = client.get(audio_url)
+        missing_audio = client.get(f"/v1/{_PARENT}/generatedAudios/missing:download")
+
+    summary = installation["summary"]
+    assert (
+        summary["generatedVoices"],
+        summary["directedLines"],
+        summary["generatedAudios"],
+    ) == ("1", "1", "1")
+    assert voice["generatedVoice"]["inworldVoiceId"] == "voice-aerie"
+    assert (voice["directedLineCount"], voice["generatedAudioCount"]) == ("1", "1")
+    assert lines[0]["directions"][0]["id"] == direction.id
+    assert audio.status_code == 200
+    assert audio.headers["content-type"] == "audio/ogg"
+    assert audio.content == b"OggSgenerated audio"
+    assert missing_audio.status_code == 404
 
 
 @pytest.mark.parametrize(

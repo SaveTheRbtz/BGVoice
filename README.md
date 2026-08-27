@@ -27,8 +27,8 @@ and Python models from the same schema. The remote plugins are pinned in `buf.ge
 generation uses Buf 1.72.0:
 
 ```powershell
-buf lint
-buf generate
+frontend/node_modules/.bin/buf lint
+frontend/node_modules/.bin/buf generate
 ```
 
 Generated files under `frontend/src/gen` and `src/bgvoice/v1` are committed and never edited by
@@ -39,8 +39,10 @@ the generated models own the service boundary shared by the Python backend and T
 
 - `model_types.py` owns shared engine and pipeline primitives; the character, dialogue, metadata,
   and pipeline model modules own their respective validated domain objects.
-- `storage_records.py` and `storage_schema.py` define persistence. `database.py` is the single-writer
-  repository; `record_builders.py` projects extracted data and `attribution.py` groups voices.
+- `storage_records.py` and `storage_schema.py` define persistence. `database.py` writes extracted
+  source data; `record_builders.py` projects it and `attribution.py` groups voices.
+- `generation.py` owns the iterative AI stages, `generation_store.py` persists their final outputs,
+  and `inworld.py` is the small typed boundary for voice design and batch synthesis.
 - `reader.py` coordinates read-only queries using focused query, metadata, view, statistics, and
   response-model modules. It does not depend on the writer repository.
 - `web_service.py` implements the Connect contract; `web_query.py` owns request semantics and
@@ -87,6 +89,22 @@ uv run bgvoice attribute-dialogues
    to its owning character sound. The browser resolves DLG metrics without copying them into the
    voice record.
 
+Configure the two external services by copying `.env.example` to `.env`, then generate only the
+missing outputs for one or more voices:
+
+```powershell
+uv run bgvoice generate --voice Imoen --voice Gorion --lines-per-voice 100
+```
+
+For each voice, dialogue resources are sorted once and their lowest remaining state is selected in
+round-robin order. Direction is submitted in small homogeneous batches with a stable prompt prefix;
+speech is packed into Inworld's asynchronous batch API under its 10,000-character On-Demand limit.
+Inworld returns uncompressed 22.05 kHz WAV; PyAV normalizes it to mono and SoundFile encodes it at
+maximum Vorbis quality. Published provider IDs, final voice descriptions, directed text, game-ready
+Ogg Vorbis bytes, and durable batch operation names are stored immediately. Prompts, preview
+artifacts, manifests, and expiring signed URLs are not persisted. Re-running the command resumes
+missing work.
+
 The effective EET `TOKENTXT.2DA` currently has no rows, so there is nothing useful to persist from
 it. Runtime tokens found in DLG text are retained verbatim instead; the engine and calendar tables
 provide the immediately resolvable static text behind common date macros.
@@ -128,7 +146,8 @@ canonical resource names, direct Get methods for routed details, cursor-based Li
 resource-specific `field = <JSON scalar>` clauses joined by uppercase ` AND `; malformed or
 unknown clauses are invalid arguments. Request-bound cursors remain stable across local server
 restarts, while UI routes remain separate, human-facing links. Voices are the first workspace and link to their characters,
-dialogues, selected biography sounds, and stored PNG portraits. Dialogue resources, lines,
+dialogues, selected biography sounds, stored PNG portraits, generated voice descriptions, and
+playable audio. Dialogue resources, lines,
 transitions, CRE sounds, engine definitions, and extraction runs each have a focused routed view.
 
 Native full-text indexes require no mirror tables or triggers. Search uses the English tokenizer
@@ -152,7 +171,7 @@ uv run ruff check .
 uv run ty check
 uv run pytest
 uv build
-buf lint
+frontend/node_modules/.bin/buf lint
 
 cd frontend
 pnpm typecheck

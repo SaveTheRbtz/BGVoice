@@ -5,7 +5,13 @@ import {
   setExactFilter, setFilterSearch,
 } from "./filters";
 import { formatBytes, formatCount, formatDate, formatHex } from "./format";
-import { characterPath, dialoguePath, routeFromPath, voicePath } from "./routes";
+import {
+  characterPath,
+  dialogueLinesPath,
+  dialoguePath,
+  routeFromPath,
+  voicePath,
+} from "./routes";
 import type { AppRoute } from "./routes";
 
 const ROOT = "installations/bg2ee-eet";
@@ -35,6 +41,12 @@ describe("public URL state", () => {
       [dialoguePath(IMOEN_DIALOGUE), "/dialogues/imoen2j-dlg-789f493a"],
     ] as const;
     for (const [actual, expected] of paths) expect(actual).toBe(expected);
+
+    const lineUrl = new URL(
+      dialogueLinesPath({ voice_id: "imoen", voiced: false }),
+      "http://localhost",
+    );
+    expect(lineUrl.searchParams.get("filter")).toBe('voice_id = "imoen" AND voiced = false');
   });
 
   it("round-trips shareable list state and keeps defaults compact", () => {

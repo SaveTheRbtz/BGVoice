@@ -1,6 +1,7 @@
 """Pydantic and Arrow schemas for persisted pipeline rows."""
 
-from typing import Self
+import hashlib
+from typing import Annotated, Self
 
 import pyarrow as pa
 from lancedb.pydantic import LanceModel
@@ -22,6 +23,7 @@ from bgvoice.model_types import (
     ResourceTargetType,
     RunKind,
     RunStatus,
+    Speaker,
 )
 
 
@@ -230,6 +232,89 @@ class VoiceResourceRecord(_Record):
     def validate_key(self) -> Self:
         expected = self.key_for(self.run_id, self.voice_id)
         assert self.key == expected, f"voice resource key must be {expected!r}"
+        return self
+
+
+class VoiceDescription(BaseModel):
+    """Final provider-ready description of one generated voice."""
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    text: Annotated[
+        str,
+        Field(min_length=30, max_length=2000, pattern=r"^[\x20-\x7E\r\n]+$"),
+    ]
+    language_code: Annotated[str, Field(min_length=2, max_length=35)]
+
+
+class GeneratedVoiceRecord(_Record):
+    """One published Inworld voice keyed by its canonical local voice."""
+
+    voice_id: str = Field(min_length=1)
+    inworld_voice_id: str = Field(min_length=1)
+    description: VoiceDescription
+    created_at: str = Field(min_length=1)
+
+
+class DirectedLineRecord(_Record):
+    """One processed line ready for speech synthesis."""
+
+    id: str = Field(min_length=1, max_length=63)
+    voice_id: str = Field(min_length=1)
+    dialogue_line_id: str = Field(min_length=1)
+    speaker: Speaker = Field(strict=False)
+    text: str = Field(min_length=1, max_length=2000)
+    created_at: str = Field(min_length=1)
+
+    @staticmethod
+    def id_for(voice_id: str, dialogue_line_id: str) -> str:
+        identity = f"{voice_id}\0{dialogue_line_id}".encode()
+        return f"d-{hashlib.blake2s(identity, digest_size=16).hexdigest()}"
+
+    @model_validator(mode="after")
+    def validate_id(self) -> Self:
+        expected = self.id_for(self.voice_id, self.dialogue_line_id)
+        assert self.id == expected, f"directed line id must be {expected!r}"
+        return self
+
+
+class GeneratedAudioRecord(_Record):
+    """One game-ready Ogg Vorbis recording installed later as a .WAV resource."""
+
+    id: str = Field(min_length=1, max_length=63)
+    voice_id: str = Field(min_length=1)
+    dialogue_line_id: str = Field(min_length=1)
+    inworld_voice_id: str = Field(min_length=1)
+    batch_operation_name: str = Field(min_length=1)
+    audio: bytes = Field(min_length=1)
+    created_at: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_id(self) -> Self:
+        expected = DirectedLineRecord.id_for(self.voice_id, self.dialogue_line_id)
+        assert self.id == expected, f"generated audio id must be {expected!r}"
+        assert self.audio.startswith(b"OggS"), "generated audio must be Ogg Vorbis"
+        return self
+
+
+class TtsBatchRecord(_Record):
+    """Durable handle for one asynchronous Inworld synthesis operation."""
+
+    operation_name: str = Field(min_length=1)
+    status: RunStatus = Field(strict=False)
+    started_at: str = Field(min_length=1)
+    completed_at: str | None = None
+    error: str | None = None
+
+    @model_validator(mode="after")
+    def validate_lifecycle(self) -> Self:
+        running = self.status is RunStatus.RUNNING
+        assert running == (self.completed_at is None), (
+            "running TTS batches must be open and terminal batches must be completed"
+        )
+        assert (self.status is RunStatus.FAILED) == (self.error is not None), (
+            "only failed TTS batches carry an error"
+        )
         return self
 
 

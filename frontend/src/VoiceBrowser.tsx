@@ -15,9 +15,11 @@ import type {
   DialogueReference,
   Voice,
 } from "./gen/bgvoice/v1/pipeline_pb";
+import { formatTimestamp } from "./pipeline-labels";
 import {
   characterPath,
   dialoguePath,
+  dialogueLinesPath,
   followLink,
   resourceId,
   voicePath,
@@ -46,7 +48,7 @@ export function VoiceBrowser({ voiceName }: VoiceBrowserProps) {
       <BrowserHeading
         eyebrow="VOICE WORKSPACE"
         title="Voices"
-        description="Review each reusable character voice, its visual identity, and the prompt that will guide generation."
+        description="Review source identity, generated voice design, direction progress, and audio coverage."
         loading={loading}
         count={Number(result.totalSize)}
         noun="voices"
@@ -95,7 +97,7 @@ function VoiceToolbar({ browser }: {
       <SearchBox
         value={browser.search}
         onChange={browser.setSearch}
-        placeholder="Search names, prompts, characters, and dialogues…"
+        placeholder="Search names, source metadata, characters, and dialogues…"
         label="Search voices"
       />
       <RelevanceButton
@@ -171,9 +173,11 @@ function VoiceCard({ voice, selected, search = "" }: {
       <VoiceAvatar voice={voice} size="small" />
       <span className="voice-card-copy">
         <strong>{voice.displayName}</strong>
-        <span className="voice-prompt-preview">{voice.prompt}</span>
+        <span className="voice-prompt-preview">
+          {voice.generatedVoice?.description ?? voice.prompt}
+        </span>
         <span className="voice-card-metrics">
-          {formatCount(Number(voice.npcLineCount))} NPC lines · {formatCount(voice.characters.length)} characters
+          {formatCount(Number(voice.generatedAudioCount))} audio · {formatCount(Number(voice.directedLineCount))} directed · {formatCount(Number(voice.npcLineCount))} source
         </span>
       </span>
     </a>
@@ -228,13 +232,15 @@ function VoiceDetail({ voice, requestedName, error, search = "" }: {
         </div>
       </header>
       <div className="voice-metrics" aria-label="Voice workload">
-        <VoiceMetric label="NPC lines" value={Number(voice.npcLineCount)} primary />
+        <VoiceMetric label="Source lines" value={Number(voice.npcLineCount)} />
+        <VoiceMetric label="Directed" value={Number(voice.directedLineCount)} />
+        <VoiceMetric label="Audio" value={Number(voice.generatedAudioCount)} primary />
         <VoiceMetric label="Characters" value={voice.characters.length} />
-        <VoiceMetric label="Dialogues" value={voice.dialogues.length} />
       </div>
+      <VoiceGeneration voice={voice} />
       <section className="prompt-card">
         <div>
-          <p className="eyebrow">VOICE CREATION PROMPT</p>
+          <p className="eyebrow">SOURCE METADATA</p>
           <span>
             {voice.biography == null
               ? "Derived from current character metadata"
@@ -243,9 +249,58 @@ function VoiceDetail({ voice, requestedName, error, search = "" }: {
         </div>
         <p>{voice.prompt}</p>
       </section>
+      <VoiceLineLinks voice={voice} />
       <ResourceLinks title="Characters" references={voice.characters} kind="character" />
       <ResourceLinks title="Dialogues" references={voice.dialogues} kind="dialogue" />
     </aside>
+  );
+}
+
+function VoiceGeneration({ voice }: { voice: Voice }) {
+  const generated = voice.generatedVoice;
+  return (
+    <section className="generation-card">
+      <div className="generation-card-head">
+        <div>
+          <p className="eyebrow">GENERATED VOICE</p>
+          <h3>{generated == null ? "Not created" : generated.languageCode}</h3>
+        </div>
+        <span className={`status-pill status-${generated == null ? "pending" : "complete"}`}>
+          {generated == null ? "pending" : "ready"}
+        </span>
+      </div>
+      {generated == null ? (
+        <p className="muted">Run voice generation to create the reusable Inworld voice.</p>
+      ) : (
+        <>
+          <p>{generated.description}</p>
+          <dl>
+            <dt>Inworld voice ID</dt>
+            <dd className="mono">{generated.inworldVoiceId}</dd>
+            <dt>Created</dt>
+            <dd>{formatTimestamp(generated.createdAt)}</dd>
+          </dl>
+        </>
+      )}
+    </section>
+  );
+}
+
+function VoiceLineLinks({ voice }: { voice: Voice }) {
+  const voiceId = resourceId(voice.name);
+  const common = { voice_id: voiceId, line_kind: "npc" };
+  const links = [
+    ["All source lines", dialogueLinesPath(common)],
+    ["Directed", dialogueLinesPath({ ...common, directed: true })],
+    ["With audio", dialogueLinesPath({ ...common, voiced: true })],
+    ["Needs audio", dialogueLinesPath({ ...common, directed: true, voiced: false })],
+  ] as const;
+  return (
+    <nav className="generation-links" aria-label={`${voice.displayName} dialogue lines`}>
+      {links.map(([label, href]) => (
+        <a key={label} href={href} onClick={(event) => followLink(event, href)}>{label}</a>
+      ))}
+    </nav>
   );
 }
 

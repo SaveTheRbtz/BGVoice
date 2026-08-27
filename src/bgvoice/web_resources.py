@@ -17,6 +17,7 @@ from bgvoice.model_types import (
     RunKind,
     RunStatus,
     SourceKind,
+    Speaker,
 )
 from bgvoice.reader import PipelineReader
 from bgvoice.reader_metadata import LabelResolver
@@ -25,6 +26,7 @@ from bgvoice.reader_models import (
     ClassRow,
     DialogueLineRow,
     DialogueRow,
+    DirectedLineRow,
     IdentifierRow,
     KitRow,
     RaceRow,
@@ -40,7 +42,7 @@ from bgvoice.storage_records import (
     ExtractionRunRecord,
 )
 from bgvoice.v1 import pipeline_pb2 as pb
-from bgvoice.web_contract import Collection, resource_name
+from bgvoice.web_contract import INSTALLATION_ID, Collection, resource_name
 
 _SOURCE_KIND: Final[dict[SourceKind, pb.SourceKind]] = {
     SourceKind.OVERRIDE: pb.SOURCE_KIND_OVERRIDE,
@@ -70,6 +72,10 @@ _LINE_KIND: Final[dict[DialogueLineKind, pb.DialogueLineKind]] = {
     DialogueLineKind.NPC: pb.DIALOGUE_LINE_KIND_NPC,
     DialogueLineKind.PLAYER: pb.DIALOGUE_LINE_KIND_PLAYER,
     DialogueLineKind.JOURNAL: pb.DIALOGUE_LINE_KIND_JOURNAL,
+}
+_SPEAKER: Final[dict[Speaker, pb.Speaker]] = {
+    Speaker.CHARACTER: pb.SPEAKER_CHARACTER,
+    Speaker.NARRATOR: pb.SPEAKER_NARRATOR,
 }
 _IDENTIFIER_KIND: Final[dict[IdentifierKind, pb.IdentifierKind]] = {
     IdentifierKind.RACE: pb.IDENTIFIER_KIND_RACE,
@@ -158,7 +164,19 @@ def voice(
         prompt=row.prompt,
         npc_line_count=row.npc_line_count,
         serialized_size=row.serialized_size,
+        directed_line_count=row.directed_line_count,
+        generated_audio_count=row.generated_audio_count,
     )
+    if row.generated_voice is not None:
+        generated = row.generated_voice
+        message.generated_voice.CopyFrom(
+            pb.GeneratedVoice(
+                description=generated.description,
+                language_code=generated.language_code,
+                inworld_voice_id=generated.inworld_voice_id,
+                created_at=timestamp(generated.created_at),
+            )
+        )
 
     for name in row.variant_resource_names:
         dialogue_names = attributions[name.casefold()].resolved_dialogue_resource_names
@@ -317,6 +335,8 @@ def dialogue(row: DialogueRow, record: DialogueRecord) -> pb.Dialogue:
         source=source(record.source.kind, record.source.path),
         extraction=extraction(record),
         character_count=row.character_count,
+        directed_line_count=row.directed_line_count,
+        generated_audio_count=row.generated_audio_count,
     )
     if row.serialized_size is not None:
         message.serialized_size = row.serialized_size
@@ -357,6 +377,22 @@ def dialogue_line(row: DialogueLineRow) -> pb.DialogueLine:
         message.transition_index = row.transition_index
     if row.text is not None:
         message.text = row.text
+    message.directions.extend(map(directed_line, row.directions))
+    return message
+
+
+def directed_line(row: DirectedLineRow) -> pb.DirectedLine:
+    message = pb.DirectedLine(
+        id=row.id,
+        voice=resource_name(Collection.VOICES, row.voice_id),
+        voice_display_name=row.voice_display_name,
+        speaker=_SPEAKER[row.speaker],
+        text=row.text,
+    )
+    if row.audio_id is not None:
+        message.audio_url = (
+            f"/v1/installations/{INSTALLATION_ID}/generatedAudios/{row.audio_id}:download"
+        )
     return message
 
 
@@ -634,9 +670,14 @@ async def resolved_dialogue_row(
     record: DialogueRecord,
 ) -> DialogueRow:
     attribution = await reader.attribution_snapshot()
+    generation = await reader.generation_snapshot(attribution)
+    directed, audio = generation.dialogue_counts()
+    key = record.resource_name.casefold()
     return dialogue_row(
         record,
-        attribution.character_count_by_dialogue[record.resource_name.casefold()],
+        attribution.character_count_by_dialogue[key],
+        directed[key],
+        audio[key],
     )
 
 

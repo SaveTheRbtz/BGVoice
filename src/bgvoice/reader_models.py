@@ -11,6 +11,7 @@ from bgvoice.model_types import (
     DialogueLineKind,
     IdentifierKind,
     SourceKind,
+    Speaker,
 )
 
 type CharacterSort = Literal[
@@ -143,6 +144,10 @@ class LineQuery(PageQuery):
     line_kind: DialogueLineKind | None = None
     source_kind: SourceKind | None = None
     attributed: bool | None = None
+    dialogue_resource_name: str | None = Field(default=None, min_length=1, max_length=300)
+    voice_id: str | None = Field(default=None, min_length=1, max_length=300)
+    directed: bool | None = None
+    voiced: bool | None = None
     sort: LineSort | None = None
     direction: SortDirection = "desc"
 
@@ -263,11 +268,22 @@ class DialogueRow(_ReaderModel):
     player_line_count: int | None
     journal_line_count: int | None
     character_count: int
+    directed_line_count: int
+    generated_audio_count: int
     updated_at: str
 
 
 class DialoguePage(ResultPage[DialogueRow, DialogueSort | Literal["relevance"]]):
     pass
+
+
+class DirectedLineRow(_ReaderModel):
+    id: str
+    voice_id: str
+    voice_display_name: str
+    speaker: Speaker
+    text: str
+    audio_id: str | None
 
 
 class DialogueLineRow(_ReaderModel):
@@ -285,10 +301,18 @@ class DialogueLineRow(_ReaderModel):
     tokens: list[str]
     serialized_size: int
     character_count: int
+    directions: list[DirectedLineRow]
 
 
 class DialogueLinePage(ResultPage[DialogueLineRow, LineSort | Literal["relevance"]]):
     pass
+
+
+class GeneratedVoiceRow(_ReaderModel):
+    description: str
+    language_code: str
+    inworld_voice_id: str
+    created_at: str
 
 
 class VoiceRow(_ReaderModel):
@@ -301,6 +325,9 @@ class VoiceRow(_ReaderModel):
     dialogue_count: int
     npc_line_count: int
     serialized_size: int
+    generated_voice: GeneratedVoiceRow | None
+    directed_line_count: int
+    generated_audio_count: int
 
 
 class VoicePage(ResultPage[VoiceRow, VoiceSort | Literal["relevance"]]):
@@ -473,3 +500,8 @@ class PipelineStats(_ReaderModel):
     dialogues_unattributed: int = Field(ge=0)
     attributed_dialogue_lines: int = Field(ge=0)
     unattributed_dialogue_lines: int = Field(ge=0)
+    generated_voices: int = Field(ge=0)
+    directed_lines: int = Field(ge=0)
+    generated_audios: int = Field(ge=0)
+    running_tts_batches: int = Field(ge=0)
+    failed_tts_batches: int = Field(ge=0)

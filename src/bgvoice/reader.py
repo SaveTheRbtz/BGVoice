@@ -20,10 +20,12 @@ from pydantic import Field
 from bgvoice.model_types import (
     AttributionPublicationStatus,
     DetailStatus,
+    DialogueLineKind,
     IdentifierKind,
     RunKind,
     RunStatus,
 )
+from bgvoice.reader_generation import GenerationSnapshot
 from bgvoice.reader_metadata import (
     LabelResolver,
     MetadataSnapshot,
@@ -123,6 +125,10 @@ class _VoiceSearchResult(VoiceResourceRecord):
     score: float = Field(alias="_score")
 
 
+class _LineSearchResult(DialogueLineRecord):
+    score: float = Field(alias="_score")
+
+
 @dataclass(frozen=True, slots=True)
 class PipelineReader:
     """Strongly consistent typed reads over one local LanceDB database."""
@@ -134,6 +140,10 @@ class PipelineReader:
     portrait_images_table: AsyncTable
     character_dialogues_table: AsyncTable
     voices_table: AsyncTable
+    generated_voices_table: AsyncTable
+    directed_lines_table: AsyncTable
+    generated_audio_table: AsyncTable
+    tts_batches_table: AsyncTable
     dialogues_table: AsyncTable
     lines_table: AsyncTable
     transitions_table: AsyncTable
@@ -175,6 +185,10 @@ class PipelineReader:
             tables["portrait_images"],
             tables["character_dialogues"],
             tables["voice_resources"],
+            tables["generated_voices"],
+            tables["directed_lines"],
+            tables["generated_audio"],
+            tables["tts_batches"],
             tables["dialogues"],
             tables["dialogue_lines"],
             tables["dialogue_transitions"],
@@ -254,6 +268,19 @@ class PipelineReader:
         voices = cast(list[VoiceResourceRecord], voice_rows)
         return _published_attribution(run, attributions, voices)
 
+    async def generation_snapshot(
+        self,
+        attribution: AttributionSnapshot | None = None,
+    ) -> GenerationSnapshot:
+        current = attribution or await self.attribution_snapshot()
+        return await GenerationSnapshot.load(
+            self.generated_voices_table,
+            self.directed_lines_table,
+            self.generated_audio_table,
+            self.tts_batches_table,
+            current.voices,
+        )
+
     async def stats(self) -> PipelineStats:
         character_rows, dialogue_rows, metadata = await asyncio.gather(
             self.characters_table.query().to_pydantic(CharacterRecord),
@@ -263,19 +290,22 @@ class PipelineReader:
         characters = cast(list[CharacterRecord], character_rows)
         dialogues = cast(list[DialogueRecord], dialogue_rows)
         attribution = await self.attribution_snapshot()
+        generation = await self.generation_snapshot(attribution)
         return pipeline_stats(
             self.path,
             characters,
             dialogues,
             metadata,
             attribution,
-            await self._stats_table_counts(characters, dialogues),
+            await self._stats_table_counts(characters, dialogues, attribution, generation),
         )
 
     async def _stats_table_counts(
         self,
         characters: list[CharacterRecord],
         dialogues: list[DialogueRecord],
+        attribution: AttributionSnapshot,
+        generation: GenerationSnapshot,
     ) -> StatsTableCounts:
         character_children = child_generation_predicate(
             "character_resource_name",
@@ -306,7 +336,10 @@ class PipelineReader:
             self.happiness_rules_table.count_rows(),
             self.banter_timing_settings_table.count_rows(),
         )
-        return StatsTableCounts(*counts)
+        return StatsTableCounts(
+            *counts,
+            *generation.pipeline_counts(attribution.voices),
+        )
 
     async def characters(self, query: CharacterQuery) -> CharacterPage:
         tokens = search_tokens(query.q)
@@ -382,10 +415,14 @@ class PipelineReader:
             score_of=lambda row: row.score,
         )
         attribution = await self.attribution_snapshot()
+        generation = await self.generation_snapshot(attribution)
+        directed_counts, audio_counts = generation.dialogue_counts()
         rows = [
             dialogue_row(
                 record,
                 attribution.character_count_by_dialogue[record.resource_name.casefold()],
+                directed_counts[record.resource_name.casefold()],
+                audio_counts[record.resource_name.casefold()],
             )
             for record in records
         ]
@@ -414,6 +451,7 @@ class PipelineReader:
             await self.dialogues_table.query().to_pydantic(DialogueRecord),
         )
         attribution = await self.attribution_snapshot()
+        generation = await self.generation_snapshot(attribution)
         dialogues = {row.resource_name.casefold(): row for row in dialogue_rows}
         allowed_dialogues = [
             row for row in dialogues.values() if row.extraction.status is DetailStatus.COMPLETE
@@ -423,6 +461,23 @@ class PipelineReader:
             query.source_kind,
             lambda row, value: row.source.kind is value,
         )
+        if query.dialogue_resource_name is not None:
+            dialogue_name = query.dialogue_resource_name.casefold()
+            allowed_dialogues = [
+                row for row in allowed_dialogues if row.resource_name.casefold() == dialogue_name
+            ]
+        if query.voice_id is not None:
+            voice_id = query.voice_id.casefold()
+            voice = next(
+                (row for row in attribution.voices if row.voice_id.casefold() == voice_id),
+                None,
+            )
+            voice_dialogues = (
+                set() if voice is None else {resref.casefold() for resref in voice.dialogue_resrefs}
+            )
+            allowed_dialogues = [
+                row for row in allowed_dialogues if row.resref.casefold() in voice_dialogues
+            ]
         allowed_dialogues = _filter_value(
             allowed_dialogues,
             query.attributed,
@@ -453,16 +508,50 @@ class PipelineReader:
         conditions = [child_generation]
         if query.line_kind is not None:
             conditions.append(col("line_kind") == lit(query.line_kind))
+        if query.voice_id is not None:
+            conditions.append(col("line_kind") == lit(DialogueLineKind.NPC))
         predicate = combine(conditions)
-        total, records = await records_page(
-            table=self.lines_table,
-            model=DialogueLineRecord,
-            stable_column="id",
-            predicate=predicate,
-            tokens=tokens,
-            ordering=None if sort == "relevance" else ordering(sort, direction, "id"),
-            page=query,
-        )
+        if query.directed is None and query.voiced is None:
+            total, records = await records_page(
+                table=self.lines_table,
+                model=DialogueLineRecord,
+                stable_column="id",
+                predicate=predicate,
+                tokens=tokens,
+                ordering=None if sort == "relevance" else ordering(sort, direction, "id"),
+                page=query,
+            )
+        else:
+            records, scores = await records_all(
+                table=self.lines_table,
+                model=DialogueLineRecord,
+                search_model=_LineSearchResult,
+                tokens=tokens,
+                predicate=predicate,
+                key_of=lambda row: row.id,
+                score_of=lambda row: row.score,
+            )
+            voice_id = None if query.voice_id is None else query.voice_id.casefold()
+
+            def has_direction(record: DialogueLineRecord) -> bool:
+                directions = generation.directions_by_line.get(record.id, ())
+                return any(
+                    voice_id is None or row.voice_id.casefold() == voice_id for row in directions
+                )
+
+            def has_audio(record: DialogueLineRecord) -> bool:
+                voices = generation.audio_voices_by_line.get(record.id, set())
+                return bool(voices) if voice_id is None else voice_id in voices
+
+            records = _filter_value(
+                records, query.directed, lambda row, value: has_direction(row) is value
+            )
+            records = _filter_value(
+                records, query.voiced, lambda row, value: has_audio(row) is value
+            )
+            records = browse_order(records, sort, direction, scores, lambda row: row.id)
+            total = len(records)
+            records = page_items(records, query)
 
         return DialogueLinePage(
             items=[
@@ -472,6 +561,7 @@ class PipelineReader:
                     attribution.character_count_by_dialogue[
                         record.dialogue_resource_name.casefold()
                     ],
+                    generation.line_directions(record.id),
                 )
                 for record in records
             ],
@@ -492,6 +582,7 @@ class PipelineReader:
             await self.dialogues_table.query().to_pydantic(DialogueRecord),
         )
         attribution = await self.attribution_snapshot()
+        generation = await self.generation_snapshot(attribution)
         if attribution.run is None:
             records: list[VoiceResourceRecord] = []
             scores: dict[str, float] = {}
@@ -506,7 +597,18 @@ class PipelineReader:
                 score_of=lambda row: row.score,
             )
         dialogues_by_resref = {row.resref.casefold(): row for row in dialogue_rows}
-        rows = [voice_row(record, dialogues_by_resref) for record in records]
+        rows = []
+        for record in records:
+            directed_count, audio_count = generation.voice_counts(record.voice_id)
+            rows.append(
+                voice_row(
+                    record,
+                    dialogues_by_resref,
+                    generation.generated_voice(record.voice_id),
+                    directed_count,
+                    audio_count,
+                )
+            )
         if query.voice_id is not None:
             rows = [row for row in rows if row.id == query.voice_id]
         rows = browse_order(rows, sort, direction, scores, lambda row: row.id)

@@ -48,6 +48,11 @@ class StatsTableCounts:
     favored_enemies: int
     happiness_rules: int
     banter_timing_settings: int
+    generated_voices: int
+    directed_lines: int
+    generated_audios: int
+    running_tts_batches: int
+    failed_tts_batches: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -134,6 +139,11 @@ def pipeline_stats(
         dialogues_unattributed=dialogue.unattributed,
         attributed_dialogue_lines=dialogue.attributed_lines,
         unattributed_dialogue_lines=dialogue.unattributed_lines,
+        generated_voices=tables.generated_voices,
+        directed_lines=tables.directed_lines,
+        generated_audios=tables.generated_audios,
+        running_tts_batches=tables.running_tts_batches,
+        failed_tts_batches=tables.failed_tts_batches,
     )
 
 

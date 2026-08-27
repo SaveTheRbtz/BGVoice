@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { MouseEvent } from "react";
 
 import { INSTALLATION_NAME } from "./api";
+import { setExactFilter } from "./filters";
 
 export type AppRoute =
   | { name: "voices"; voiceName: string | null }
@@ -74,6 +75,19 @@ export function characterPath(resourceName?: string): string {
 
 export function dialoguePath(resourceName?: string): string {
   return resourcePath("dialogues", resourceName);
+}
+
+export function dialogueLinesPath(
+  filters: Readonly<Record<string, string | boolean>> = {},
+): string {
+  let filter = "";
+  for (const [field, value] of Object.entries(filters)) {
+    filter = setExactFilter(filter, field, value);
+  }
+  const parameters = new URLSearchParams();
+  if (filter !== "") parameters.set("filter", filter);
+  const search = parameters.toString();
+  return search === "" ? "/dialogue-lines" : `/dialogue-lines?${search}`;
 }
 
 export function resourceId(resourceName: string): string {

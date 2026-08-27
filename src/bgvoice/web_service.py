@@ -187,6 +187,11 @@ class PipelineService(pipeline_connect.PipelineService):
                 missing_dialogue_characters=stats.characters_missing_dialogue,
                 unattributed_dialogues=stats.dialogues_unattributed,
                 unattributed_dialogue_lines=stats.unattributed_dialogue_lines,
+                generated_voices=stats.generated_voices,
+                directed_lines=stats.directed_lines,
+                generated_audios=stats.generated_audios,
+                running_tts_batches=stats.running_tts_batches,
+                failed_tts_batches=stats.failed_tts_batches,
             ),
         )
         return message
@@ -460,6 +465,10 @@ class PipelineService(pipeline_connect.PipelineService):
             line_kind=filters.enum("line_kind", DialogueLineKind),
             source_kind=filters.enum("source_kind", SourceKind),
             attributed=filters.boolean("attributed"),
+            dialogue_resource_name=filters.text("dialogue_resource_name"),
+            voice_id=filters.text("voice_id"),
+            directed=filters.boolean("directed"),
+            voiced=filters.boolean("voiced"),
             sort=sort,
             direction=direction,
         )

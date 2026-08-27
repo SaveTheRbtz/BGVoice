@@ -49,6 +49,12 @@ class DialogueLineKind(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     DIALOGUE_LINE_KIND_PLAYER: _ClassVar[DialogueLineKind]
     DIALOGUE_LINE_KIND_JOURNAL: _ClassVar[DialogueLineKind]
 
+class Speaker(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    SPEAKER_UNSPECIFIED: _ClassVar[Speaker]
+    SPEAKER_CHARACTER: _ClassVar[Speaker]
+    SPEAKER_NARRATOR: _ClassVar[Speaker]
+
 class IdentifierKind(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
     IDENTIFIER_KIND_UNSPECIFIED: _ClassVar[IdentifierKind]
@@ -101,6 +107,9 @@ DIALOGUE_LINE_KIND_UNSPECIFIED: DialogueLineKind
 DIALOGUE_LINE_KIND_NPC: DialogueLineKind
 DIALOGUE_LINE_KIND_PLAYER: DialogueLineKind
 DIALOGUE_LINE_KIND_JOURNAL: DialogueLineKind
+SPEAKER_UNSPECIFIED: Speaker
+SPEAKER_CHARACTER: Speaker
+SPEAKER_NARRATOR: Speaker
 IDENTIFIER_KIND_UNSPECIFIED: IdentifierKind
 IDENTIFIER_KIND_RACE: IdentifierKind
 IDENTIFIER_KIND_CLASS: IdentifierKind
@@ -145,7 +154,7 @@ class ExtractionState(_message.Message):
     def __init__(self, status: _Optional[_Union[DetailStatus, str]] = ..., error: _Optional[str] = ..., updated_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., extraction_run: _Optional[str] = ...) -> None: ...
 
 class PipelineSummary(_message.Message):
-    __slots__ = ("voices", "characters", "dialogues", "dialogue_lines", "character_sounds", "dialogue_transitions", "races", "character_classes", "kits", "identifier_definitions", "matched_characters", "partially_matched_characters", "missing_dialogue_characters", "unattributed_dialogues", "unattributed_dialogue_lines")
+    __slots__ = ("voices", "characters", "dialogues", "dialogue_lines", "character_sounds", "dialogue_transitions", "races", "character_classes", "kits", "identifier_definitions", "matched_characters", "partially_matched_characters", "missing_dialogue_characters", "unattributed_dialogues", "unattributed_dialogue_lines", "generated_voices", "directed_lines", "generated_audios", "running_tts_batches", "failed_tts_batches")
     VOICES_FIELD_NUMBER: _ClassVar[int]
     CHARACTERS_FIELD_NUMBER: _ClassVar[int]
     DIALOGUES_FIELD_NUMBER: _ClassVar[int]
@@ -161,6 +170,11 @@ class PipelineSummary(_message.Message):
     MISSING_DIALOGUE_CHARACTERS_FIELD_NUMBER: _ClassVar[int]
     UNATTRIBUTED_DIALOGUES_FIELD_NUMBER: _ClassVar[int]
     UNATTRIBUTED_DIALOGUE_LINES_FIELD_NUMBER: _ClassVar[int]
+    GENERATED_VOICES_FIELD_NUMBER: _ClassVar[int]
+    DIRECTED_LINES_FIELD_NUMBER: _ClassVar[int]
+    GENERATED_AUDIOS_FIELD_NUMBER: _ClassVar[int]
+    RUNNING_TTS_BATCHES_FIELD_NUMBER: _ClassVar[int]
+    FAILED_TTS_BATCHES_FIELD_NUMBER: _ClassVar[int]
     voices: int
     characters: int
     dialogues: int
@@ -176,7 +190,12 @@ class PipelineSummary(_message.Message):
     missing_dialogue_characters: int
     unattributed_dialogues: int
     unattributed_dialogue_lines: int
-    def __init__(self, voices: _Optional[int] = ..., characters: _Optional[int] = ..., dialogues: _Optional[int] = ..., dialogue_lines: _Optional[int] = ..., character_sounds: _Optional[int] = ..., dialogue_transitions: _Optional[int] = ..., races: _Optional[int] = ..., character_classes: _Optional[int] = ..., kits: _Optional[int] = ..., identifier_definitions: _Optional[int] = ..., matched_characters: _Optional[int] = ..., partially_matched_characters: _Optional[int] = ..., missing_dialogue_characters: _Optional[int] = ..., unattributed_dialogues: _Optional[int] = ..., unattributed_dialogue_lines: _Optional[int] = ...) -> None: ...
+    generated_voices: int
+    directed_lines: int
+    generated_audios: int
+    running_tts_batches: int
+    failed_tts_batches: int
+    def __init__(self, voices: _Optional[int] = ..., characters: _Optional[int] = ..., dialogues: _Optional[int] = ..., dialogue_lines: _Optional[int] = ..., character_sounds: _Optional[int] = ..., dialogue_transitions: _Optional[int] = ..., races: _Optional[int] = ..., character_classes: _Optional[int] = ..., kits: _Optional[int] = ..., identifier_definitions: _Optional[int] = ..., matched_characters: _Optional[int] = ..., partially_matched_characters: _Optional[int] = ..., missing_dialogue_characters: _Optional[int] = ..., unattributed_dialogues: _Optional[int] = ..., unattributed_dialogue_lines: _Optional[int] = ..., generated_voices: _Optional[int] = ..., directed_lines: _Optional[int] = ..., generated_audios: _Optional[int] = ..., running_tts_batches: _Optional[int] = ..., failed_tts_batches: _Optional[int] = ...) -> None: ...
 
 class Installation(_message.Message):
     __slots__ = ("name", "display_name", "database_path", "database_size", "attribution_publication", "attribution_completed_at", "summary")
@@ -216,8 +235,36 @@ class DialogueReference(_message.Message):
     npc_line_count: int
     def __init__(self, name: _Optional[str] = ..., engine_resource_name: _Optional[str] = ..., npc_line_count: _Optional[int] = ...) -> None: ...
 
+class GeneratedVoice(_message.Message):
+    __slots__ = ("description", "language_code", "inworld_voice_id", "created_at")
+    DESCRIPTION_FIELD_NUMBER: _ClassVar[int]
+    LANGUAGE_CODE_FIELD_NUMBER: _ClassVar[int]
+    INWORLD_VOICE_ID_FIELD_NUMBER: _ClassVar[int]
+    CREATED_AT_FIELD_NUMBER: _ClassVar[int]
+    description: str
+    language_code: str
+    inworld_voice_id: str
+    created_at: _timestamp_pb2.Timestamp
+    def __init__(self, description: _Optional[str] = ..., language_code: _Optional[str] = ..., inworld_voice_id: _Optional[str] = ..., created_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ...) -> None: ...
+
+class DirectedLine(_message.Message):
+    __slots__ = ("id", "voice", "voice_display_name", "speaker", "text", "audio_url")
+    ID_FIELD_NUMBER: _ClassVar[int]
+    VOICE_FIELD_NUMBER: _ClassVar[int]
+    VOICE_DISPLAY_NAME_FIELD_NUMBER: _ClassVar[int]
+    SPEAKER_FIELD_NUMBER: _ClassVar[int]
+    TEXT_FIELD_NUMBER: _ClassVar[int]
+    AUDIO_URL_FIELD_NUMBER: _ClassVar[int]
+    id: str
+    voice: str
+    voice_display_name: str
+    speaker: Speaker
+    text: str
+    audio_url: str
+    def __init__(self, id: _Optional[str] = ..., voice: _Optional[str] = ..., voice_display_name: _Optional[str] = ..., speaker: _Optional[_Union[Speaker, str]] = ..., text: _Optional[str] = ..., audio_url: _Optional[str] = ...) -> None: ...
+
 class Voice(_message.Message):
-    __slots__ = ("name", "display_name", "prompt", "characters", "dialogues", "portrait", "npc_line_count", "serialized_size", "biography")
+    __slots__ = ("name", "display_name", "prompt", "characters", "dialogues", "portrait", "npc_line_count", "serialized_size", "biography", "generated_voice", "directed_line_count", "generated_audio_count")
     NAME_FIELD_NUMBER: _ClassVar[int]
     DISPLAY_NAME_FIELD_NUMBER: _ClassVar[int]
     PROMPT_FIELD_NUMBER: _ClassVar[int]
@@ -227,6 +274,9 @@ class Voice(_message.Message):
     NPC_LINE_COUNT_FIELD_NUMBER: _ClassVar[int]
     SERIALIZED_SIZE_FIELD_NUMBER: _ClassVar[int]
     BIOGRAPHY_FIELD_NUMBER: _ClassVar[int]
+    GENERATED_VOICE_FIELD_NUMBER: _ClassVar[int]
+    DIRECTED_LINE_COUNT_FIELD_NUMBER: _ClassVar[int]
+    GENERATED_AUDIO_COUNT_FIELD_NUMBER: _ClassVar[int]
     name: str
     display_name: str
     prompt: str
@@ -236,7 +286,10 @@ class Voice(_message.Message):
     npc_line_count: int
     serialized_size: int
     biography: str
-    def __init__(self, name: _Optional[str] = ..., display_name: _Optional[str] = ..., prompt: _Optional[str] = ..., characters: _Optional[_Iterable[_Union[CharacterReference, _Mapping]]] = ..., dialogues: _Optional[_Iterable[_Union[DialogueReference, _Mapping]]] = ..., portrait: _Optional[str] = ..., npc_line_count: _Optional[int] = ..., serialized_size: _Optional[int] = ..., biography: _Optional[str] = ...) -> None: ...
+    generated_voice: GeneratedVoice
+    directed_line_count: int
+    generated_audio_count: int
+    def __init__(self, name: _Optional[str] = ..., display_name: _Optional[str] = ..., prompt: _Optional[str] = ..., characters: _Optional[_Iterable[_Union[CharacterReference, _Mapping]]] = ..., dialogues: _Optional[_Iterable[_Union[DialogueReference, _Mapping]]] = ..., portrait: _Optional[str] = ..., npc_line_count: _Optional[int] = ..., serialized_size: _Optional[int] = ..., biography: _Optional[str] = ..., generated_voice: _Optional[_Union[GeneratedVoice, _Mapping]] = ..., directed_line_count: _Optional[int] = ..., generated_audio_count: _Optional[int] = ...) -> None: ...
 
 class CharacterDialogueSummary(_message.Message):
     __slots__ = ("declared_dialogue_count", "resolved_dialogue_count", "dialogue_line_count", "npc_line_count", "player_line_count", "journal_line_count", "state_count", "transition_count", "serialized_size")
@@ -429,7 +482,7 @@ class DialogueDetail(_message.Message):
     def __init__(self, dlg_version: _Optional[str] = ..., state_count: _Optional[int] = ..., transition_count: _Optional[int] = ..., npc_line_count: _Optional[int] = ..., player_line_count: _Optional[int] = ..., journal_line_count: _Optional[int] = ..., dialogue_line_count: _Optional[int] = ...) -> None: ...
 
 class Dialogue(_message.Message):
-    __slots__ = ("name", "engine_resource_name", "resref", "source", "extraction", "serialized_size", "character_count", "detail")
+    __slots__ = ("name", "engine_resource_name", "resref", "source", "extraction", "serialized_size", "character_count", "detail", "directed_line_count", "generated_audio_count")
     NAME_FIELD_NUMBER: _ClassVar[int]
     ENGINE_RESOURCE_NAME_FIELD_NUMBER: _ClassVar[int]
     RESREF_FIELD_NUMBER: _ClassVar[int]
@@ -438,6 +491,8 @@ class Dialogue(_message.Message):
     SERIALIZED_SIZE_FIELD_NUMBER: _ClassVar[int]
     CHARACTER_COUNT_FIELD_NUMBER: _ClassVar[int]
     DETAIL_FIELD_NUMBER: _ClassVar[int]
+    DIRECTED_LINE_COUNT_FIELD_NUMBER: _ClassVar[int]
+    GENERATED_AUDIO_COUNT_FIELD_NUMBER: _ClassVar[int]
     name: str
     engine_resource_name: str
     resref: str
@@ -446,10 +501,12 @@ class Dialogue(_message.Message):
     serialized_size: int
     character_count: int
     detail: DialogueDetail
-    def __init__(self, name: _Optional[str] = ..., engine_resource_name: _Optional[str] = ..., resref: _Optional[str] = ..., source: _Optional[_Union[ResourceSource, _Mapping]] = ..., extraction: _Optional[_Union[ExtractionState, _Mapping]] = ..., serialized_size: _Optional[int] = ..., character_count: _Optional[int] = ..., detail: _Optional[_Union[DialogueDetail, _Mapping]] = ...) -> None: ...
+    directed_line_count: int
+    generated_audio_count: int
+    def __init__(self, name: _Optional[str] = ..., engine_resource_name: _Optional[str] = ..., resref: _Optional[str] = ..., source: _Optional[_Union[ResourceSource, _Mapping]] = ..., extraction: _Optional[_Union[ExtractionState, _Mapping]] = ..., serialized_size: _Optional[int] = ..., character_count: _Optional[int] = ..., detail: _Optional[_Union[DialogueDetail, _Mapping]] = ..., directed_line_count: _Optional[int] = ..., generated_audio_count: _Optional[int] = ...) -> None: ...
 
 class DialogueLine(_message.Message):
-    __slots__ = ("name", "dialogue", "dialogue_resref", "source_kind", "line_kind", "state_index", "state_trigger_index", "state_trigger_text", "transition_index", "strref", "text", "tokens", "serialized_size", "character_count")
+    __slots__ = ("name", "dialogue", "dialogue_resref", "source_kind", "line_kind", "state_index", "state_trigger_index", "state_trigger_text", "transition_index", "strref", "text", "tokens", "serialized_size", "character_count", "directions")
     NAME_FIELD_NUMBER: _ClassVar[int]
     DIALOGUE_FIELD_NUMBER: _ClassVar[int]
     DIALOGUE_RESREF_FIELD_NUMBER: _ClassVar[int]
@@ -464,6 +521,7 @@ class DialogueLine(_message.Message):
     TOKENS_FIELD_NUMBER: _ClassVar[int]
     SERIALIZED_SIZE_FIELD_NUMBER: _ClassVar[int]
     CHARACTER_COUNT_FIELD_NUMBER: _ClassVar[int]
+    DIRECTIONS_FIELD_NUMBER: _ClassVar[int]
     name: str
     dialogue: str
     dialogue_resref: str
@@ -478,7 +536,8 @@ class DialogueLine(_message.Message):
     tokens: _containers.RepeatedScalarFieldContainer[str]
     serialized_size: int
     character_count: int
-    def __init__(self, name: _Optional[str] = ..., dialogue: _Optional[str] = ..., dialogue_resref: _Optional[str] = ..., source_kind: _Optional[_Union[SourceKind, str]] = ..., line_kind: _Optional[_Union[DialogueLineKind, str]] = ..., state_index: _Optional[int] = ..., state_trigger_index: _Optional[int] = ..., state_trigger_text: _Optional[str] = ..., transition_index: _Optional[int] = ..., strref: _Optional[int] = ..., text: _Optional[str] = ..., tokens: _Optional[_Iterable[str]] = ..., serialized_size: _Optional[int] = ..., character_count: _Optional[int] = ...) -> None: ...
+    directions: _containers.RepeatedCompositeFieldContainer[DirectedLine]
+    def __init__(self, name: _Optional[str] = ..., dialogue: _Optional[str] = ..., dialogue_resref: _Optional[str] = ..., source_kind: _Optional[_Union[SourceKind, str]] = ..., line_kind: _Optional[_Union[DialogueLineKind, str]] = ..., state_index: _Optional[int] = ..., state_trigger_index: _Optional[int] = ..., state_trigger_text: _Optional[str] = ..., transition_index: _Optional[int] = ..., strref: _Optional[int] = ..., text: _Optional[str] = ..., tokens: _Optional[_Iterable[str]] = ..., serialized_size: _Optional[int] = ..., character_count: _Optional[int] = ..., directions: _Optional[_Iterable[_Union[DirectedLine, _Mapping]]] = ...) -> None: ...
 
 class CharacterSound(_message.Message):
     __slots__ = ("name", "character", "character_display_name", "slot_id", "slot_symbols", "slot_groups", "strref", "text", "serialized_size")

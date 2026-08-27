@@ -8,10 +8,11 @@ from typing import cast
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
-from lancedb.expr import col
+from lancedb.expr import col, lit
 
+from bgvoice.game_audio import GAME_AUDIO_MIME_TYPE
 from bgvoice.reader import PipelineReader
-from bgvoice.storage_records import PortraitImageRecord
+from bgvoice.storage_records import GeneratedAudioRecord, PortraitImageRecord
 from bgvoice.v1.pipeline_connect import PipelineServiceASGIApplication
 from bgvoice.web_contract import INSTALLATION_ID, resource_id
 from bgvoice.web_service import PipelineService
@@ -81,6 +82,30 @@ def create_app(
             content=rows[0].png,
             media_type="image/png",
             headers={"Cache-Control": "public, max-age=86400"},
+        )
+
+    @app.get(
+        "/v1/installations/{installation}/generatedAudios/{audio}:download",
+        include_in_schema=False,
+    )
+    async def download_generated_audio(installation: str, audio: str) -> Response:
+        if installation != INSTALLATION_ID:
+            raise HTTPException(status_code=404, detail="installation not found")
+        rows = cast(
+            list[GeneratedAudioRecord],
+            await reader()
+            .generated_audio_table.query()
+            .where(col("id") == lit(audio))
+            .limit(2)
+            .to_pydantic(GeneratedAudioRecord),
+        )
+        if not rows:
+            raise HTTPException(status_code=404, detail="generated audio not found")
+        assert len(rows) == 1, f"generated audio index returned duplicate id {audio!r}"
+        return Response(
+            content=rows[0].audio,
+            media_type=GAME_AUDIO_MIME_TYPE,
+            headers={"Cache-Control": "public, max-age=3600"},
         )
 
     dist = (frontend_dist or Path("frontend/dist")).expanduser().resolve()
