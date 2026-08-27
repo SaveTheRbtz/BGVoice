@@ -188,6 +188,7 @@ export interface FilterOptions {
   race_ids: FacetValue[];
   class_ids: FacetValue[];
   metadata_class_ids: FacetValue[];
+  sound_slot_ids: FacetValue[];
   campaigns: string[];
   identifier_kinds: SimpleIdentifierKind[];
 }
@@ -454,7 +455,6 @@ export type VoiceSort =
 
 export interface VoiceQuery extends PaginatedQuery<VoiceSort> {
   voice_id: string;
-  has_dialogue: BooleanFilter;
 }
 
 export interface VoiceRow {
@@ -470,6 +470,30 @@ export interface VoiceRow {
 }
 
 export type VoicePage = Page<VoiceRow, VoiceSort>;
+
+export type SoundSort =
+  | "character_resource_name"
+  | "slot_id"
+  | "strref"
+  | "serialized_size";
+
+export interface SoundQuery extends PaginatedQuery<SoundSort> {
+  slot_id: string;
+}
+
+export interface SoundRow {
+  key: string;
+  character_resource_name: string;
+  character_name: string;
+  slot_id: number;
+  slot_symbols: string[];
+  slot_groups: string[];
+  strref: number;
+  text: string | null;
+  serialized_size: number;
+}
+
+export type SoundPage = Page<SoundRow, SoundSort>;
 
 export type TransitionSort =
   | "location"

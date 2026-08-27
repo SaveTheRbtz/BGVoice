@@ -3,10 +3,11 @@ import { useEffect, useRef, useState } from "react";
 import type { Page, PaginatedQuery } from "./types";
 
 export const BROWSER_TABS = [
+  "voices",
   "characters",
   "dialogues",
   "lines",
-  "voices",
+  "sounds",
   "transitions",
   "races",
   "classes",
@@ -20,7 +21,7 @@ const savedSearches = new Map<BrowserTab, string>();
 
 export function browserTab(search: string = window.location.search): BrowserTab {
   const value = new URLSearchParams(search).get("tab");
-  return BROWSER_TABS.find((tab) => tab === value) ?? "characters";
+  return BROWSER_TABS.find((tab) => tab === value) ?? "voices";
 }
 
 export function browserQuery<

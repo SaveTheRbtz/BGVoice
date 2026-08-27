@@ -196,7 +196,7 @@ def test_reader_is_healthy_and_reports_pipeline_totals(web_database: Path) -> No
                 8,
             )
             assert stats.line_records_total == 10
-            assert stats.voices_total == 12
+            assert stats.voices_total == 1
             assert (
                 stats.character_sounds_total,
                 stats.soundset_lines_total,
@@ -302,6 +302,10 @@ def test_character_api_supports_filters_sort_fts_pagination_and_detail(
         {"value": 2, "label": "Fighter", "count": 1},
         {"value": 14, "label": "Cleric / Mage", "count": 1},
     ]
+    assert options["sound_slot_ids"] == [
+        {"value": 9, "label": "Attack Voice", "count": 12},
+        {"value": 44, "label": "Unknown (44)", "count": 12},
+    ]
     assert options["campaigns"] == ["SOA", "BG1"]
     assert options["identifier_kinds"] == [
         "gender",
@@ -353,7 +357,7 @@ def test_character_api_supports_filters_sort_fts_pagination_and_detail(
     assert search["items"][0]["animation_label"] == "Elf Female"
     assert search["items"][0]["racial_enemy_label"] == "No Race"
     assert search["items"][0]["kit_label"] == "Trueclass"
-    assert search["items"][0]["voice_id"] == "dv:minsc"
+    assert search["items"][0]["voice_id"] is None
     assert (
         search["items"][0]["first_class_level"],
         search["items"][0]["second_class_level"],
@@ -400,7 +404,7 @@ def test_character_api_supports_filters_sort_fts_pagination_and_detail(
     payload = detail.json()
     character = payload["character"]
     assert character["display_name"] == "Aerie"
-    assert character["voice_id"] == "dv:aerie"
+    assert character["voice_id"] == "aerie"
     assert character["race_label"] == "Elf"
     assert character["racial_enemy_label"] == "Beholder"
     assert character["kit_label"] == "Trueclass"
@@ -649,18 +653,18 @@ def test_dialogue_and_line_apis_support_fts_filters_and_sorting(api: TestClient)
     assert "source_kind" in schemas["DialogueLineRow"]["required"]
 
 
-def test_voice_api_groups_cre_variants_and_supports_fts_filters_and_sorting(
+def test_voice_api_groups_characters_and_supports_fts_and_sorting(
     api: TestClient,
 ) -> None:
     voices = api.get("/api/voices", params={"page_size": 10}).json()
     assert (voices["total"], voices["page_count"], voices["sort"], voices["direction"]) == (
-        12,
-        2,
+        1,
+        1,
         "npc_line_count",
         "desc",
     )
     aerie = voices["items"][0]
-    assert aerie["id"] == "dv:aerie"
+    assert aerie["id"] == "aerie"
     assert aerie["display_name"] == "Aerie"
     assert aerie["variant_resource_names"] == ["AERIE.CRE"]
     assert aerie["dialogue_resrefs"] == ["AERIE"]
@@ -679,32 +683,56 @@ def test_voice_api_groups_cre_variants_and_supports_fts_filters_and_sorting(
         "relevance",
         "desc",
     )
-    assert named["items"][0]["id"] == "dv:aerie"
+    assert named["items"][0]["id"] == "aerie"
 
     exact = api.get(
         "/api/voices",
-        params={"voice_id": "dv:aerie", "page_size": 10},
+        params={"voice_id": "aerie", "page_size": 10},
     ).json()
     assert exact["total"] == 1
-    assert exact["items"][0]["id"] == "dv:aerie"
+    assert exact["items"][0]["id"] == "aerie"
 
-    with_dialogue = api.get(
-        "/api/voices",
+    assert api.get("/api/voices", params={"has_dialogue": "false"}).status_code == 422
+    assert api.get("/api/voices", params={"slot_id": 44}).status_code == 422
+    assert api.get("/api/voices", params={"sort": "DROP TABLE"}).status_code == 422
+
+
+def test_sound_api_supports_fts_slot_filters_sorting_and_pagination(
+    api: TestClient,
+) -> None:
+    sounds = api.get(
+        "/api/sounds",
+        params={"q": "fallen", "slot_id": 9, "page_size": 10},
+    ).json()
+    assert (sounds["total"], sounds["page_count"], sounds["sort"], sounds["direction"]) == (
+        12,
+        2,
+        "relevance",
+        "desc",
+    )
+    assert sounds["items"][0]["text"] == "For the fallen!"
+    assert sounds["items"][0]["slot_id"] == 9
+    assert sounds["items"][0]["slot_symbols"] == ["ATTACK_VOICE"]
+    assert sounds["items"][0]["slot_groups"] == ["BATTLE_CRIES", "COMBAT_VOICE"]
+    assert sounds["items"][0]["serialized_size"] > 0
+
+    named = api.get("/api/sounds", params={"q": "Minsc", "page_size": 10}).json()
+    assert named["total"] == 2
+    assert {row["character_resource_name"] for row in named["items"]} == {"MINSC.CRE"}
+    assert {row["character_name"] for row in named["items"]} == {"Minsc"}
+
+    ordered = api.get(
+        "/api/sounds",
         params={
-            "has_dialogue": "true",
-            "sort": "display_name",
+            "slot_id": 44,
+            "sort": "character_resource_name",
             "direction": "asc",
             "page_size": 10,
         },
     ).json()
-    assert [row["id"] for row in with_dialogue["items"]] == ["dv:aerie", "dv:minsc"]
-    assert with_dialogue["sort"] == "display_name"
-    assert (
-        api.get("/api/voices", params={"has_dialogue": "false", "page_size": 100}).json()["total"]
-        == 10
-    )
-    assert api.get("/api/voices", params={"slot_id": 44}).status_code == 422
-    assert api.get("/api/voices", params={"sort": "DROP TABLE"}).status_code == 422
+    assert ordered["items"][0]["key"] == "AERIE.CRE:44"
+    assert ordered["items"][0]["text"] == "What is it, <CHARNAME>?"
+    assert api.get("/api/sounds", params={"sort": "DROP TABLE"}).status_code == 422
 
 
 def test_transition_api_exposes_state_machine_edges_and_actions(api: TestClient) -> None:
@@ -771,6 +799,7 @@ def test_transition_api_exposes_state_machine_edges_and_actions(api: TestClient)
     schemas = api.get("/openapi.json").json()["components"]["schemas"]
     assert "prompt" in schemas["VoiceRow"]["required"]
     assert "variant_resource_names" in schemas["VoiceRow"]["required"]
+    assert "slot_groups" in schemas["SoundRow"]["required"]
     assert "action_text" in schemas["TransitionRow"]["required"]
 
 

@@ -36,6 +36,7 @@ from bgvoice.database import (
     CampaignResourceBindingRecord,
     CharacterAttributionRecord,
     CharacterRecord,
+    CharacterSoundRecord,
     ClassTextRecord,
     DialogueData,
     DialogueLineRecord,
@@ -46,6 +47,7 @@ from bgvoice.database import (
     IdentifierDefinitionRecord,
     KitDefinitionRecord,
     RaceTextRecord,
+    SoundSlotGroupRecord,
     VoiceResourceRecord,
 )
 from bgvoice.models import (
@@ -104,6 +106,12 @@ type VoiceSort = Literal[
     "variant_count",
     "dialogue_count",
     "npc_line_count",
+    "serialized_size",
+]
+type SoundSort = Literal[
+    "character_resource_name",
+    "slot_id",
+    "strref",
     "serialized_size",
 ]
 type TransitionSort = Literal[
@@ -205,8 +213,14 @@ class IdentifierQuery(PageQuery):
 class VoiceQuery(PageQuery):
     q: str | None = Field(default=None, max_length=300)
     voice_id: str | None = Field(default=None, min_length=1, max_length=300)
-    has_dialogue: bool | None = None
     sort: VoiceSort | None = None
+    direction: SortDirection = "desc"
+
+
+class SoundQuery(PageQuery):
+    q: str | None = Field(default=None, max_length=300)
+    slot_id: int | None = Field(default=None, ge=0, le=0xFF)
+    sort: SoundSort | None = None
     direction: SortDirection = "desc"
 
 
@@ -347,6 +361,28 @@ class VoicePage(ApiModel):
     total: int
     page_count: int
     sort: VoiceSort | Literal["relevance"]
+    direction: SortDirection
+
+
+class SoundRow(ApiModel):
+    key: str
+    character_resource_name: str
+    character_name: str
+    slot_id: int
+    slot_symbols: list[str]
+    slot_groups: list[str]
+    strref: int
+    text: str | None
+    serialized_size: int
+
+
+class SoundPage(ApiModel):
+    items: list[SoundRow]
+    page: int
+    page_size: int
+    total: int
+    page_count: int
+    sort: SoundSort | Literal["relevance"]
     direction: SortDirection
 
 
@@ -503,6 +539,7 @@ class FilterOptions(ApiModel):
     race_ids: list[FacetValue]
     class_ids: list[FacetValue]
     metadata_class_ids: list[FacetValue]
+    sound_slot_ids: list[FacetValue]
     campaigns: list[str]
     identifier_kinds: list[SimpleIdentifierKind]
 
@@ -659,6 +696,10 @@ class _DialogueSearchResult(DialogueRecord):
 
 class _VoiceSearchResult(VoiceResourceRecord):
     score: float = Field(alias="_score")
+
+
+class _SoundSlotFacet(_Projection):
+    slot_id: int
 
 
 class _MetadataScore(_Projection):
@@ -1046,6 +1087,25 @@ class PipelineReader:
             self._metadata_snapshot(),
         )
         characters = cast(list[CharacterRecord], character_rows)
+        sound_generation = _child_generation_predicate(
+            "character_resource_name",
+            (
+                (character.resource_name, character.extraction.run_id)
+                for character in characters
+                if character.extraction.status is DetailStatus.COMPLETE
+            ),
+        )
+        sound_rows = (
+            []
+            if sound_generation is None
+            else cast(
+                list[_SoundSlotFacet],
+                await self.character_sounds_table.query()
+                .where(sound_generation)
+                .select(["slot_id"])
+                .to_pydantic(_SoundSlotFacet),
+            )
+        )
         labels = _LabelResolver.from_snapshot(metadata)
         metadata_class_ids = [
             row.value for row in metadata.identifiers if row.kind is IdentifierKind.CLASS
@@ -1065,6 +1125,10 @@ class PipelineReader:
                 labels.class_labels,
             ),
             metadata_class_ids=_integer_facets(metadata_class_ids, labels.class_labels),
+            sound_slot_ids=_integer_facets(
+                (row.slot_id for row in sound_rows),
+                labels.identifier_labels(IdentifierKind.SOUND_SLOT),
+            ),
             campaigns=[
                 row.campaign_id for row in sorted(metadata.campaigns, key=lambda row: row.ordinal)
             ],
@@ -1282,8 +1346,6 @@ class PipelineReader:
         rows = [_voice_row(record, dialogues_by_resref) for record in records]
         if query.voice_id is not None:
             rows = [row for row in rows if row.id == query.voice_id]
-        if query.has_dialogue is not None:
-            rows = [row for row in rows if (row.dialogue_count > 0) is query.has_dialogue]
         rows = (
             _relevance_order(rows, scores, lambda row: row.id)
             if sort == "relevance"
@@ -1295,6 +1357,82 @@ class PipelineReader:
             page_size=query.page_size,
             total=len(rows),
             page_count=_page_count(len(rows), query.page_size),
+            sort=sort,
+            direction=direction,
+        )
+
+    async def sounds(self, query: SoundQuery) -> SoundPage:
+        character_rows, group_rows, metadata = await asyncio.gather(
+            self.characters_table.query().to_pydantic(CharacterRecord),
+            self.sound_slot_groups_table.query().to_pydantic(SoundSlotGroupRecord),
+            self._metadata_snapshot(),
+        )
+        characters = cast(list[CharacterRecord], character_rows)
+        groups = cast(list[SoundSlotGroupRecord], group_rows)
+        complete_characters = [
+            character
+            for character in characters
+            if character.extraction.status is DetailStatus.COMPLETE
+        ]
+        sound_generation = _child_generation_predicate(
+            "character_resource_name",
+            (
+                (character.resource_name, character.extraction.run_id)
+                for character in complete_characters
+            ),
+        )
+        tokens = _search_tokens(query.q)
+        sort = query.sort or ("relevance" if tokens else "serialized_size")
+        direction: SortDirection = "desc" if sort == "relevance" else query.direction
+        if sound_generation is None:
+            return SoundPage(
+                items=[],
+                page=query.page,
+                page_size=query.page_size,
+                total=0,
+                page_count=1,
+                sort=sort,
+                direction=direction,
+            )
+        conditions = [sound_generation]
+        if query.slot_id is not None:
+            conditions.append(col("slot_id") == lit(query.slot_id))
+        total, records = await _records_page(
+            table=self.character_sounds_table,
+            model=CharacterSoundRecord,
+            stable_column="id",
+            predicate=_combine(conditions),
+            tokens=tokens,
+            ordering=None if sort == "relevance" else _ordering(sort, direction, "id"),
+            page=query,
+        )
+        characters_by_resource = {
+            character.resource_name.casefold(): character for character in complete_characters
+        }
+        symbols = _identifier_symbols(metadata.identifiers)
+        items: list[SoundRow] = []
+        for record in records:
+            character = characters_by_resource[record.character_resource_name.casefold()]
+            assert character.detail is not None
+            items.append(
+                SoundRow(
+                    key=record.id,
+                    character_resource_name=record.character_resource_name,
+                    character_name=character.detail.display_name,
+                    slot_id=record.slot_id,
+                    slot_symbols=list(symbols.get((IdentifierKind.SOUND_SLOT, record.slot_id), ())),
+                    slot_groups=_sound_slot_group_names(groups, record.slot_id),
+                    strref=record.strref,
+                    text=record.text,
+                    serialized_size=record.serialized_size,
+                )
+            )
+        return SoundPage(
+            items=items,
+            page=query.page,
+            page_size=query.page_size,
+            total=total,
+            page_count=_page_count(total, query.page_size),
             sort=sort,
             direction=direction,
         )
@@ -1680,6 +1818,10 @@ def create_app(
     @app.get("/api/voices", response_model=VoicePage)
     async def voices(query: Annotated[VoiceQuery, Query()]) -> VoicePage:
         return await reader().voices(query)
+
+    @app.get("/api/sounds", response_model=SoundPage)
+    async def sounds(query: Annotated[SoundQuery, Query()]) -> SoundPage:
+        return await reader().sounds(query)
 
     @app.get("/api/transitions", response_model=TransitionPage)
     async def transitions(query: Annotated[TransitionQuery, Query()]) -> TransitionPage:
@@ -2323,6 +2465,19 @@ def _identifier_symbols(
         aliases = values[(row.kind, row.value)]
         aliases.extend(symbol for symbol in row.symbols if symbol not in aliases)
     return {key: tuple(aliases) for key, aliases in values.items()}
+
+
+def _sound_slot_group_names(
+    groups: Sequence[SoundSlotGroupRecord],
+    slot_id: int,
+) -> list[str]:
+    return [
+        group.row_name
+        for group in sorted(groups, key=lambda group: (group.ordinal, group.key))
+        if group.offset is not None
+        and group.count is not None
+        and group.offset <= slot_id < group.offset + group.count
+    ]
 
 
 def _campaigns_by_resource(

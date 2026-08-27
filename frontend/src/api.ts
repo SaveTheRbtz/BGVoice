@@ -16,6 +16,8 @@ import type {
   PipelineStats,
   RacePage,
   RaceQuery,
+  SoundPage,
+  SoundQuery,
   TransitionPage,
   TransitionQuery,
   VoicePage,
@@ -31,6 +33,7 @@ type ApiQuery =
   | KitQuery
   | IdentifierQuery
   | VoiceQuery
+  | SoundQuery
   | TransitionQuery;
 
 async function fetchJson<T>(path: string, signal?: AbortSignal): Promise<T> {
@@ -112,6 +115,10 @@ export function getIdentifiers(
 
 export function getVoices(query: VoiceQuery, signal?: AbortSignal): Promise<VoicePage> {
   return fetchJson<VoicePage>(withQuery("/api/voices", query), signal);
+}
+
+export function getSounds(query: SoundQuery, signal?: AbortSignal): Promise<SoundPage> {
+  return fetchJson<SoundPage>(withQuery("/api/sounds", query), signal);
 }
 
 export function getTransitions(

@@ -5,6 +5,7 @@ import { LineContext, VoiceLink } from "./App";
 import {
   ResourceList,
   ScriptText,
+  SoundSlot,
   StarterPrompt,
   VoiceIdChip,
 } from "./PipelineBrowsers";
@@ -17,15 +18,29 @@ describe("pipeline context labels", () => {
         <ResourceList
           count={2}
           values={["AERIE.CRE", "AERIE10.CRE"]}
-          noun="variants"
+          noun="characters"
         />
       </>,
     );
 
     expect(html).toContain("Warm, measured alto.\nRestrained Amnian accent.");
-    expect(html).toContain("2 variants");
+    expect(html).toContain("2 characters");
     expect(html).toContain("AERIE.CRE");
     expect(html).toContain("AERIE10.CRE");
+  });
+
+  it("shows sound-slot aliases and every matching SPEECH group", () => {
+    const html = renderToStaticMarkup(
+      <SoundSlot
+        slotId={9}
+        symbols={["BATTLE_CRY", "ATTACK"]}
+        groups={["BATTLE_CRIES", "COMBAT_VOICE"]}
+      />,
+    );
+
+    expect(html).toContain("BATTLE CRY");
+    expect(html).toContain("ATTACK");
+    expect(html).toContain("SPEECH · BATTLE CRIES, COMBAT VOICE");
   });
 
   it("keeps unresolved transition and state-trigger indexes visible", () => {
@@ -69,7 +84,7 @@ describe("pipeline context labels", () => {
     expect(html.indexOf("PLAYER2")).toBeLessThan(html.indexOf("DAY"));
   });
 
-  it("deep-links a CRE variant to its canonical voice search", () => {
+  it("deep-links a character to its canonical voice search", () => {
     const html = renderToStaticMarkup(
       <VoiceLink voiceId="imoen" onOpen={() => undefined} />,
     );

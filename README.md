@@ -43,15 +43,12 @@ uv run bgvoice attribute-dialogues
    levels, abilities, morale, reputation, racial enemy, and both raw and normalized kit values.
 4. `attribute-dialogues` combines direct CRE dialogue fields with imported party/banter links, then
    accounts for matched, dangling, and failed character references and every attributed or
-   unattributed dialogue and line. It also groups every successfully extracted CRE into a persisted
-   voice resource. A meaningful death variable owns the stable `dv:` identity. If one variable is
-   reused by differently named speakers, their resolved names disambiguate it without splitting
-   same-name variants that use different TLK strrefs. CREs without a useful death variable use the
-   direct dialogue resref plus the resolved short- or long-name strref, then the CRE resref when no
-   name resolves. Each voice retains its CRE membership and distinct direct DLG resrefs, and
-   receives a deterministic prompt from one real representative CRE's name, gender, race, class,
-   optional non-trueclass kit, and alignment metadata. The browser resolves the DLG metrics without
-   copying them into the voice record.
+   unattributed dialogue and line. It groups successfully extracted CREs by their resolved,
+   case-insensitive display name and publishes only groups with NPC lines. Each voice retains its
+   CRE membership and the distinct NPC-bearing DLGs attributed to any member, then receives a
+   deterministic prompt from one real representative CRE's name, gender, race, class, optional
+   non-trueclass kit, and alignment metadata. The browser resolves DLG metrics without copying them
+   into the voice record.
 
 The effective EET `TOKENTXT.2DA` currently has no rows, so there is nothing useful to persist from
 it. Runtime tokens found in DLG text are retained verbatim instead; the engine and calendar tables
@@ -92,8 +89,8 @@ no mirror tables or triggers. Search uses the English tokenizer with stemming, 6
 case and ASCII folding, and retained stop words. Results default to LanceDB's BM25 relevance;
 clicking a column explicitly overrides relevance. Characters display resolved race, class, gender,
 alignment, allegiance, animation, and kit labels while retaining their raw IDs. Characters,
-Dialogues, Lines, Voices, and Transitions have dedicated pipeline views; Races, Classes, Kits, and
-Identifiers expose the imported engine metadata.
+Voices, Dialogues, Lines, CRE Sounds, and Transitions have dedicated pipeline views; Races,
+Classes, Kits, and Identifiers expose the imported engine metadata.
 
 ## Quality checks
 

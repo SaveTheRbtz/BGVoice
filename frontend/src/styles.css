@@ -148,6 +148,9 @@ tbody tr:hover { background: #151b21; }
 .voice-table td { height: 68px; vertical-align: top; }
 .voice-table td:nth-child(2) { width: 38%; min-width: 300px; white-space: normal; }
 .voice-table td:nth-child(3), .voice-table td:nth-child(4) { min-width: 150px; white-space: normal; }
+.sound-table table { min-width: 1050px; }
+.sound-table td { height: 68px; vertical-align: top; }
+.sound-table td:nth-child(4) { width: 48%; min-width: 330px; white-space: normal; }
 .transition-table table { min-width: 1500px; }
 .transition-table td { height: 72px; vertical-align: top; }
 .transition-table td:nth-child(4),

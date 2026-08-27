@@ -119,22 +119,6 @@ def compose_search_text(*values: str | None) -> str:
     return " ".join(value for value in values if value)
 
 
-def proposed_voice_id(
-    death_variable: str | None,
-    dialog_resref: str | None,
-    name_strref: int | None,
-    resref: str,
-) -> VoiceId:
-    """Return the first-pass speaker identity available from one CRE alone."""
-    death_variable = (death_variable or "").strip()
-    if death_variable and death_variable.casefold() != "none":
-        return VoiceId(f"dv:{death_variable.casefold()}")
-    dialog_resref = (dialog_resref or "none").strip() or "none"
-    if name_strref is not None:
-        return VoiceId(f"dlg:{dialog_resref.casefold()}:name:{name_strref}")
-    return VoiceId(f"dlg:{dialog_resref.casefold()}:cre:{resref.casefold()}")
-
-
 class StrictModel(BaseModel):
     """Base model that rejects implicit coercion and unknown fields."""
 
@@ -579,7 +563,7 @@ class CharacterExtraction(StrictModel):
 
 
 class VoiceResource(StrictModel):
-    """Canonical voice identity shared by one or more concrete CRE variants."""
+    """One named speaker with its concrete CREs and addressable NPC dialogue."""
 
     id: VoiceId
     display_name: str = Field(min_length=1)

@@ -1512,12 +1512,12 @@ def test_attribution_builds_voice_resources_from_shared_cre_variants(
     voices = [voice for voice in _voice_rows(path) if voice.run_id == summary.run_id]
     assert len(voices) == 1
     voice = voices[0]
-    assert voice.voice_id == "dv:hexxat"
+    assert voice.voice_id == "hexxat"
     assert voice.display_name == "Hexxat"
     assert voice.variant_resource_names == sorted(
         [resource.resource_name for resource in resources], key=str.casefold
     )
-    assert voice.dialogue_resrefs == ["FAIL", "GHOST", "HEXXA25A", "HEXXAT"]
+    assert voice.dialogue_resrefs == ["HEXXA25A", "HEXXAT"]
     assert voice.prompt == (
         "Name: Hexxat\nGender: Female\nRace: Elf\nClass: Cleric Mage\nKit: Berserker\n"
         "Alignment: Lawful Good"
@@ -1531,79 +1531,62 @@ def test_attribution_builds_voice_resources_from_shared_cre_variants(
     assert _voice_rows(path) == voices
 
 
-def test_attribution_disambiguates_shared_script_variables_and_resolved_names(
+def test_attribution_groups_voices_by_name_and_omits_zero_line_groups(
     tmp_path: Path,
 ) -> None:
     path = tmp_path / "voice-identities.lancedb"
     database = PipelineDatabase(path)
-    resources = [
-        make_resource(name)
-        for name in ("ALHEL.CRE", "ALHEL2.CRE", "JOLUS.CRE", "BUGABO02.CRE", "PETTIN.CRE")
-    ]
+    resources = [make_resource(name) for name in ("ALHEL.CRE", "ALHEL2.CRE", "JOLUS.CRE")]
     run_id = database.start_run(tmp_path, "iecli test")
     database.replace_inventory(run_id, resources)
 
-    alhel = _with_character_detail(
-        CharacterExtraction.from_dump(
-            resources[0],
-            make_dump(
-                "ALHEL.CRE",
-                short_name="Alhelor",
-                long_name="Alhelor",
-                death_variable="NOBLEORDER",
-                dialog=None,
-            ),
-        ),
-        short_name_strref=29640,
-    )
-    alhel_variant = _with_character_detail(
-        CharacterExtraction.from_dump(
-            resources[1],
-            make_dump(
-                "ALHEL2.CRE",
-                short_name="Alhelor",
-                long_name="Alhelor",
-                death_variable="NOBLEORDER",
-                dialog=None,
-            ),
-        ),
-        short_name_strref=39640,
-    )
-    jolus = _with_character_detail(
-        CharacterExtraction.from_dump(
-            resources[2],
-            make_dump(
-                "JOLUS.CRE",
-                short_name="Sir Jolus",
-                long_name="Sir Jolus",
-                death_variable="NOBLEORDER",
-                dialog=None,
-            ),
-        ),
-        short_name_strref=29599,
-    )
-    bugabo = CharacterExtraction.from_dump(
-        resources[3],
+    alhel = CharacterExtraction.from_dump(
+        resources[0],
         make_dump(
-            "BUGABO02.CRE", short_name=None, long_name=None, death_variable="PETTIN", dialog=None
+            "ALHEL.CRE",
+            short_name="Alhelor",
+            long_name="Alhelor",
+            death_variable="NOBLEORDER",
+            dialog="ALHEL",
         ),
     )
-    pettin = _with_character_detail(
-        CharacterExtraction.from_dump(
-            resources[4],
-            make_dump(
-                "PETTIN.CRE",
-                short_name="Ettin",
-                long_name="Ettin",
-                death_variable="PETTIN",
-                dialog=None,
-            ),
+    alhel_variant = CharacterExtraction.from_dump(
+        resources[1],
+        make_dump(
+            "ALHEL2.CRE",
+            short_name="alhelor",
+            long_name="alhelor",
+            death_variable="ANOTHERORDER",
+            dialog="ALHEL2",
         ),
-        short_name_strref=249431,
     )
-    database.apply_detail_batch(run_id, [alhel, alhel_variant, jolus, bugabo, pettin], [])
+    jolus = CharacterExtraction.from_dump(
+        resources[2],
+        make_dump(
+            "JOLUS.CRE",
+            short_name="Sir Jolus",
+            long_name="Sir Jolus",
+            death_variable="NOBLEORDER",
+            dialog=None,
+        ),
+    )
+    database.apply_detail_batch(run_id, [alhel, alhel_variant, jolus], [])
     _finish_successful_run(database, run_id)
-    _finish_empty_stage(database, tmp_path, RunKind.DIALOGUES)
+    dialogue_run = database.start_run(tmp_path, "iecli test", run_kind=RunKind.DIALOGUES)
+    dialogue_resources = [
+        make_dialogue_resource("ALHEL.DLG"),
+        make_dialogue_resource("ALHEL2.DLG"),
+    ]
+    database.replace_dialogue_inventory(dialogue_run, dialogue_resources)
+    database.apply_dialogue_batch(
+        dialogue_run,
+        [
+            DialogueExtraction.from_dump(make_dialogue_dump(resource.resource_name))
+            for resource in dialogue_resources
+        ],
+        [],
+    )
+    _finish_successful_run(database, dialogue_run)
     _finish_empty_stage(database, tmp_path, RunKind.METADATA)
 
     summary = database.rebuild_attributions()
@@ -1611,15 +1594,9 @@ def test_attribution_disambiguates_shared_script_variables_and_resolved_names(
     voices = {
         voice.voice_id: voice for voice in _voice_rows(path) if voice.run_id == summary.run_id
     }
-    assert voices["dv:nobleorder:name:29640"].variant_resource_names == [
-        "ALHEL.CRE",
-        "ALHEL2.CRE",
-    ]
-    assert voices["dv:nobleorder:name:29599"].variant_resource_names == ["JOLUS.CRE"]
-    assert voices["dv:pettin"].variant_resource_names == ["BUGABO02.CRE", "PETTIN.CRE"]
-    pettin_voice = voices["dv:pettin"]
-    assert pettin_voice.display_name == "Ettin"
-    assert pettin_voice.prompt.startswith("Name: Ettin\n")
+    assert list(voices) == ["alhelor"]
+    assert voices["alhelor"].variant_resource_names == ["ALHEL.CRE", "ALHEL2.CRE"]
+    assert voices["alhelor"].dialogue_resrefs == ["ALHEL", "ALHEL2"]
 
 
 def test_voice_prompt_uses_one_actual_cre_metadata_tuple(tmp_path: Path) -> None:
@@ -1640,7 +1617,7 @@ def test_voice_prompt_uses_one_actual_cre_metadata_tuple(tmp_path: Path) -> None
             short_name="Sendai",
             long_name="Sendai",
             death_variable="SENDAI",
-            dialog=None,
+            dialog="SENDAI",
         ),
     )
     human_fighter = _with_character_detail(
@@ -1651,7 +1628,7 @@ def test_voice_prompt_uses_one_actual_cre_metadata_tuple(tmp_path: Path) -> None
                 short_name="Sendai",
                 long_name="Sendai",
                 death_variable="SENDAI",
-                dialog=None,
+                dialog="SENDAI",
             ),
         ),
         race_id=RaceId(1),
@@ -1660,12 +1637,20 @@ def test_voice_prompt_uses_one_actual_cre_metadata_tuple(tmp_path: Path) -> None
     )
     database.apply_detail_batch(character_run, [elf_cleric_mage, human_fighter], [])
     _finish_successful_run(database, character_run)
-    _finish_empty_stage(database, tmp_path, RunKind.DIALOGUES)
+    dialogue_run = database.start_run(tmp_path, "iecli test", run_kind=RunKind.DIALOGUES)
+    dialogue_resource = make_dialogue_resource("SENDAI.DLG")
+    database.replace_dialogue_inventory(dialogue_run, [dialogue_resource])
+    database.apply_dialogue_batch(
+        dialogue_run,
+        [DialogueExtraction.from_dump(make_dialogue_dump("SENDAI.DLG"))],
+        [],
+    )
+    _finish_successful_run(database, dialogue_run)
 
     summary = database.rebuild_attributions()
 
     voice = next(voice for voice in _voice_rows(path) if voice.run_id == summary.run_id)
-    assert voice.voice_id == "dv:sendai"
+    assert voice.voice_id == "sendai"
     assert voice.prompt == (
         "Name: Sendai\nGender: Female\nRace: Elf\nClass: Cleric Mage\nAlignment: Lawful Good"
     )

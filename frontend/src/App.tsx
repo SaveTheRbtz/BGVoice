@@ -33,7 +33,7 @@ import {
   KitBrowser,
   RaceBrowser,
 } from "./MetadataBrowser";
-import { TransitionBrowser, VoiceBrowser } from "./PipelineBrowsers";
+import { SoundBrowser, TransitionBrowser, VoiceBrowser } from "./PipelineBrowsers";
 import type {
   AttributionStatus,
   CharacterDetailResponse,
@@ -251,7 +251,7 @@ export default function App() {
         </section>
 
         <section className="stats-grid" aria-label="Pipeline summary">
-          <Stat label="CRE variants" value={stats?.characters_total} note={`${formatCount(stats?.characters_complete)} complete`} />
+          <Stat label="Characters" value={stats?.characters_total} note={`${formatCount(stats?.characters_complete)} complete`} />
           <Stat label="Matched CREs" value={stats?.characters_matched} note={`${formatCount(stats?.characters_partially_matched)} partial · ${formatCount(stats?.characters_missing_dialogue)} missing`} />
           <Stat label="Unavailable CREs" value={stats?.characters_unavailable} note={attributionNote} />
           <Stat label="DLG inventory" value={stats?.dialogues_total} note={`${formatCount(stats?.dialogues_complete)} fully decoded`} />
@@ -273,10 +273,11 @@ export default function App() {
         </section>
 
         <nav className="view-tabs" role="tablist" aria-label="Pipeline data views">
-          <Tab active={activeTab === "characters"} count={stats?.characters_total} label="CRE variants" onClick={() => openTab("characters")} />
+          <Tab active={activeTab === "voices"} count={stats?.voices_total} label="Voices" onClick={() => openTab("voices")} />
+          <Tab active={activeTab === "characters"} count={stats?.characters_total} label="Characters" onClick={() => openTab("characters")} />
           <Tab active={activeTab === "dialogues"} count={stats?.dialogues_total} label="Dialogues" onClick={() => openTab("dialogues")} />
           <Tab active={activeTab === "lines"} count={stats?.line_records_total} label="Lines" onClick={() => openTab("lines")} />
-          <Tab active={activeTab === "voices"} count={stats?.voices_total} label="Voices" onClick={() => openTab("voices")} />
+          <Tab active={activeTab === "sounds"} count={stats?.character_sounds_total} label="Sounds" onClick={() => openTab("sounds")} />
           <Tab active={activeTab === "transitions"} count={stats?.transition_edges_total} label="Transitions" onClick={() => openTab("transitions")} />
           <Tab active={activeTab === "races"} count={stats?.races_total} label="Races" onClick={() => openTab("races")} />
           <Tab active={activeTab === "classes"} count={stats?.classes_total} label="Classes" onClick={() => openTab("classes")} />
@@ -286,6 +287,11 @@ export default function App() {
 
         {refreshError != null && (
           <ErrorBanner message={refreshError} onDismiss={() => setRefreshError(null)} />
+        )}
+        {visitedTabs.has("voices") && (
+          <div hidden={activeTab !== "voices"}>
+            <VoiceBrowser active={activeTab === "voices"} />
+          </div>
         )}
         {visitedTabs.has("characters") && (
           <div hidden={activeTab !== "characters"}>
@@ -302,9 +308,9 @@ export default function App() {
             <LineBrowser active={activeTab === "lines"} />
           </div>
         )}
-        {visitedTabs.has("voices") && (
-          <div hidden={activeTab !== "voices"}>
-            <VoiceBrowser active={activeTab === "voices"} />
+        {visitedTabs.has("sounds") && (
+          <div hidden={activeTab !== "sounds"}>
+            <SoundBrowser active={activeTab === "sounds"} soundSlots={options?.sound_slot_ids ?? []} />
           </div>
         )}
         {visitedTabs.has("transitions") && (
@@ -410,11 +416,11 @@ function CharacterBrowser({
     <section className="browser-card tab-panel">
       <BrowserHeading
         eyebrow="EFFECTIVE CRE INVENTORY"
-        title="CRE variants"
-        description="Every effective creature resource, kept separate even when several variants share one canonical voice."
+        title="Characters"
+        description="Every effective creature resource, with each game object linked to its canonical voice."
         loading={loading}
         count={page.total}
-        noun="CRE variants"
+        noun="characters"
       />
       {browser.error != null && <ErrorBanner message={browser.error} />}
       <div className="toolbar">
@@ -526,7 +532,7 @@ function CharacterBrowser({
               </tr>
             ))}
             {!loading && page.items.length === 0 && (
-              <tr><td className="empty-state" colSpan={16}>No CRE variants match these filters.</td></tr>
+              <tr><td className="empty-state" colSpan={16}>No characters match these filters.</td></tr>
             )}
           </tbody>
         </table>

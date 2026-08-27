@@ -4,6 +4,7 @@ import { withQuery } from "./api";
 import type {
   ClassQuery,
   IdentifierQuery,
+  SoundQuery,
   TransitionQuery,
   VoiceQuery,
 } from "./types";
@@ -63,7 +64,6 @@ describe("metadata API queries", () => {
       sort: "",
       direction: "desc",
       voice_id: "aerie-companion",
-      has_dialogue: "true",
     };
 
     const url = new URL(withQuery("/api/voices", query), "http://bgvoice.test");
@@ -74,7 +74,28 @@ describe("metadata API queries", () => {
       q: "aerie",
       direction: "desc",
       voice_id: "aerie-companion",
-      has_dialogue: "true",
+    });
+  });
+
+  it("serializes sound-slot filtering independently from voices", () => {
+    const query: SoundQuery = {
+      page: 2,
+      page_size: 50,
+      q: "battle cry",
+      sort: "slot_id",
+      direction: "asc",
+      slot_id: "9",
+    };
+
+    const url = new URL(withQuery("/api/sounds", query), "http://bgvoice.test");
+
+    expect(Object.fromEntries(url.searchParams)).toEqual({
+      page: "2",
+      page_size: "50",
+      q: "battle cry",
+      sort: "slot_id",
+      direction: "asc",
+      slot_id: "9",
     });
   });
 

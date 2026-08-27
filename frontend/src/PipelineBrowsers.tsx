@@ -1,8 +1,12 @@
-import { getTransitions, getVoices } from "./api";
-import { SelectFilter, TableBrowser } from "./browser";
+import { getSounds, getTransitions, getVoices } from "./api";
+import { FacetFilter, SelectFilter, TableBrowser } from "./browser";
 import { formatBytes, formatCount, formatHex } from "./format";
 import type { Column } from "./browser";
 import type {
+  FacetValue,
+  SoundQuery,
+  SoundRow,
+  SoundSort,
   TransitionQuery,
   TransitionRow,
   TransitionSort,
@@ -18,7 +22,15 @@ const DEFAULT_VOICE_QUERY: VoiceQuery = {
   page_size: 25,
   q: "",
   voice_id: "",
-  has_dialogue: "",
+  sort: "",
+  direction: "desc",
+};
+
+const DEFAULT_SOUND_QUERY: SoundQuery = {
+  page: 1,
+  page_size: 25,
+  q: "",
+  slot_id: "",
   sort: "",
   direction: "desc",
 };
@@ -48,10 +60,10 @@ const VOICE_COLUMNS = [
     render: (row) => <StarterPrompt value={row.prompt} />,
   },
   {
-    label: "CRE variants",
+    label: "Characters",
     sort: "variant_count",
     render: (row) => (
-      <ResourceList count={row.variant_count} values={row.variant_resource_names} noun="variants" />
+      <ResourceList count={row.variant_count} values={row.variant_resource_names} noun="characters" />
     ),
   },
   {
@@ -74,6 +86,46 @@ const VOICE_COLUMNS = [
     render: (row) => <span className="mono">{formatBytes(row.serialized_size)}</span>,
   },
 ] satisfies readonly Column<VoiceRow, VoiceSort>[];
+
+const SOUND_COLUMNS = [
+  {
+    label: "Character",
+    sort: "character_resource_name",
+    render: (row) => (
+      <div className="definition-name">
+        <strong>{row.character_name}</strong>
+        <span className="mono">{row.character_resource_name}</span>
+      </div>
+    ),
+  },
+  {
+    label: "Sound slot",
+    sort: "slot_id",
+    render: (row) => (
+      <SoundSlot
+        slotId={row.slot_id}
+        symbols={row.slot_symbols}
+        groups={row.slot_groups}
+      />
+    ),
+  },
+  {
+    label: "Strref",
+    sort: "strref",
+    numeric: true,
+    render: (row) => <span className="mono">{row.strref}</span>,
+  },
+  {
+    label: "Resolved sound text",
+    render: (row) => <ExpandableText value={row.text} unresolved="Unresolved strref" />,
+  },
+  {
+    label: "Object size",
+    sort: "serialized_size",
+    numeric: true,
+    render: (row) => <span className="mono">{formatBytes(row.serialized_size)}</span>,
+  },
+] satisfies readonly Column<SoundRow, SoundSort>[];
 
 const TRANSITION_COLUMNS = [
   {
@@ -135,24 +187,45 @@ export function VoiceBrowser({ active }: { active: boolean }) {
       rowKey={(row) => row.id}
       eyebrow="CANONICAL VOICE INVENTORY"
       title="Voices"
-      description="One reusable voice definition per canonical speaker, with every CRE variant and direct dialogue workload."
+      description="One reusable voice definition per character name, with its characters and attributed dialogue workload."
       noun="voices"
-      searchPlaceholder="Search canonical names, IDs, prompts, variants, and dialogues…"
-      renderFilters={({ query, update }) => (
-        <>
-          <SelectFilter
-            label="Dialogue"
-            value={query.has_dialogue}
-            values={BOOLEAN_FILTERS}
-            labels={{ true: "Has dialogue", false: "No dialogue" }}
-            onChange={(value) => update("has_dialogue", value)}
-          />
-          <VoiceIdChip voiceId={query.voice_id} />
-        </>
-      )}
-      filterValues={(query) => [query.voice_id, query.has_dialogue]}
+      searchPlaceholder="Search canonical names, IDs, prompts, characters, and dialogues…"
+      renderFilters={({ query }) => <VoiceIdChip voiceId={query.voice_id} />}
+      filterValues={(query) => [query.voice_id]}
       className="voice-browser"
       tableClassName="voice-table"
+    />
+  );
+}
+
+export function SoundBrowser({ active, soundSlots }: {
+  active: boolean;
+  soundSlots: FacetValue[];
+}) {
+  return (
+    <TableBrowser
+      tab="sounds"
+      active={active}
+      defaultQuery={DEFAULT_SOUND_QUERY}
+      loadPage={getSounds}
+      columns={SOUND_COLUMNS}
+      rowKey={(row) => row.key}
+      eyebrow="CRE SOUNDSET INVENTORY"
+      title="Sounds"
+      description="Character sound strings resolved through SNDSLOT.IDS, SPEECH.2DA, and dialog.tlk."
+      noun="sounds"
+      searchPlaceholder="Search character names, resources, sound slots, and resolved text…"
+      renderFilters={({ query, update }) => (
+        <FacetFilter
+          label="Sound slot"
+          value={query.slot_id}
+          values={soundSlots}
+          onChange={(value) => update("slot_id", value)}
+        />
+      )}
+      filterValues={(query) => [query.slot_id]}
+      className="sound-browser"
+      tableClassName="sound-table"
     />
   );
 }
@@ -218,6 +291,34 @@ export function ResourceList({ count, values, noun }: {
       <div className="definition-tags">
         {values.map((value) => <span className="mono" key={value}>{value}</span>)}
       </div>
+    </details>
+  );
+}
+
+export function SoundSlot({ slotId, symbols, groups }: {
+  slotId: number;
+  symbols: string[];
+  groups: string[];
+}) {
+  return (
+    <div className="definition-name">
+      <strong>{symbols[0]?.replaceAll("_", " ") ?? `Slot ${slotId}`}</strong>
+      <span className="mono">
+        ID {slotId}{symbols.length > 1 ? ` · ${symbols.slice(1).join(", ")}` : ""}
+      </span>
+      {groups.length > 0 && (
+        <span>SPEECH · {groups.map((group) => group.replaceAll("_", " ")).join(", ")}</span>
+      )}
+    </div>
+  );
+}
+
+function ExpandableText({ value, unresolved }: { value: string | null; unresolved: string }) {
+  if (value == null) return <span className="muted">{unresolved}</span>;
+  return (
+    <details className="table-text-details">
+      <summary>{value}</summary>
+      <p>{value}</p>
     </details>
   );
 }

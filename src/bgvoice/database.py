@@ -51,7 +51,6 @@ from bgvoice.models import (
     VoiceId,
     VoiceResource,
     compose_search_text,
-    proposed_voice_id,
     utc_now,
 )
 
@@ -1366,10 +1365,14 @@ class PipelineDatabase:
                 attribution_records.append(record)
                 character_counts.update(dialogue.resource_name.casefold() for dialogue in resolved)
 
-            voice_ids = _voice_ids(characters)
             voice_records = [
                 _voice_resource_record(run_id, resource)
-                for resource in _voice_resources(characters, identifiers, voice_ids)
+                for resource in _voice_resources(
+                    characters,
+                    dialogues,
+                    identifiers,
+                    attribution_records,
+                )
             ]
             statuses = Counter(record.status for record in attribution_records)
             attributed_dialogues = [
@@ -1894,14 +1897,20 @@ def _character_sound_record(
 
 def _voice_resources(
     characters: Sequence[CharacterRecord],
+    dialogues: Sequence[DialogueRecord],
     identifiers: Sequence[IdentifierDefinitionRecord],
-    voice_ids: dict[str, str],
+    attributions: Sequence[CharacterAttributionRecord],
 ) -> list[VoiceResource]:
     members_by_voice: dict[str, list[CharacterRecord]] = {}
     for character in characters:
         if character.detail is not None:
-            voice_id = voice_ids[character.resource_name.casefold()]
+            voice_id = character.detail.display_name.casefold()
             members_by_voice.setdefault(voice_id, []).append(character)
+
+    attribution_by_character = {
+        attribution.character_resource_name.casefold(): attribution for attribution in attributions
+    }
+    dialogues_by_resource = {dialogue.resource_name.casefold(): dialogue for dialogue in dialogues}
 
     labels = {
         (definition.kind, definition.value): " / ".join(
@@ -1914,84 +1923,31 @@ def _voice_resources(
         members = sorted(unsorted_members, key=lambda member: member.resource_name.casefold())
         representative = _voice_representative(members)
         assert representative.detail is not None
-        dialogue_resrefs: dict[str, str] = {}
+        voice_dialogues: dict[str, DialogueRecord] = {}
         for member in members:
-            assert member.detail is not None
-            if member.detail.dialog_resref is not None:
-                dialogue_resrefs.setdefault(
-                    member.detail.dialog_resref.casefold(),
-                    member.detail.dialog_resref,
-                )
+            attribution = attribution_by_character[member.resource_name.casefold()]
+            for resource_name in attribution.resolved_dialogue_resource_names:
+                dialogue = dialogues_by_resource[resource_name.casefold()]
+                if dialogue.detail is not None and dialogue.detail.npc_line_count > 0:
+                    voice_dialogues.setdefault(dialogue.resref.casefold(), dialogue)
+        if not voice_dialogues:
+            continue
         resources.append(
             VoiceResource(
                 id=VoiceId(voice_id),
                 display_name=representative.detail.display_name,
                 prompt=_voice_prompt(representative, labels),
                 variant_resource_names=[member.resource_name for member in members],
-                dialogue_resrefs=sorted(dialogue_resrefs.values(), key=str.casefold),
+                dialogue_resrefs=[
+                    dialogue.resref
+                    for dialogue in sorted(
+                        voice_dialogues.values(),
+                        key=lambda dialogue: dialogue.resref.casefold(),
+                    )
+                ],
             )
         )
     return resources
-
-
-def _voice_ids(characters: Sequence[CharacterRecord]) -> dict[str, str]:
-    """Resolve false collisions where one script variable names several speakers."""
-    groups: dict[VoiceId, list[CharacterRecord]] = {}
-    for character in characters:
-        detail = character.detail
-        if detail is None:
-            continue
-        voice_id = proposed_voice_id(
-            detail.death_variable,
-            detail.dialog_resref,
-            _character_name_strref(character),
-            character.resref,
-        )
-        groups.setdefault(voice_id, []).append(character)
-
-    resolved: dict[str, str] = {}
-    for voice_id, members in groups.items():
-        named_members: dict[str, list[CharacterRecord]] = {}
-        unnamed_members: list[CharacterRecord] = []
-        for character in members:
-            if _character_name_strref(character) is None:
-                unnamed_members.append(character)
-            else:
-                assert character.detail is not None
-                named_members.setdefault(character.detail.display_name.casefold(), []).append(
-                    character
-                )
-
-        if not str(voice_id).startswith("dv:") or len(named_members) <= 1:
-            for character in members:
-                resolved[character.resource_name.casefold()] = str(voice_id)
-            continue
-
-        for same_name_members in named_members.values():
-            strrefs = Counter(
-                name_strref
-                for character in same_name_members
-                if (name_strref := _character_name_strref(character)) is not None
-            )
-            canonical_strref = min(strrefs, key=lambda value: (-strrefs[value], value))
-            for character in same_name_members:
-                resolved[character.resource_name.casefold()] = f"{voice_id}:name:{canonical_strref}"
-        for character in unnamed_members:
-            resolved[character.resource_name.casefold()] = (
-                f"{voice_id}:cre:{character.resref.casefold()}"
-            )
-    return resolved
-
-
-def _character_name_strref(character: CharacterRecord) -> int | None:
-    detail = character.detail
-    if detail is None:
-        return None
-    if detail.short_name is not None:
-        return detail.short_name_strref
-    if detail.long_name is not None:
-        return detail.long_name_strref
-    return None
 
 
 def _voice_representative(members: Sequence[CharacterRecord]) -> CharacterRecord:

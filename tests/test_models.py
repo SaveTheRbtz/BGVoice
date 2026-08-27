@@ -45,7 +45,6 @@ from bgvoice.models import (
     clean_display_name,
     cre_kit_value_from_bytes,
     kit_ids_value_from_cre,
-    proposed_voice_id,
 )
 from tests.factories import make_dialogue_dump, make_dump, make_resource
 
@@ -111,32 +110,9 @@ def test_character_detail_falls_back_to_resref() -> None:
     assert detail.dialog_resref is None
 
 
-def test_character_voice_identity_uses_long_name_then_cre_resref() -> None:
-    assert proposed_voice_id("NONE", "0", 101, "RHian") == "dlg:0:name:101"
-    assert proposed_voice_id("NONE", None, None, "EMPTY") == "dlg:none:cre:empty"
-
-
-@pytest.mark.parametrize(
-    ("death_variable", "dialog", "expected"),
-    [
-        ("HEXXAT", "HEXXAT", "dv:hexxat"),
-        ("heXXat", "HEXXA25A", "dv:hexxat"),
-        ("None", "HEXXAT", "dlg:hexxat:name:100"),
-        ("NONE", "0", "dlg:0:name:100"),
-        ("", None, "dlg:none:name:100"),
-    ],
-)
-def test_character_voice_identity_is_stable_for_every_complete_cre(
-    death_variable: str,
-    dialog: str | None,
-    expected: str,
-) -> None:
-    assert proposed_voice_id(death_variable, dialog, 100, "AERIE") == expected
-
-
 def test_voice_resource_owns_members_and_derived_fields() -> None:
     voice = VoiceResource(
-        id=VoiceId("dv:hexxat"),
+        id=VoiceId("hexxat"),
         display_name="Hexxat",
         prompt="Name: Hexxat\nGender: Female",
         variant_resource_names=["OHHEX8.CRE", "OHHEX25.CRE"],
@@ -145,7 +121,7 @@ def test_voice_resource_owns_members_and_derived_fields() -> None:
 
     assert voice.variant_count == 2
     assert voice.search_text == (
-        "dv:hexxat Hexxat Name: Hexxat\nGender: Female OHHEX8.CRE OHHEX25.CRE HEXXA25A HEXXAT"
+        "hexxat Hexxat Name: Hexxat\nGender: Female OHHEX8.CRE OHHEX25.CRE HEXXA25A HEXXAT"
     )
 
 
