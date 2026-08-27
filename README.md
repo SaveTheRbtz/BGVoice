@@ -48,9 +48,10 @@ uv run bgvoice attribute-dialogues
    reused by differently named speakers, their resolved names disambiguate it without splitting
    same-name variants that use different TLK strrefs. CREs without a useful death variable use the
    direct dialogue resref plus the resolved short- or long-name strref, then the CRE resref when no
-   name resolves. Each voice retains its CRE variants and distinct direct DLG resources, counts each
-   DLG's NPC states once, and receives a deterministic prompt from one real representative CRE's
-   name, gender, race, class, optional non-trueclass kit, and alignment metadata.
+   name resolves. Each voice retains its CRE membership and distinct direct DLG resrefs, and
+   receives a deterministic prompt from one real representative CRE's name, gender, race, class,
+   optional non-trueclass kit, and alignment metadata. The browser resolves the DLG metrics without
+   copying them into the voice record.
 
 The effective EET `TOKENTXT.2DA` currently has no rows, so there is nothing useful to persist from
 it. Runtime tokens found in DLG text are retained verbatim instead; the engine and calendar tables
@@ -65,12 +66,14 @@ Extraction defaults to the available logical CPU count, skips completed records,
 The default database is the `data/bgvoice.lancedb` directory. Strict Pydantic projections validate
 the fields consumed from `ie-cli` output, while tolerating unrelated fields added by future
 versions; typed LanceModel rows define the stored schema. The pipeline keeps its current
-state in typed LanceDB tables with native full-text indexes. Canonical IDS values are normalized
-separately from campaign-specific race and class text, and duplicate IDS aliases are preserved.
-Generated
-databases are local and reproducible, so schema changes are handled by rebuilding from the EET
-installation rather than migrations. They are also ignored because they contain game text; see
-[`data/README.md`](data/README.md).
+state in typed LanceDB tables with native full-text indexes. CRE and DLG rows own only their
+resource envelope and nested extraction result; child lines, transitions, and sounds own their
+intrinsic coordinates and content. Dialogue attribution and voice membership are published as one
+run-scoped generation, with the completed run marker written last. Canonical IDS values are
+normalized separately from campaign-specific race and class text, and duplicate IDS aliases are
+preserved. Generated databases are local and reproducible, so schema changes are handled by
+rebuilding from the EET installation rather than migrations. They are ignored because they contain
+game text; see [`data/README.md`](data/README.md).
 
 ## Read-only browser
 

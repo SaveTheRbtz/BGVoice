@@ -122,7 +122,7 @@ tbody tr:hover { background: #151b21; }
 .status-failed,
 .status-complete_with_errors,
 .status-missing_dialogue,
-.status-dialogue_failed,
+.status-partial_match,
 .status-character_unavailable { color: var(--danger); background: #2e1d20; }
 .status-no_dialogue { color: var(--muted); background: #20262d; }
 .open-detail { width: 28px; height: 28px; border-radius: 6px; border: 1px solid transparent; background: transparent; color: #667280; }

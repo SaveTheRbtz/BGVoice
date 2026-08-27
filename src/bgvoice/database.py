@@ -23,18 +23,19 @@ from bgvoice.models import (
     CampaignResourceBinding,
     CampaignResourceKind,
     CharacterDetail,
+    CharacterExtraction,
     CharacterResourceRole,
     CharacterSound,
     ClassTextRow,
     CreResource,
     DatabaseStats,
     DetailStatus,
-    DialogueDetail,
     DialogueExtraction,
     DialogueLine,
     DialogueLineKind,
     DialogueTransitionEdge,
     DlgResource,
+    ExtractionState,
     HappinessAlignment,
     IdentifierDefinition,
     IdentifierKind,
@@ -42,10 +43,10 @@ from bgvoice.models import (
     KitDefinition,
     MetadataExtraction,
     RaceTextRow,
+    ResourceSource,
     ResourceTargetType,
     RunKind,
     RunStatus,
-    SourceKind,
     TerminalRunStatus,
     VoiceId,
     VoiceResource,
@@ -56,6 +57,7 @@ from bgvoice.models import (
 
 _CHARACTERS = "characters"
 _CHARACTER_SOUNDS = "character_sounds"
+_CHARACTER_DIALOGUES = "character_dialogues"
 _VOICE_RESOURCES = "voice_resources"
 _DIALOGUES = "dialogues"
 _DIALOGUE_LINES = "dialogue_lines"
@@ -101,6 +103,7 @@ TABLE_NAMES = frozenset(
     {
         _CHARACTERS,
         _CHARACTER_SOUNDS,
+        _CHARACTER_DIALOGUES,
         _VOICE_RESOURCES,
         _DIALOGUES,
         _DIALOGUE_LINES,
@@ -132,7 +135,6 @@ class IndexSpec:
 TABLE_INDEXES: dict[str, tuple[IndexSpec, ...]] = {
     _CHARACTERS: (
         IndexSpec("resource_name", BTree(), "characters_resource_name_btree"),
-        IndexSpec("voice_id", BTree(), "characters_voice_id_btree"),
         IndexSpec("search_text", _FTS, "characters_search_fts"),
     ),
     _CHARACTER_SOUNDS: (
@@ -145,8 +147,19 @@ TABLE_INDEXES: dict[str, tuple[IndexSpec, ...]] = {
         IndexSpec("slot_id", BTree(), "character_sounds_slot_btree"),
         IndexSpec("search_text", _FTS, "character_sounds_search_fts"),
     ),
+    _CHARACTER_DIALOGUES: (
+        IndexSpec("key", BTree(), "character_dialogues_key_btree"),
+        IndexSpec("run_id", BTree(), "character_dialogues_run_btree"),
+        IndexSpec(
+            "character_resource_name",
+            BTree(),
+            "character_dialogues_character_btree",
+        ),
+    ),
     _VOICE_RESOURCES: (
-        IndexSpec("id", BTree(), "voice_resources_id_btree"),
+        IndexSpec("key", BTree(), "voice_resources_key_btree"),
+        IndexSpec("run_id", BTree(), "voice_resources_run_btree"),
+        IndexSpec("voice_id", BTree(), "voice_resources_voice_id_btree"),
         IndexSpec("search_text", _FTS, "voice_resources_search_fts"),
     ),
     _DIALOGUES: (
@@ -289,13 +302,24 @@ class _Record(LanceModel):
     def to_arrow_schema(cls) -> pa.Schema:
         """Store typed string enums as ordinary UTF-8 Lance columns."""
         schema = super().to_arrow_schema()
-        fields = [
-            pa.field(field.name, pa.string(), field.nullable, field.metadata)
-            if pa.types.is_dictionary(field.type)
-            else field
-            for field in schema
-        ]
+        fields = [_string_enum_field(field) for field in schema]
         return pa.schema(fields, metadata=schema.metadata)
+
+
+def _string_enum_field(field: pa.Field, parent_nullable: bool = False) -> pa.Field:
+    field_type = field.type
+    if pa.types.is_dictionary(field_type):
+        field_type = pa.string()
+    elif pa.types.is_struct(field_type):
+        field_type = pa.struct(
+            [_string_enum_field(child, parent_nullable or field.nullable) for child in field_type]
+        )
+    return pa.field(
+        field.name,
+        field_type,
+        field.nullable or parent_nullable,
+        field.metadata,
+    )
 
 
 class _KeyedRecord(_Record):
@@ -304,140 +328,102 @@ class _KeyedRecord(_Record):
     key: str = Field(min_length=1)
 
 
+class CharacterClassLevels(BaseModel):
+    """Storage-compatible CRE class levels."""
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    first_class: int = Field(ge=0, le=0xFF)
+    second_class: int = Field(ge=0, le=0xFF)
+    third_class: int = Field(ge=0, le=0xFF)
+
+
+class CharacterBaseAttributes(BaseModel):
+    """Storage-compatible CRE ability scores."""
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    strength: int = Field(ge=0, le=0xFF)
+    strength_bonus: int = Field(ge=0, le=100)
+    intelligence: int = Field(ge=0, le=0xFF)
+    wisdom: int = Field(ge=0, le=0xFF)
+    dexterity: int = Field(ge=0, le=0xFF)
+    constitution: int = Field(ge=0, le=0xFF)
+    charisma: int = Field(ge=0, le=0xFF)
+
+
+class CharacterData(BaseModel):
+    """Storage-compatible intrinsic CRE detail."""
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    display_name: str
+    short_name: str | None
+    short_name_strref: int = Field(ge=0)
+    long_name: str | None
+    long_name_strref: int = Field(ge=0)
+    death_variable: str | None
+    dialog_resref: str | None
+    gender_id: int = Field(ge=0)
+    race_id: int = Field(ge=0)
+    class_id: int = Field(ge=0)
+    alignment_id: int = Field(ge=0)
+    enemy_ally_id: int = Field(ge=0)
+    general_id: int = Field(ge=0)
+    specific_id: int = Field(ge=0)
+    animation_id: int = Field(ge=0)
+    racial_enemy_id: int = Field(ge=0)
+    class_levels: CharacterClassLevels
+    base_attributes: CharacterBaseAttributes
+    morale: int = Field(ge=0)
+    morale_break: int = Field(ge=0)
+    morale_recovery_time: int = Field(ge=0)
+    reputation: int = Field(ge=0)
+    kit_raw_bytes: list[int]
+    cre_kit_value: int = Field(ge=0)
+    kit_ids_value: int | None = Field(default=None, ge=0)
+    override_script: str | None
+    class_script: str | None
+    race_script: str | None
+    general_script: str | None
+    default_script: str | None
+    small_portrait: str | None
+    large_portrait: str | None
+    cre_version: str
+
+
+class DialogueData(BaseModel):
+    """Storage-compatible intrinsic DLG detail."""
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    dlg_version: str
+    state_count: int = Field(ge=0)
+    transition_count: int = Field(ge=0)
+    npc_line_count: int = Field(ge=0)
+    player_line_count: int = Field(ge=0)
+    journal_line_count: int = Field(ge=0)
+    dialogue_line_count: int = Field(ge=0)
+
+
 class CharacterRecord(_Record):
-    """One effective CRE and its current extraction and attribution state."""
+    """One effective CRE and only the detail owned by CRE extraction."""
 
     resource_name: str = Field(min_length=1)
     resref: str = Field(min_length=1, max_length=8)
-    source_kind: SourceKind = Field(strict=False)
-    source_path: str = Field(min_length=1)
-
-    display_name: str | None = None
-    short_name: str | None = None
-    short_name_strref: int | None = Field(default=None, ge=0)
-    long_name: str | None = None
-    long_name_strref: int | None = Field(default=None, ge=0)
-    death_variable: str | None = None
-    dialog_resref: str | None = None
-    gender_id: int | None = Field(default=None, ge=0)
-    race_id: int | None = Field(default=None, ge=0)
-    class_id: int | None = Field(default=None, ge=0)
-    alignment_id: int | None = Field(default=None, ge=0)
-    enemy_ally_id: int | None = Field(default=None, ge=0)
-    general_id: int | None = Field(default=None, ge=0)
-    specific_id: int | None = Field(default=None, ge=0)
-    animation_id: int | None = Field(default=None, ge=0)
-    racial_enemy_id: int | None = Field(default=None, ge=0)
-    kit_raw_bytes: list[int] | None = None
-    cre_kit_value: int | None = Field(default=None, ge=0)
-    kit_ids_value: int | None = Field(default=None, ge=0)
-    first_class_level: int | None = Field(default=None, ge=0)
-    second_class_level: int | None = Field(default=None, ge=0)
-    third_class_level: int | None = Field(default=None, ge=0)
-    strength: int | None = Field(default=None, ge=0, le=0xFF)
-    strength_bonus: int | None = Field(default=None, ge=0, le=100)
-    intelligence: int | None = Field(default=None, ge=0, le=0xFF)
-    wisdom: int | None = Field(default=None, ge=0, le=0xFF)
-    dexterity: int | None = Field(default=None, ge=0, le=0xFF)
-    constitution: int | None = Field(default=None, ge=0, le=0xFF)
-    charisma: int | None = Field(default=None, ge=0, le=0xFF)
-    morale: int | None = Field(default=None, ge=0, le=0xFF)
-    morale_break: int | None = Field(default=None, ge=0, le=0xFF)
-    morale_recovery_time: int | None = Field(default=None, ge=0, le=0xFFFF)
-    reputation: int | None = Field(default=None, ge=0, le=0xFF)
-    override_script: str | None = None
-    class_script: str | None = None
-    race_script: str | None = None
-    general_script: str | None = None
-    default_script: str | None = None
-    small_portrait: str | None = None
-    large_portrait: str | None = None
-    cre_version: str | None = None
-    voice_id: str | None = None
-
+    source: ResourceSource
+    extraction: ExtractionState
+    detail: CharacterData | None = None
     serialized_size: int | None = Field(default=None, ge=0)
-    detail_status: DetailStatus = Field(strict=False)
-    detail_error: str | None = None
-    updated_at: str = Field(min_length=1)
-    has_dialog: bool
-
-    attribution_status: AttributionStatus | None = Field(default=None, strict=False)
-    dialogue_status: DetailStatus | None = Field(default=None, strict=False)
-    declared_dialogue_count: int | None = Field(default=None, ge=0)
-    resolved_dialogue_count: int | None = Field(default=None, ge=0)
-    dialogue_line_count: int | None = Field(default=None, ge=0)
-    npc_line_count: int | None = Field(default=None, ge=0)
-    player_line_count: int | None = Field(default=None, ge=0)
-    journal_line_count: int | None = Field(default=None, ge=0)
-    dialogue_state_count: int | None = Field(default=None, ge=0)
-    dialogue_transition_count: int | None = Field(default=None, ge=0)
-    dialogue_serialized_size: int | None = Field(default=None, ge=0)
-    attribution_completed_at: str | None = None
     search_text: str
-
-    @property
-    def resource_search_text(self) -> str:
-        """Return the stable inventory fields shared by every extraction state."""
-        return compose_search_text(self.resource_name, self.resref, self.source_path)
 
     @model_validator(mode="after")
     def validate_state(self) -> Self:
-        if self.detail_status is DetailStatus.COMPLETE:
-            required = (
-                self.display_name,
-                self.short_name_strref,
-                self.long_name_strref,
-                self.gender_id,
-                self.race_id,
-                self.class_id,
-                self.alignment_id,
-                self.enemy_ally_id,
-                self.general_id,
-                self.specific_id,
-                self.animation_id,
-                self.racial_enemy_id,
-                self.kit_raw_bytes,
-                self.cre_kit_value,
-                self.first_class_level,
-                self.second_class_level,
-                self.third_class_level,
-                self.strength,
-                self.strength_bonus,
-                self.intelligence,
-                self.wisdom,
-                self.dexterity,
-                self.constitution,
-                self.charisma,
-                self.morale,
-                self.morale_break,
-                self.morale_recovery_time,
-                self.reputation,
-                self.cre_version,
-                self.voice_id,
-                self.serialized_size,
-            )
-            assert all(value is not None for value in required), (
-                "complete character record is missing required CRE detail"
-            )
-        else:
-            assert self.voice_id is None, "pending and failed characters cannot have a voice"
-        assert self.has_dialog == (
-            self.detail_status is DetailStatus.COMPLETE and self.dialog_resref is not None
-        ), "has_dialog disagrees with the extracted CRE detail"
-        assert (self.attribution_status is None) == (self.attribution_completed_at is None), (
-            "character attribution status and completion time must be set together"
+        complete = self.extraction.status is DetailStatus.COMPLETE
+        assert complete == (self.detail is not None), "only complete CREs carry detail"
+        assert complete == (self.serialized_size is not None), (
+            "only complete CREs carry a serialized size"
         )
-        assert (self.declared_dialogue_count is None) == (self.resolved_dialogue_count is None), (
-            "declared and resolved dialogue counts must be set together"
-        )
-        assert (self.declared_dialogue_count is None) == (self.attribution_completed_at is None), (
-            "dialogue reference counts are published with attribution"
-        )
-        if self.declared_dialogue_count is not None:
-            assert self.resolved_dialogue_count is not None
-            assert self.resolved_dialogue_count <= self.declared_dialogue_count, (
-                "resolved dialogue count cannot exceed declared dialogue count"
-            )
         return self
 
 
@@ -445,9 +431,8 @@ class CharacterSoundRecord(_Record):
     """One populated CRE soundset slot."""
 
     id: str = Field(min_length=1)
+    run_id: str = Field(min_length=1)
     character_resource_name: str = Field(min_length=1)
-    character_resref: str = Field(min_length=1, max_length=8)
-    source_kind: SourceKind = Field(strict=False)
     slot_id: int = Field(ge=0, le=0xFF)
     strref: int = Field(ge=0, le=0xFFFF_FFFF)
     text: str | None
@@ -461,78 +446,69 @@ class CharacterSoundRecord(_Record):
         return self
 
 
-class VoiceResourceRecord(_Record):
-    """One persisted voice and its complete CRE/DLG membership."""
+class CharacterAttributionRecord(_Record):
+    """One character's run-scoped dialogue attribution result."""
 
-    id: str = Field(min_length=1)
-    display_name: str = Field(min_length=1)
-    prompt: str = Field(min_length=1)
-    variant_resource_names: list[str]
-    dialogue_resrefs: list[str]
-    variant_count: int = Field(gt=0)
-    dialogue_count: int = Field(ge=0)
-    npc_line_count: int = Field(ge=0)
-    serialized_size: int = Field(ge=0)
-    search_text: str
+    key: str = Field(min_length=1)
+    run_id: str = Field(min_length=1)
+    character_resource_name: str = Field(min_length=1)
+    status: AttributionStatus = Field(strict=False)
+    dialogue_status: DetailStatus | None = Field(default=None, strict=False)
+    declared_dialogue_resrefs: list[str]
+    missing_dialogue_resrefs: list[str]
+    resolved_dialogue_resource_names: list[str]
+
+    @staticmethod
+    def key_for(run_id: str, character_resource_name: str) -> str:
+        return f"{run_id}:{character_resource_name.upper()}"
 
     @model_validator(mode="after")
-    def validate_counts(self) -> Self:
-        assert self.variant_count == len(self.variant_resource_names), (
-            "voice variant count must equal its CRE member count"
-        )
-        assert self.dialogue_count == len(self.dialogue_resrefs), (
-            "voice dialogue count must equal its direct DLG count"
-        )
+    def validate_key(self) -> Self:
+        expected = self.key_for(self.run_id, self.character_resource_name)
+        assert self.key == expected, f"character attribution key must be {expected!r}"
+        return self
+
+
+class VoiceResourceRecord(_Record):
+    """One run-scoped canonical voice and its CRE membership."""
+
+    key: str = Field(min_length=1)
+    run_id: str = Field(min_length=1)
+    voice_id: str = Field(min_length=1)
+    display_name: str = Field(min_length=1)
+    prompt: str = Field(min_length=1)
+    variant_resource_names: list[str] = Field(min_length=1)
+    dialogue_resrefs: list[str]
+    search_text: str
+
+    @staticmethod
+    def key_for(run_id: str, voice_id: str) -> str:
+        return f"{run_id}:{voice_id}"
+
+    @model_validator(mode="after")
+    def validate_key(self) -> Self:
+        expected = self.key_for(self.run_id, self.voice_id)
+        assert self.key == expected, f"voice resource key must be {expected!r}"
         return self
 
 
 class DialogueRecord(_Record):
-    """One effective DLG and its current extraction and attribution state."""
+    """One effective DLG and only the detail owned by DLG extraction."""
 
     resource_name: str = Field(min_length=1)
     resref: str = Field(min_length=1, max_length=8)
-    source_kind: SourceKind = Field(strict=False)
-    source_path: str = Field(min_length=1)
-
-    dlg_version: str | None = None
-    state_count: int | None = Field(default=None, ge=0)
-    transition_count: int | None = Field(default=None, ge=0)
-    npc_line_count: int | None = Field(default=None, ge=0)
-    player_line_count: int | None = Field(default=None, ge=0)
-    journal_line_count: int | None = Field(default=None, ge=0)
-    dialogue_line_count: int | None = Field(default=None, ge=0)
+    source: ResourceSource
+    extraction: ExtractionState
+    detail: DialogueData | None = None
     serialized_size: int | None = Field(default=None, ge=0)
-    detail_status: DetailStatus = Field(strict=False)
-    detail_error: str | None = None
-    updated_at: str = Field(min_length=1)
-
-    character_count: int = Field(ge=0)
-    attribution_completed_at: str | None = None
     search_text: str
 
     @model_validator(mode="after")
     def validate_state(self) -> Self:
-        metrics = (
-            self.state_count,
-            self.transition_count,
-            self.npc_line_count,
-            self.player_line_count,
-            self.journal_line_count,
-            self.dialogue_line_count,
-            self.serialized_size,
-        )
-        if self.detail_status is DetailStatus.COMPLETE:
-            assert self.dlg_version is not None and all(value is not None for value in metrics), (
-                "complete dialogue record is missing required DLG detail"
-            )
-            assert self.dialogue_line_count is not None
-            assert self.npc_line_count is not None
-            assert self.player_line_count is not None
-            assert self.dialogue_line_count == self.npc_line_count + self.player_line_count, (
-                "dialogue line count must equal NPC plus player lines"
-            )
-        assert self.attribution_completed_at is not None or self.character_count == 0, (
-            "unattributed dialogue cannot have a character count"
+        complete = self.extraction.status is DetailStatus.COMPLETE
+        assert complete == (self.detail is not None), "only complete DLGs carry detail"
+        assert complete == (self.serialized_size is not None), (
+            "only complete DLGs carry a serialized size"
         )
         return self
 
@@ -541,9 +517,8 @@ class DialogueLineRecord(_Record):
     """One stable, addressable DLG line."""
 
     id: str = Field(min_length=1)
+    run_id: str = Field(min_length=1)
     dialogue_resource_name: str = Field(min_length=1)
-    dialogue_resref: str = Field(min_length=1, max_length=8)
-    source_kind: SourceKind = Field(strict=False)
     line_kind: DialogueLineKind = Field(strict=False)
     state_index: int = Field(ge=0)
     state_trigger_index: int | None = Field(default=None, ge=0)
@@ -553,8 +528,6 @@ class DialogueLineRecord(_Record):
     text: str | None
     tokens: list[str]
     serialized_size: int = Field(ge=0)
-    character_count: int = Field(ge=0)
-    attribution_completed_at: str | None = None
     search_text: str
 
     @model_validator(mode="after")
@@ -575,9 +548,6 @@ class DialogueLineRecord(_Record):
             self.transition_index,
         )
         assert self.id == expected_id, f"dialogue line id must be {expected_id!r}"
-        assert self.attribution_completed_at is not None or self.character_count == 0, (
-            "unattributed dialogue line cannot have a character count"
-        )
         return self
 
 
@@ -585,9 +555,8 @@ class DialogueTransitionRecord(_Record):
     """One stable edge in a DLG state machine."""
 
     id: str = Field(min_length=1)
+    run_id: str = Field(min_length=1)
     dialogue_resource_name: str = Field(min_length=1)
-    dialogue_resref: str = Field(min_length=1, max_length=8)
-    source_kind: SourceKind = Field(strict=False)
     state_index: int = Field(ge=0)
     transition_index: int = Field(ge=0)
     flags_raw: int = Field(ge=0, le=0xFFFF_FFFF)
@@ -631,6 +600,9 @@ class ExtractionRunRecord(_Record):
     completed_at: str | None = None
     game_root: str = Field(min_length=1)
     iecli_version: str = Field(min_length=1)
+    character_input_run_id: str | None = None
+    dialogue_input_run_id: str | None = None
+    metadata_input_run_id: str | None = None
     status: RunStatus = Field(strict=False)
     resources_discovered: int = Field(ge=0)
     details_attempted: int = Field(ge=0)
@@ -871,6 +843,7 @@ class KitDefinitionRecord(_KeyedRecord):
 TABLE_MODELS: dict[str, type[LanceModel]] = {
     _CHARACTERS: CharacterRecord,
     _CHARACTER_SOUNDS: CharacterSoundRecord,
+    _CHARACTER_DIALOGUES: CharacterAttributionRecord,
     _VOICE_RESOURCES: VoiceResourceRecord,
     _DIALOGUES: DialogueRecord,
     _DIALOGUE_LINES: DialogueLineRecord,
@@ -918,6 +891,9 @@ class PipelineDatabase:
         iecli_version: str,
         *,
         run_kind: RunKind = RunKind.CHARACTERS,
+        character_input_run_id: str | None = None,
+        dialogue_input_run_id: str | None = None,
+        metadata_input_run_id: str | None = None,
     ) -> str:
         """Create a durable extraction-run record."""
         run_id = uuid4().hex
@@ -931,6 +907,9 @@ class PipelineDatabase:
                     completed_at=None,
                     game_root=str(game_root.expanduser().resolve()),
                     iecli_version=iecli_version,
+                    character_input_run_id=character_input_run_id,
+                    dialogue_input_run_id=dialogue_input_run_id,
+                    metadata_input_run_id=metadata_input_run_id,
                     status=RunStatus.RUNNING,
                     resources_discovered=0,
                     details_attempted=0,
@@ -1050,7 +1029,6 @@ class PipelineDatabase:
         updated_run = ExtractionRunRecord.model_validate(
             run.model_dump() | {"resources_discovered": extraction.source_resource_count}
         )
-        self._invalidate_other_attributions()
         for name, model, records in replacements:
             self._replace(name, "key", model, records)
         self._merge(_EXTRACTION_RUNS, "id", [updated_run])
@@ -1121,36 +1099,28 @@ class PipelineDatabase:
             for record in self._records(_CHARACTERS, CharacterRecord)
         }
         replacement: list[CharacterRecord] = []
-        retained_names: set[str] = set()
+        retained_keys: set[str] = set()
         for resource in resources:
             key = resource.resource_name.casefold()
             if key in existing and _same_identity(existing[key], resource):
-                replacement.append(
-                    _validated_character_copy(
-                        existing[key],
-                        resource_name=resource.resource_name,
-                        updated_at=timestamp,
-                        clear_attribution=True,
-                    )
-                )
-                retained_names.add(existing[key].resource_name)
+                replacement.append(_retained_character(existing[key], resource))
+                retained_keys.add(key)
             else:
-                replacement.append(_pending_character(resource, timestamp))
+                replacement.append(_pending_character(resource, run_id, timestamp))
 
         discarded_names = sorted(
             character.resource_name
-            for character in existing.values()
-            if character.resource_name not in retained_names
+            for key, character in existing.items()
+            if key not in retained_keys
         )
         updated_run = ExtractionRunRecord.model_validate(
             run.model_dump() | {"resources_discovered": len(resources)}
         )
+        self._replace(_CHARACTERS, "resource_name", CharacterRecord, replacement)
         if discarded_names:
             self._table(_CHARACTER_SOUNDS).delete(
                 col("character_resource_name").isin(discarded_names)
             )
-        self._replace(_CHARACTERS, "resource_name", CharacterRecord, replacement)
-        self._invalidate_other_attributions(invalidate_characters=False)
         self._merge(_EXTRACTION_RUNS, "id", [updated_run])
 
     def detail_targets(self, *, refresh: bool) -> set[str]:
@@ -1159,17 +1129,19 @@ class PipelineDatabase:
         return {
             character.resource_name
             for character in characters
-            if refresh or character.detail_status is not DetailStatus.COMPLETE
+            if refresh or character.extraction.status is not DetailStatus.COMPLETE
         }
 
     def apply_detail_batch(
         self,
-        details: Sequence[CharacterDetail],
+        run_id: str,
+        extractions: Sequence[CharacterExtraction],
         failures: Iterable[tuple[str, str]],
     ) -> None:
         """Persist one validated batch of successful and failed CRE details."""
+        self._run(run_id, expected_kind=RunKind.CHARACTERS)
         failures = list(failures)
-        success_names = [detail.resource_name for detail in details]
+        success_names = [extraction.resource_name for extraction in extractions]
         failure_names = [resource_name for resource_name, _ in failures]
         self._assert_batch_names(success_names, failure_names, kind="CRE")
         characters = {
@@ -1182,21 +1154,27 @@ class PipelineDatabase:
 
         timestamp = utc_now().isoformat()
         updates = [
-            _completed_character(characters[detail.resource_name.casefold()], detail, timestamp)
-            for detail in details
+            _completed_character(
+                characters[extraction.resource_name.casefold()],
+                extraction,
+                run_id,
+                timestamp,
+            )
+            for extraction in extractions
         ]
         updates.extend(
-            _failed_character(characters[resource_name.casefold()], error, timestamp)
+            _failed_character(characters[resource_name.casefold()], error, run_id, timestamp)
             for resource_name, error in failures
         )
         sound_records = [
             _character_sound_record(
-                characters[detail.resource_name.casefold()],
-                detail,
+                run_id,
+                characters[extraction.resource_name.casefold()],
+                extraction.detail,
                 sound,
             )
-            for detail in details
-            for sound in detail.sounds
+            for extraction in extractions
+            for sound in extraction.sounds
         ]
         self._assert_unique_names(
             [sound.id for sound in sound_records],
@@ -1208,7 +1186,7 @@ class PipelineDatabase:
                 _CHARACTERS,
                 "resource_name",
                 [
-                    _pending_character_refresh(characters[name.casefold()], timestamp)
+                    _pending_character_refresh(characters[name.casefold()], run_id, timestamp)
                     for name in requested
                 ],
             )
@@ -1237,37 +1215,27 @@ class PipelineDatabase:
             for record in self._records(_DIALOGUES, DialogueRecord)
         }
         replacement: list[DialogueRecord] = []
-        retained_names: set[str] = set()
+        retained_keys: set[str] = set()
         for resource in resources:
             key = resource.resource_name.casefold()
             if key in existing and _same_identity(existing[key], resource):
-                replacement.append(
-                    _validated_dialogue_copy(
-                        existing[key],
-                        resource_name=resource.resource_name,
-                        updated_at=timestamp,
-                        clear_attribution=True,
-                    )
-                )
-                retained_names.add(existing[key].resource_name)
+                replacement.append(_retained_dialogue(existing[key], resource))
+                retained_keys.add(key)
             else:
-                replacement.append(_pending_dialogue(resource, timestamp))
+                replacement.append(_pending_dialogue(resource, run_id, timestamp))
 
         discarded_names = sorted(
-            dialogue.resource_name
-            for dialogue in existing.values()
-            if dialogue.resource_name not in retained_names
+            dialogue.resource_name for key, dialogue in existing.items() if key not in retained_keys
         )
         updated_run = ExtractionRunRecord.model_validate(
             run.model_dump() | {"resources_discovered": len(resources)}
         )
-        self._invalidate_other_attributions(invalidate_dialogues=False)
+        self._replace(_DIALOGUES, "resource_name", DialogueRecord, replacement)
         if discarded_names:
             self._table(_DIALOGUE_LINES).delete(col("dialogue_resource_name").isin(discarded_names))
             self._table(_DIALOGUE_TRANSITIONS).delete(
                 col("dialogue_resource_name").isin(discarded_names)
             )
-        self._replace(_DIALOGUES, "resource_name", DialogueRecord, replacement)
         self._merge(_EXTRACTION_RUNS, "id", [updated_run])
 
     def dialogue_targets(self, *, refresh: bool) -> list[str]:
@@ -1277,19 +1245,21 @@ class PipelineDatabase:
             (
                 dialogue.resource_name
                 for dialogue in dialogues
-                if refresh or dialogue.detail_status is not DetailStatus.COMPLETE
+                if refresh or dialogue.extraction.status is not DetailStatus.COMPLETE
             ),
             key=str.casefold,
         )
 
     def apply_dialogue_batch(
         self,
+        run_id: str,
         details: Sequence[DialogueExtraction],
         failures: Iterable[tuple[str, str]],
     ) -> None:
         """Persist one validated batch of DLG metrics, lines, and failures."""
+        self._run(run_id, expected_kind=RunKind.DIALOGUES)
         failures = list(failures)
-        success_names = [extraction.detail.resource_name for extraction in details]
+        success_names = [extraction.resource_name for extraction in details]
         failure_names = [resource_name for resource_name, _ in failures]
         self._assert_batch_names(success_names, failure_names, kind="DLG")
         dialogues = {
@@ -1305,19 +1275,16 @@ class PipelineDatabase:
         line_records: list[DialogueLineRecord] = []
         transition_records: list[DialogueTransitionRecord] = []
         for extraction in details:
-            detail = extraction.detail
-            dialogue = dialogues[detail.resource_name.casefold()]
-            assert detail.resref.casefold() == dialogue.resref.casefold(), (
-                f"DLG detail {detail.resource_name!r} has resref {detail.resref!r}; "
-                f"inventory has {dialogue.resref!r}"
+            dialogue = dialogues[extraction.resource_name.casefold()]
+            dialogue_updates.append(_completed_dialogue(dialogue, extraction, run_id, timestamp))
+            line_records.extend(
+                _dialogue_line_record(run_id, dialogue, line) for line in extraction.lines
             )
-            dialogue_updates.append(_completed_dialogue(dialogue, detail, timestamp))
-            line_records.extend(_dialogue_line_record(dialogue, line) for line in extraction.lines)
             transition_records.extend(
-                _dialogue_transition_record(dialogue, edge) for edge in extraction.edges
+                _dialogue_transition_record(run_id, dialogue, edge) for edge in extraction.edges
             )
         dialogue_updates.extend(
-            _failed_dialogue(dialogues[resource_name.casefold()], error, timestamp)
+            _failed_dialogue(dialogues[resource_name.casefold()], error, run_id, timestamp)
             for resource_name, error in failures
         )
         self._assert_unique_names([line.id for line in line_records], kind="DLG line batch")
@@ -1332,7 +1299,7 @@ class PipelineDatabase:
                 _DIALOGUES,
                 "resource_name",
                 [
-                    _pending_dialogue_refresh(dialogues[name.casefold()], timestamp)
+                    _pending_dialogue_refresh(dialogues[name.casefold()], run_id, timestamp)
                     for name in requested
                 ],
             )
@@ -1354,130 +1321,124 @@ class PipelineDatabase:
         self._merge(_DIALOGUES, "resource_name", dialogue_updates)
 
     def rebuild_attributions(self) -> AttributionSummary:
-        """Account for every current character, dialogue, and spoken line."""
-        timestamp = utc_now().isoformat()
-        characters = self._records(_CHARACTERS, CharacterRecord)
-        dialogues = self._records(_DIALOGUES, DialogueRecord)
-        lines = self._records(_DIALOGUE_LINES, DialogueLineRecord)
-        transitions = self._records(_DIALOGUE_TRANSITIONS, DialogueTransitionRecord)
-        links = self._records(_CHARACTER_RESOURCE_LINKS, CharacterResourceLinkRecord)
-        identifiers = self._records(_IDENTIFIER_DEFINITIONS, IdentifierDefinitionRecord)
-        self._assert_dialogue_lines(dialogues, lines)
-        self._assert_dialogue_transitions(dialogues, transitions)
-        dialogues_by_resref = {dialogue.resref.casefold(): dialogue for dialogue in dialogues}
-        links_by_death_variable: dict[str, list[CharacterResourceLinkRecord]] = {}
-        for link in links:
-            if link.target_type is ResourceTargetType.DIALOGUE:
-                links_by_death_variable.setdefault(link.death_variable.casefold(), []).append(link)
+        """Publish one complete, run-scoped character attribution generation."""
+        input_runs = {
+            kind: self._attribution_input_run(kind)
+            for kind in (RunKind.CHARACTERS, RunKind.DIALOGUES, RunKind.METADATA)
+        }
+        game_roots = {Path(run.game_root).expanduser().resolve() for run in input_runs.values()}
+        assert len(game_roots) == 1, "attribution inputs must come from the same game install"
+        context = max(input_runs.values(), key=lambda run: (run.started_at, run.id))
+        run_id = self.start_run(
+            Path(context.game_root),
+            context.iecli_version,
+            run_kind=RunKind.ATTRIBUTION,
+            character_input_run_id=input_runs[RunKind.CHARACTERS].id,
+            dialogue_input_run_id=input_runs[RunKind.DIALOGUES].id,
+            metadata_input_run_id=input_runs[RunKind.METADATA].id,
+        )
 
-        character_counts: Counter[str] = Counter()
-        character_dialogues: dict[
-            str,
-            tuple[tuple[str, ...], tuple[DialogueRecord, ...]],
-        ] = {}
-        for character in characters:
-            declared = _character_dialogue_resrefs(character, links_by_death_variable)
-            resolved = tuple(
-                dialogues_by_resref[resref.casefold()]
-                for resref in declared
-                if resref.casefold() in dialogues_by_resref
-            )
-            character_dialogues[character.resource_name.casefold()] = (declared, resolved)
-            for dialogue in resolved:
-                character_counts[dialogue.resource_name.casefold()] += 1
+        characters_total = 0
+        try:
+            characters = self._records(_CHARACTERS, CharacterRecord)
+            characters_total = len(characters)
+            dialogues = self._records(_DIALOGUES, DialogueRecord)
+            links = self._records(_CHARACTER_RESOURCE_LINKS, CharacterResourceLinkRecord)
+            identifiers = self._records(_IDENTIFIER_DEFINITIONS, IdentifierDefinitionRecord)
+            dialogues_by_resref = {dialogue.resref.casefold(): dialogue for dialogue in dialogues}
+            links_by_death_variable: dict[str, list[CharacterResourceLinkRecord]] = {}
+            for link in links:
+                if link.target_type is ResourceTargetType.DIALOGUE:
+                    links_by_death_variable.setdefault(link.death_variable.casefold(), []).append(
+                        link
+                    )
 
-        dialogue_updates = [
-            DialogueRecord.model_validate(
-                dialogue.model_dump()
-                | {
-                    "character_count": character_counts[dialogue.resource_name.casefold()],
-                    "attribution_completed_at": timestamp,
-                }
-            )
-            for dialogue in dialogues
-        ]
-        voice_ids = _voice_ids(characters)
-        character_updates: list[CharacterRecord] = []
-        for character in characters:
-            declared, resolved = character_dialogues[character.resource_name.casefold()]
-            character_updates.append(
-                _attributed_character(
-                    character,
-                    declared,
-                    resolved,
-                    voice_ids.get(character.resource_name.casefold()),
-                    timestamp,
+            attribution_records: list[CharacterAttributionRecord] = []
+            character_counts: Counter[str] = Counter()
+            for character in characters:
+                declared = _character_dialogue_resrefs(character, links_by_death_variable)
+                resolved = tuple(
+                    dialogues_by_resref[resref.casefold()]
+                    for resref in declared
+                    if resref.casefold() in dialogues_by_resref
                 )
-            )
-        voice_records = [
-            _voice_resource_record(resource)
-            for resource in _voice_resources(character_updates, dialogues, identifiers)
-        ]
-        line_updates = [
-            DialogueLineRecord.model_validate(
-                line.model_dump()
-                | {
-                    "character_count": character_counts[line.dialogue_resource_name.casefold()],
-                    "attribution_completed_at": timestamp,
-                }
-            )
-            for line in lines
-        ]
+                record = _character_attribution_record(run_id, character, declared, resolved)
+                attribution_records.append(record)
+                character_counts.update(dialogue.resource_name.casefold() for dialogue in resolved)
 
-        statuses = Counter(character.attribution_status for character in character_updates)
-        attributed_dialogues = [
-            dialogue for dialogue in dialogue_updates if dialogue.character_count > 0
-        ]
-        unattributed_dialogues = [
-            dialogue for dialogue in dialogue_updates if dialogue.character_count == 0
-        ]
-        attributed_lines = sum(
-            dialogue.dialogue_line_count or 0 for dialogue in attributed_dialogues
-        )
-        unattributed_lines = sum(
-            dialogue.dialogue_line_count or 0 for dialogue in unattributed_dialogues
-        )
-        all_spoken_lines = sum(dialogue.dialogue_line_count or 0 for dialogue in dialogues)
-        assert attributed_lines + unattributed_lines == all_spoken_lines, (
-            "attributed and unattributed DLG line totals do not reconcile"
-        )
-        summary = AttributionSummary(
-            characters_total=len(character_updates),
-            characters_matched=statuses[AttributionStatus.MATCHED],
-            characters_missing_dialogue=statuses[AttributionStatus.MISSING_DIALOGUE],
-            characters_dialogue_failed=statuses[AttributionStatus.DIALOGUE_FAILED],
-            characters_without_dialogue=statuses[AttributionStatus.NO_DIALOGUE],
-            characters_unavailable=statuses[AttributionStatus.CHARACTER_UNAVAILABLE],
-            dialogues_total=len(dialogue_updates),
-            dialogues_attributed=len(attributed_dialogues),
-            dialogues_unattributed=len(unattributed_dialogues),
-            attributed_dialogue_lines=attributed_lines,
-            unattributed_dialogue_lines=unattributed_lines,
-        )
-        if any(character.attribution_completed_at is not None for character in characters):
-            self._merge(
-                _CHARACTERS,
-                "resource_name",
-                [
-                    _validated_character_copy(character, clear_attribution=True)
-                    for character in characters
-                ],
+            voice_ids = _voice_ids(characters)
+            voice_records = [
+                _voice_resource_record(run_id, resource)
+                for resource in _voice_resources(characters, identifiers, voice_ids)
+            ]
+            statuses = Counter(record.status for record in attribution_records)
+            attributed_dialogues = [
+                dialogue
+                for dialogue in dialogues
+                if character_counts[dialogue.resource_name.casefold()] > 0
+            ]
+            unattributed_dialogues = [
+                dialogue
+                for dialogue in dialogues
+                if character_counts[dialogue.resource_name.casefold()] == 0
+            ]
+            attributed_lines = sum(
+                _dialogue_line_count(dialogue) for dialogue in attributed_dialogues
             )
-        self._merge(_DIALOGUES, "resource_name", dialogue_updates)
-        self._merge(_DIALOGUE_LINES, "id", line_updates)
-        self._replace(_VOICE_RESOURCES, "id", VoiceResourceRecord, voice_records)
-        self._optimize(_DIALOGUES, self._table(_DIALOGUES))
-        self._optimize(_DIALOGUE_LINES, self._table(_DIALOGUE_LINES))
-        self._optimize(_VOICE_RESOURCES, self._table(_VOICE_RESOURCES))
-        self._merge(_CHARACTERS, "resource_name", character_updates)
-        self._optimize(_CHARACTERS, self._table(_CHARACTERS))
-        return summary
+            unattributed_lines = sum(
+                _dialogue_line_count(dialogue) for dialogue in unattributed_dialogues
+            )
+            summary = AttributionSummary(
+                run_id=run_id,
+                characters_total=len(attribution_records),
+                characters_matched=statuses[AttributionStatus.MATCHED],
+                characters_partially_matched=statuses[AttributionStatus.PARTIAL_MATCH],
+                characters_missing_dialogue=statuses[AttributionStatus.MISSING_DIALOGUE],
+                characters_dialogue_failed=sum(
+                    record.dialogue_status is DetailStatus.FAILED for record in attribution_records
+                ),
+                characters_without_dialogue=statuses[AttributionStatus.NO_DIALOGUE],
+                characters_unavailable=statuses[AttributionStatus.CHARACTER_UNAVAILABLE],
+                dialogues_total=len(dialogues),
+                dialogues_attributed=len(attributed_dialogues),
+                dialogues_unattributed=len(unattributed_dialogues),
+                attributed_dialogue_lines=attributed_lines,
+                unattributed_dialogue_lines=unattributed_lines,
+            )
+            self._upsert(_CHARACTER_DIALOGUES, "key", attribution_records)
+            self._upsert(_VOICE_RESOURCES, "key", voice_records)
+            self.finish_run(
+                run_id,
+                status=RunStatus.COMPLETE,
+                discovered=characters_total,
+                attempted=characters_total,
+                extracted=len(attribution_records),
+                failures=0,
+            )
+            return summary
+        except BaseException as error:
+            try:
+                self.finish_run(
+                    run_id,
+                    status=RunStatus.FAILED,
+                    discovered=characters_total,
+                    attempted=characters_total,
+                    extracted=0,
+                    failures=1,
+                    error=str(error),
+                )
+            except BaseException as finalization_error:
+                error.add_note(
+                    f"Failed to finalize attribution run {run_id}: {finalization_error!r}"
+                )
+            raise
 
     def finish_run(
         self,
         run_id: str,
         *,
         status: TerminalRunStatus,
+        discovered: int | None = None,
         attempted: int,
         extracted: int,
         failures: int,
@@ -1490,6 +1451,9 @@ class PipelineDatabase:
             | {
                 "completed_at": utc_now().isoformat(),
                 "status": status,
+                "resources_discovered": (
+                    run.resources_discovered if discovered is None else discovered
+                ),
                 "details_attempted": attempted,
                 "details_extracted": extracted,
                 "failures": failures,
@@ -1507,22 +1471,31 @@ class PipelineDatabase:
                     _DIALOGUE_TRANSITIONS,
                     self._table(_DIALOGUE_TRANSITIONS),
                 )
-            else:
-                assert run.run_kind is RunKind.METADATA
+            elif run.run_kind is RunKind.METADATA:
                 for name in _METADATA_TABLES:
                     self._optimize(name, self._table(name))
+            else:
+                assert run.run_kind is RunKind.ATTRIBUTION
+                self._optimize(
+                    _CHARACTER_DIALOGUES,
+                    self._table(_CHARACTER_DIALOGUES),
+                )
+                self._optimize(_VOICE_RESOURCES, self._table(_VOICE_RESOURCES))
         self._merge(_EXTRACTION_RUNS, "id", [updated])
 
     def stats(self) -> DatabaseStats:
         """Return validated counts for the current CRE inventory."""
         characters = self._records(_CHARACTERS, CharacterRecord)
-        statuses = Counter(character.detail_status for character in characters)
+        statuses = Counter(character.extraction.status for character in characters)
         return DatabaseStats(
             total=len(characters),
             complete=statuses[DetailStatus.COMPLETE],
             failed=statuses[DetailStatus.FAILED],
             pending=statuses[DetailStatus.PENDING],
-            with_dialog=sum(character.has_dialog for character in characters),
+            with_dialog=sum(
+                character.detail is not None and character.detail.dialog_resref is not None
+                for character in characters
+            ),
         )
 
     def _ensure_table[Record: LanceModel](self, name: str, model: type[Record]) -> None:
@@ -1591,51 +1564,23 @@ class PipelineDatabase:
         )
         return run
 
-    def _invalidate_other_attributions(
-        self,
-        *,
-        invalidate_characters: bool = True,
-        invalidate_dialogues: bool = True,
-    ) -> None:
-        if invalidate_characters:
-            characters = self._records(_CHARACTERS, CharacterRecord)
-            if any(character.attribution_completed_at is not None for character in characters):
-                self._merge(
-                    _CHARACTERS,
-                    "resource_name",
-                    [
-                        _validated_character_copy(character, clear_attribution=True)
-                        for character in characters
-                    ],
-                )
-        if invalidate_dialogues:
-            dialogues = self._records(_DIALOGUES, DialogueRecord)
-            if any(dialogue.attribution_completed_at is not None for dialogue in dialogues):
-                self._merge(
-                    _DIALOGUES,
-                    "resource_name",
-                    [
-                        _validated_dialogue_copy(dialogue, clear_attribution=True)
-                        for dialogue in dialogues
-                    ],
-                )
-        lines = self._records(_DIALOGUE_LINES, DialogueLineRecord)
-        if any(line.attribution_completed_at is not None for line in lines):
-            self._merge(
-                _DIALOGUE_LINES,
-                "id",
-                [
-                    DialogueLineRecord.model_validate(
-                        line.model_dump()
-                        | {
-                            "character_count": 0,
-                            "attribution_completed_at": None,
-                        }
-                    )
-                    for line in lines
-                ],
-            )
-        self._replace(_VOICE_RESOURCES, "id", VoiceResourceRecord, [])
+    def _latest_run(self, kind: RunKind) -> ExtractionRunRecord | None:
+        matches = [
+            run
+            for run in self._records(_EXTRACTION_RUNS, ExtractionRunRecord)
+            if run.run_kind is kind
+        ]
+        if not matches:
+            return None
+        return max(matches, key=lambda run: (run.started_at, run.id))
+
+    def _attribution_input_run(self, kind: RunKind) -> ExtractionRunRecord:
+        run = self._latest_run(kind)
+        assert run is not None, f"attribution requires a {kind.value} run"
+        assert run.status in (RunStatus.COMPLETE, RunStatus.COMPLETE_WITH_ERRORS), (
+            f"attribution requires a terminal successful {kind.value} run"
+        )
+        return run
 
     def _merge[Record: LanceModel](
         self,
@@ -1661,6 +1606,8 @@ class PipelineDatabase:
         key: str,
         records: Sequence[Record],
     ) -> None:
+        if not records:
+            return
         result = (
             self._table(table_name)
             .merge_insert(key)
@@ -1733,250 +1680,133 @@ class PipelineDatabase:
         )
         assert not overlap, f"{kind} batch has both success and failure for: {overlap}"
 
-    @staticmethod
-    def _assert_dialogue_lines(
-        dialogues: Sequence[DialogueRecord],
-        lines: Sequence[DialogueLineRecord],
-    ) -> None:
-        dialogue_names = {dialogue.resource_name.casefold() for dialogue in dialogues}
-        unknown = sorted(
-            {
-                line.dialogue_resource_name
-                for line in lines
-                if line.dialogue_resource_name.casefold() not in dialogue_names
-            }
-        )
-        assert not unknown, f"dialogue lines reference unknown DLG resources: {unknown}"
 
-        counts = Counter((line.dialogue_resource_name.casefold(), line.line_kind) for line in lines)
-        for dialogue in dialogues:
-            key = dialogue.resource_name.casefold()
-            actual = tuple(
-                counts[(key, kind)]
-                for kind in (
-                    DialogueLineKind.NPC,
-                    DialogueLineKind.PLAYER,
-                    DialogueLineKind.JOURNAL,
-                )
-            )
-            expected = (
-                (
-                    dialogue.npc_line_count,
-                    dialogue.player_line_count,
-                    dialogue.journal_line_count,
-                )
-                if dialogue.detail_status is DetailStatus.COMPLETE
-                else (0, 0, 0)
-            )
-            assert actual == expected, (
-                f"{dialogue.resource_name} stores line counts {actual}; expected {expected}"
-            )
-
-    @staticmethod
-    def _assert_dialogue_transitions(
-        dialogues: Sequence[DialogueRecord],
-        transitions: Sequence[DialogueTransitionRecord],
-    ) -> None:
-        dialogue_names = {dialogue.resource_name.casefold() for dialogue in dialogues}
-        unknown = sorted(
-            {
-                transition.dialogue_resource_name
-                for transition in transitions
-                if transition.dialogue_resource_name.casefold() not in dialogue_names
-            }
-        )
-        assert not unknown, f"dialogue transitions reference unknown DLG resources: {unknown}"
-
-        counts = Counter(transition.dialogue_resource_name.casefold() for transition in transitions)
-        for dialogue in dialogues:
-            actual = counts[dialogue.resource_name.casefold()]
-            expected = (
-                dialogue.transition_count if dialogue.detail_status is DetailStatus.COMPLETE else 0
-            )
-            assert actual == expected, (
-                f"{dialogue.resource_name} stores {actual} transitions; expected {expected}"
-            )
-
-
-def _pending_character(resource: CreResource, timestamp: str) -> CharacterRecord:
+def _pending_character(
+    resource: CreResource,
+    run_id: str,
+    timestamp: str,
+) -> CharacterRecord:
     return CharacterRecord(
         resource_name=resource.resource_name,
         resref=resource.resref,
-        source_kind=resource.source_kind,
-        source_path=resource.source_path,
-        detail_status=DetailStatus.PENDING,
-        detail_error=None,
-        updated_at=timestamp,
-        has_dialog=False,
+        source=ResourceSource.from_resource(resource),
+        extraction=_extraction_state(run_id, DetailStatus.PENDING, timestamp),
+        detail=None,
+        serialized_size=None,
         search_text=resource.search_text,
+    )
+
+
+def _retained_character(
+    character: CharacterRecord,
+    resource: CreResource,
+) -> CharacterRecord:
+    return CharacterRecord(
+        resource_name=resource.resource_name,
+        resref=resource.resref,
+        source=ResourceSource.from_resource(resource),
+        extraction=character.extraction,
+        detail=character.detail,
+        serialized_size=character.serialized_size,
+        search_text=_character_search_text(resource.search_text, character.detail),
     )
 
 
 def _completed_character(
     character: CharacterRecord,
-    detail: CharacterDetail,
+    extraction: CharacterExtraction,
+    run_id: str,
     timestamp: str,
 ) -> CharacterRecord:
-    serialized_size = len(detail.model_dump_json().encode("utf-8"))
+    detail = CharacterData.model_validate(extraction.detail, from_attributes=True)
     return CharacterRecord(
         resource_name=character.resource_name,
         resref=character.resref,
-        source_kind=character.source_kind,
-        source_path=character.source_path,
-        display_name=detail.display_name,
-        short_name=detail.short_name,
-        short_name_strref=detail.short_name_strref,
-        long_name=detail.long_name,
-        long_name_strref=detail.long_name_strref,
-        death_variable=detail.death_variable,
-        dialog_resref=detail.dialog_resref,
-        gender_id=detail.gender_id,
-        race_id=detail.race_id,
-        class_id=detail.class_id,
-        alignment_id=detail.alignment_id,
-        enemy_ally_id=detail.enemy_ally_id,
-        general_id=detail.general_id,
-        specific_id=detail.specific_id,
-        animation_id=detail.animation_id,
-        racial_enemy_id=detail.racial_enemy_id,
-        kit_raw_bytes=detail.kit_raw_bytes,
-        cre_kit_value=detail.cre_kit_value,
-        kit_ids_value=detail.kit_ids_value,
-        first_class_level=detail.class_levels.first_class,
-        second_class_level=detail.class_levels.second_class,
-        third_class_level=detail.class_levels.third_class,
-        strength=detail.base_attributes.strength,
-        strength_bonus=detail.base_attributes.strength_bonus,
-        intelligence=detail.base_attributes.intelligence,
-        wisdom=detail.base_attributes.wisdom,
-        dexterity=detail.base_attributes.dexterity,
-        constitution=detail.base_attributes.constitution,
-        charisma=detail.base_attributes.charisma,
-        morale=detail.morale,
-        morale_break=detail.morale_break,
-        morale_recovery_time=detail.morale_recovery_time,
-        reputation=detail.reputation,
-        override_script=detail.override_script,
-        class_script=detail.class_script,
-        race_script=detail.race_script,
-        general_script=detail.general_script,
-        default_script=detail.default_script,
-        small_portrait=detail.small_portrait,
-        large_portrait=detail.large_portrait,
-        cre_version=detail.cre_version,
-        voice_id=str(detail.proposed_voice_id),
-        serialized_size=serialized_size,
-        detail_status=DetailStatus.COMPLETE,
-        detail_error=None,
-        updated_at=timestamp,
-        has_dialog=detail.dialog_resref is not None,
-        search_text=detail.search_text,
+        source=character.source,
+        extraction=_extraction_state(run_id, DetailStatus.COMPLETE, timestamp),
+        detail=detail,
+        serialized_size=extraction.serialized_size,
+        search_text=_character_search_text(_resource_search_text(character), detail),
     )
 
 
 def _failed_character(
     character: CharacterRecord,
     error: str,
+    run_id: str,
     timestamp: str,
 ) -> CharacterRecord:
     return CharacterRecord(
         resource_name=character.resource_name,
         resref=character.resref,
-        source_kind=character.source_kind,
-        source_path=character.source_path,
-        detail_status=DetailStatus.FAILED,
-        detail_error=error[:2000],
-        updated_at=timestamp,
-        has_dialog=False,
-        search_text=character.resource_search_text,
+        source=character.source,
+        extraction=_extraction_state(run_id, DetailStatus.FAILED, timestamp, error[:2000]),
+        detail=None,
+        serialized_size=None,
+        search_text=_resource_search_text(character),
     )
 
 
 def _pending_character_refresh(
     character: CharacterRecord,
+    run_id: str,
     timestamp: str,
 ) -> CharacterRecord:
     return CharacterRecord(
         resource_name=character.resource_name,
         resref=character.resref,
-        source_kind=character.source_kind,
-        source_path=character.source_path,
-        detail_status=DetailStatus.PENDING,
-        detail_error=None,
-        updated_at=timestamp,
-        has_dialog=False,
-        search_text=character.resource_search_text,
+        source=character.source,
+        extraction=_extraction_state(run_id, DetailStatus.PENDING, timestamp),
+        detail=None,
+        serialized_size=None,
+        search_text=_resource_search_text(character),
     )
 
 
-def _validated_character_copy(
-    character: CharacterRecord,
-    *,
-    resource_name: str | None = None,
-    updated_at: str | None = None,
-    clear_attribution: bool,
-) -> CharacterRecord:
-    update: dict[str, object] = {}
-    if resource_name is not None:
-        update["resource_name"] = resource_name
-    if updated_at is not None:
-        update["updated_at"] = updated_at
-    if clear_attribution:
-        update |= {
-            "attribution_status": None,
-            "dialogue_status": None,
-            "declared_dialogue_count": None,
-            "resolved_dialogue_count": None,
-            "dialogue_line_count": None,
-            "npc_line_count": None,
-            "player_line_count": None,
-            "journal_line_count": None,
-            "dialogue_state_count": None,
-            "dialogue_transition_count": None,
-            "dialogue_serialized_size": None,
-            "attribution_completed_at": None,
-        }
-    return CharacterRecord.model_validate(character.model_dump() | update)
-
-
-def _pending_dialogue(resource: DlgResource, timestamp: str) -> DialogueRecord:
+def _pending_dialogue(
+    resource: DlgResource,
+    run_id: str,
+    timestamp: str,
+) -> DialogueRecord:
     return DialogueRecord(
         resource_name=resource.resource_name,
         resref=resource.resref,
-        source_kind=resource.source_kind,
-        source_path=resource.source_path,
-        detail_status=DetailStatus.PENDING,
-        detail_error=None,
-        updated_at=timestamp,
-        character_count=0,
-        attribution_completed_at=None,
+        source=ResourceSource.from_resource(resource),
+        extraction=_extraction_state(run_id, DetailStatus.PENDING, timestamp),
+        detail=None,
+        serialized_size=None,
+        search_text=resource.search_text,
+    )
+
+
+def _retained_dialogue(
+    dialogue: DialogueRecord,
+    resource: DlgResource,
+) -> DialogueRecord:
+    return DialogueRecord(
+        resource_name=resource.resource_name,
+        resref=resource.resref,
+        source=ResourceSource.from_resource(resource),
+        extraction=dialogue.extraction,
+        detail=dialogue.detail,
+        serialized_size=dialogue.serialized_size,
         search_text=resource.search_text,
     )
 
 
 def _completed_dialogue(
     dialogue: DialogueRecord,
-    detail: DialogueDetail,
+    extraction: DialogueExtraction,
+    run_id: str,
     timestamp: str,
 ) -> DialogueRecord:
     return DialogueRecord(
         resource_name=dialogue.resource_name,
         resref=dialogue.resref,
-        source_kind=dialogue.source_kind,
-        source_path=dialogue.source_path,
-        dlg_version=detail.dlg_version,
-        state_count=detail.state_count,
-        transition_count=detail.transition_count,
-        npc_line_count=detail.npc_line_count,
-        player_line_count=detail.player_line_count,
-        journal_line_count=detail.journal_line_count,
-        dialogue_line_count=detail.dialogue_line_count,
-        serialized_size=detail.pydantic_json_size,
-        detail_status=DetailStatus.COMPLETE,
-        detail_error=None,
-        updated_at=timestamp,
-        character_count=0,
-        attribution_completed_at=None,
+        source=dialogue.source,
+        extraction=_extraction_state(run_id, DetailStatus.COMPLETE, timestamp),
+        detail=DialogueData.model_validate(extraction.detail, from_attributes=True),
+        serialized_size=extraction.serialized_size,
         search_text=dialogue.search_text,
     )
 
@@ -1984,91 +1814,69 @@ def _completed_dialogue(
 def _failed_dialogue(
     dialogue: DialogueRecord,
     error: str,
+    run_id: str,
     timestamp: str,
 ) -> DialogueRecord:
     return DialogueRecord(
         resource_name=dialogue.resource_name,
         resref=dialogue.resref,
-        source_kind=dialogue.source_kind,
-        source_path=dialogue.source_path,
-        detail_status=DetailStatus.FAILED,
-        detail_error=error[:2000],
-        updated_at=timestamp,
-        character_count=0,
-        attribution_completed_at=None,
+        source=dialogue.source,
+        extraction=_extraction_state(run_id, DetailStatus.FAILED, timestamp, error[:2000]),
+        detail=None,
+        serialized_size=None,
         search_text=dialogue.search_text,
     )
 
 
 def _pending_dialogue_refresh(
     dialogue: DialogueRecord,
+    run_id: str,
     timestamp: str,
 ) -> DialogueRecord:
     return DialogueRecord(
         resource_name=dialogue.resource_name,
         resref=dialogue.resref,
-        source_kind=dialogue.source_kind,
-        source_path=dialogue.source_path,
-        detail_status=DetailStatus.PENDING,
-        detail_error=None,
-        updated_at=timestamp,
-        character_count=0,
-        attribution_completed_at=None,
+        source=dialogue.source,
+        extraction=_extraction_state(run_id, DetailStatus.PENDING, timestamp),
+        detail=None,
+        serialized_size=None,
         search_text=dialogue.search_text,
     )
 
 
-def _validated_dialogue_copy(
-    dialogue: DialogueRecord,
-    *,
-    resource_name: str | None = None,
-    updated_at: str | None = None,
-    clear_attribution: bool,
-) -> DialogueRecord:
-    update: dict[str, object] = {}
-    if resource_name is not None:
-        update["resource_name"] = resource_name
-    if updated_at is not None:
-        update["updated_at"] = updated_at
-    if clear_attribution:
-        update |= {"character_count": 0, "attribution_completed_at": None}
-    return DialogueRecord.model_validate(dialogue.model_dump() | update)
-
-
 def _dialogue_line_record(
+    run_id: str,
     dialogue: DialogueRecord,
     line: DialogueLine,
 ) -> DialogueLineRecord:
+    canonical = line.model_copy(update={"dialogue_resource_name": dialogue.resource_name})
     return DialogueLineRecord(
-        id=line.id,
-        dialogue_resource_name=dialogue.resource_name,
-        dialogue_resref=dialogue.resref,
-        source_kind=dialogue.source_kind,
-        line_kind=line.line_kind,
-        state_index=line.state_index,
-        state_trigger_index=line.state_trigger_index,
-        state_trigger_text=line.state_trigger_text,
-        transition_index=line.transition_index,
-        strref=line.strref,
-        text=line.text,
-        tokens=line.tokens,
-        serialized_size=len(line.model_dump_json().encode("utf-8")),
-        character_count=0,
-        attribution_completed_at=None,
-        search_text=line.search_text,
+        id=canonical.id,
+        run_id=run_id,
+        dialogue_resource_name=canonical.dialogue_resource_name,
+        line_kind=canonical.line_kind,
+        state_index=canonical.state_index,
+        state_trigger_index=canonical.state_trigger_index,
+        state_trigger_text=canonical.state_trigger_text,
+        transition_index=canonical.transition_index,
+        strref=canonical.strref,
+        text=canonical.text,
+        tokens=canonical.tokens,
+        serialized_size=len(canonical.model_dump_json().encode("utf-8")),
+        search_text=canonical.search_text,
     )
 
 
 def _character_sound_record(
+    run_id: str,
     character: CharacterRecord,
     detail: CharacterDetail,
     sound: CharacterSound,
 ) -> CharacterSoundRecord:
     return CharacterSoundRecord(
         id=CharacterSound.id_for(character.resource_name, sound.slot_id),
+        run_id=run_id,
         character_resource_name=character.resource_name,
-        character_resref=character.resref,
-        source_kind=character.source_kind,
         slot_id=sound.slot_id,
         strref=sound.strref,
         text=sound.text,
@@ -2086,16 +1894,15 @@ def _character_sound_record(
 
 def _voice_resources(
     characters: Sequence[CharacterRecord],
-    dialogues: Sequence[DialogueRecord],
     identifiers: Sequence[IdentifierDefinitionRecord],
+    voice_ids: dict[str, str],
 ) -> list[VoiceResource]:
     members_by_voice: dict[str, list[CharacterRecord]] = {}
     for character in characters:
-        if character.detail_status is DetailStatus.COMPLETE:
-            assert character.voice_id is not None
-            members_by_voice.setdefault(character.voice_id, []).append(character)
+        if character.detail is not None:
+            voice_id = voice_ids[character.resource_name.casefold()]
+            members_by_voice.setdefault(voice_id, []).append(character)
 
-    dialogues_by_resref = {dialogue.resref.casefold(): dialogue for dialogue in dialogues}
     labels = {
         (definition.kind, definition.value): " / ".join(
             _prettify_symbol(symbol) for symbol in definition.symbols
@@ -2106,26 +1913,22 @@ def _voice_resources(
     for voice_id, unsorted_members in sorted(members_by_voice.items()):
         members = sorted(unsorted_members, key=lambda member: member.resource_name.casefold())
         representative = _voice_representative(members)
-        assert representative.display_name is not None
-
-        direct_dialogues = {
-            dialogue.resref.casefold(): dialogue
-            for member in members
-            if member.dialog_resref is not None
-            and (dialogue := dialogues_by_resref.get(member.dialog_resref.casefold())) is not None
-        }
-        resolved_dialogues = sorted(
-            direct_dialogues.values(),
-            key=lambda dialogue: dialogue.resref.casefold(),
-        )
+        assert representative.detail is not None
+        dialogue_resrefs: dict[str, str] = {}
+        for member in members:
+            assert member.detail is not None
+            if member.detail.dialog_resref is not None:
+                dialogue_resrefs.setdefault(
+                    member.detail.dialog_resref.casefold(),
+                    member.detail.dialog_resref,
+                )
         resources.append(
             VoiceResource(
                 id=VoiceId(voice_id),
-                display_name=representative.display_name,
+                display_name=representative.detail.display_name,
                 prompt=_voice_prompt(representative, labels),
                 variant_resource_names=[member.resource_name for member in members],
-                dialogue_resrefs=[dialogue.resref for dialogue in resolved_dialogues],
-                npc_line_count=sum(dialogue.npc_line_count or 0 for dialogue in resolved_dialogues),
+                dialogue_resrefs=sorted(dialogue_resrefs.values(), key=str.casefold),
             )
         )
     return resources
@@ -2135,11 +1938,12 @@ def _voice_ids(characters: Sequence[CharacterRecord]) -> dict[str, str]:
     """Resolve false collisions where one script variable names several speakers."""
     groups: dict[VoiceId, list[CharacterRecord]] = {}
     for character in characters:
-        if character.detail_status is not DetailStatus.COMPLETE:
+        detail = character.detail
+        if detail is None:
             continue
         voice_id = proposed_voice_id(
-            character.death_variable,
-            character.dialog_resref,
+            detail.death_variable,
+            detail.dialog_resref,
             _character_name_strref(character),
             character.resref,
         )
@@ -2153,8 +1957,10 @@ def _voice_ids(characters: Sequence[CharacterRecord]) -> dict[str, str]:
             if _character_name_strref(character) is None:
                 unnamed_members.append(character)
             else:
-                assert character.display_name is not None
-                named_members.setdefault(character.display_name.casefold(), []).append(character)
+                assert character.detail is not None
+                named_members.setdefault(character.detail.display_name.casefold(), []).append(
+                    character
+                )
 
         if not str(voice_id).startswith("dv:") or len(named_members) <= 1:
             for character in members:
@@ -2178,41 +1984,41 @@ def _voice_ids(characters: Sequence[CharacterRecord]) -> dict[str, str]:
 
 
 def _character_name_strref(character: CharacterRecord) -> int | None:
-    if character.short_name is not None:
-        return character.short_name_strref
-    if character.long_name is not None:
-        return character.long_name_strref
+    detail = character.detail
+    if detail is None:
+        return None
+    if detail.short_name is not None:
+        return detail.short_name_strref
+    if detail.long_name is not None:
+        return detail.long_name_strref
     return None
 
 
 def _voice_representative(members: Sequence[CharacterRecord]) -> CharacterRecord:
     """Choose one real CRE for both the canonical name and prompt metadata."""
-    metadata_counts = Counter(
-        (
-            character.gender_id,
-            character.race_id,
-            character.class_id,
-            character.kit_ids_value,
-            character.alignment_id,
-        )
-        for character in members
-    )
+    assert all(character.detail is not None for character in members)
+    metadata_counts = Counter(_voice_metadata(character) for character in members)
     return min(
         members,
         key=lambda character: (
-            character.short_name is None and character.long_name is None,
-            -metadata_counts[
-                (
-                    character.gender_id,
-                    character.race_id,
-                    character.class_id,
-                    character.kit_ids_value,
-                    character.alignment_id,
-                )
-            ],
+            character.detail is None
+            or (character.detail.short_name is None and character.detail.long_name is None),
+            -metadata_counts[_voice_metadata(character)],
             character.resource_name.casefold(),
             character.resource_name,
         ),
+    )
+
+
+def _voice_metadata(character: CharacterRecord) -> tuple[int, int, int, int | None, int]:
+    detail = character.detail
+    assert detail is not None
+    return (
+        detail.gender_id,
+        detail.race_id,
+        detail.class_id,
+        detail.kit_ids_value,
+        detail.alignment_id,
     )
 
 
@@ -2220,22 +2026,19 @@ def _voice_prompt(
     character: CharacterRecord,
     labels: dict[tuple[IdentifierKind, int], str],
 ) -> str:
-    assert character.display_name is not None
-    assert character.gender_id is not None
-    assert character.race_id is not None
-    assert character.class_id is not None
-    assert character.alignment_id is not None
+    detail = character.detail
+    assert detail is not None
     lines = [
-        f"Name: {character.display_name}",
-        f"Gender: {labels.get((IdentifierKind.GENDER, character.gender_id), str(character.gender_id))}",
-        f"Race: {labels.get((IdentifierKind.RACE, character.race_id), str(character.race_id))}",
-        f"Class: {labels.get((IdentifierKind.CLASS, character.class_id), str(character.class_id))}",
+        f"Name: {detail.display_name}",
+        f"Gender: {labels.get((IdentifierKind.GENDER, detail.gender_id), str(detail.gender_id))}",
+        f"Race: {labels.get((IdentifierKind.RACE, detail.race_id), str(detail.race_id))}",
+        f"Class: {labels.get((IdentifierKind.CLASS, detail.class_id), str(detail.class_id))}",
     ]
-    kit_id = character.kit_ids_value
+    kit_id = detail.kit_ids_value
     if kit_id not in (None, 0, 0x4000):
         lines.append(f"Kit: {labels.get((IdentifierKind.KIT, kit_id), str(kit_id))}")
     lines.append(
-        f"Alignment: {labels.get((IdentifierKind.ALIGNMENT, character.alignment_id), str(character.alignment_id))}"
+        f"Alignment: {labels.get((IdentifierKind.ALIGNMENT, detail.alignment_id), str(detail.alignment_id))}"
     )
     return "\n".join(lines)
 
@@ -2244,104 +2047,90 @@ def _prettify_symbol(symbol: str) -> str:
     return " ".join(part.capitalize() for part in symbol.replace("-", "_").split("_") if part)
 
 
-def _voice_resource_record(resource: VoiceResource) -> VoiceResourceRecord:
+def _voice_resource_record(
+    run_id: str,
+    resource: VoiceResource,
+) -> VoiceResourceRecord:
+    voice_id = str(resource.id)
     return VoiceResourceRecord(
-        id=resource.id,
+        key=VoiceResourceRecord.key_for(run_id, voice_id),
+        run_id=run_id,
+        voice_id=voice_id,
         display_name=resource.display_name,
         prompt=resource.prompt,
         variant_resource_names=resource.variant_resource_names,
         dialogue_resrefs=resource.dialogue_resrefs,
-        variant_count=resource.variant_count,
-        dialogue_count=resource.dialogue_count,
-        npc_line_count=resource.npc_line_count,
-        serialized_size=resource.pydantic_json_size,
         search_text=resource.search_text,
     )
 
 
 def _dialogue_transition_record(
+    run_id: str,
     dialogue: DialogueRecord,
     edge: DialogueTransitionEdge,
 ) -> DialogueTransitionRecord:
+    canonical = edge.model_copy(update={"dialogue_resource_name": dialogue.resource_name})
     return DialogueTransitionRecord(
-        id=edge.id,
-        dialogue_resource_name=dialogue.resource_name,
-        dialogue_resref=dialogue.resref,
-        source_kind=dialogue.source_kind,
-        state_index=edge.state_index,
-        transition_index=edge.transition_index,
-        flags_raw=edge.flags_raw,
-        flags_decoded=edge.flags_decoded,
-        trigger_index=edge.trigger_index,
-        trigger_text=edge.trigger_text,
-        action_index=edge.action_index,
-        action_text=edge.action_text,
-        next_dialog=edge.next_dialog,
-        next_state_index=edge.next_state_index,
-        terminates_dialog=edge.terminates_dialog,
-        serialized_size=len(edge.model_dump_json().encode("utf-8")),
-        search_text=edge.search_text,
+        id=canonical.id,
+        run_id=run_id,
+        dialogue_resource_name=canonical.dialogue_resource_name,
+        state_index=canonical.state_index,
+        transition_index=canonical.transition_index,
+        flags_raw=canonical.flags_raw,
+        flags_decoded=canonical.flags_decoded,
+        trigger_index=canonical.trigger_index,
+        trigger_text=canonical.trigger_text,
+        action_index=canonical.action_index,
+        action_text=canonical.action_text,
+        next_dialog=canonical.next_dialog,
+        next_state_index=canonical.next_state_index,
+        terminates_dialog=canonical.terminates_dialog,
+        serialized_size=len(canonical.model_dump_json().encode("utf-8")),
+        search_text=canonical.search_text,
     )
 
 
-def _attributed_character(
+def _character_attribution_record(
+    run_id: str,
     character: CharacterRecord,
     declared_resrefs: tuple[str, ...],
     dialogues: tuple[DialogueRecord, ...],
-    voice_id: str | None,
-    timestamp: str,
-) -> CharacterRecord:
+) -> CharacterAttributionRecord:
+    resolved_resrefs = {dialogue.resref.casefold() for dialogue in dialogues}
+    missing_resrefs = [
+        resref for resref in declared_resrefs if resref.casefold() not in resolved_resrefs
+    ]
     status: AttributionStatus
-    if character.detail_status is not DetailStatus.COMPLETE:
+    if character.detail is None:
         status = AttributionStatus.CHARACTER_UNAVAILABLE
     elif not declared_resrefs:
         status = AttributionStatus.NO_DIALOGUE
-    elif not dialogues:
+    elif len(missing_resrefs) == len(declared_resrefs):
         status = AttributionStatus.MISSING_DIALOGUE
-    elif any(dialogue.detail_status is DetailStatus.FAILED for dialogue in dialogues):
-        status = AttributionStatus.DIALOGUE_FAILED
+    elif missing_resrefs:
+        status = AttributionStatus.PARTIAL_MATCH
     else:
         status = AttributionStatus.MATCHED
 
     dialogue_status: DetailStatus | None = None
     if dialogues:
-        if any(dialogue.detail_status is DetailStatus.FAILED for dialogue in dialogues):
+        if any(dialogue.extraction.status is DetailStatus.FAILED for dialogue in dialogues):
             dialogue_status = DetailStatus.FAILED
-        elif any(dialogue.detail_status is DetailStatus.PENDING for dialogue in dialogues):
+        elif any(dialogue.extraction.status is DetailStatus.PENDING for dialogue in dialogues):
             dialogue_status = DetailStatus.PENDING
         else:
             dialogue_status = DetailStatus.COMPLETE
 
-    update = {
-        "voice_id": voice_id,
-        "attribution_status": status,
-        "dialogue_status": dialogue_status,
-        "declared_dialogue_count": len(declared_resrefs),
-        "resolved_dialogue_count": len(dialogues),
-        "dialogue_line_count": (
-            sum(dialogue.dialogue_line_count or 0 for dialogue in dialogues) if dialogues else None
-        ),
-        "npc_line_count": (
-            sum(dialogue.npc_line_count or 0 for dialogue in dialogues) if dialogues else None
-        ),
-        "player_line_count": (
-            sum(dialogue.player_line_count or 0 for dialogue in dialogues) if dialogues else None
-        ),
-        "journal_line_count": (
-            sum(dialogue.journal_line_count or 0 for dialogue in dialogues) if dialogues else None
-        ),
-        "dialogue_state_count": (
-            sum(dialogue.state_count or 0 for dialogue in dialogues) if dialogues else None
-        ),
-        "dialogue_transition_count": (
-            sum(dialogue.transition_count or 0 for dialogue in dialogues) if dialogues else None
-        ),
-        "dialogue_serialized_size": (
-            sum(dialogue.serialized_size or 0 for dialogue in dialogues) if dialogues else None
-        ),
-        "attribution_completed_at": timestamp,
-    }
-    return CharacterRecord.model_validate(character.model_dump() | update)
+    return CharacterAttributionRecord(
+        key=CharacterAttributionRecord.key_for(run_id, character.resource_name),
+        run_id=run_id,
+        character_resource_name=character.resource_name,
+        status=status,
+        dialogue_status=dialogue_status,
+        declared_dialogue_resrefs=list(declared_resrefs),
+        missing_dialogue_resrefs=missing_resrefs,
+        resolved_dialogue_resource_names=[dialogue.resource_name for dialogue in dialogues],
+    )
 
 
 def _character_dialogue_resrefs(
@@ -2349,12 +2138,62 @@ def _character_dialogue_resrefs(
     links_by_death_variable: dict[str, list[CharacterResourceLinkRecord]],
 ) -> tuple[str, ...]:
     resrefs: dict[str, str] = {}
-    if character.dialog_resref is not None:
-        resrefs[character.dialog_resref.casefold()] = character.dialog_resref
-    if character.death_variable is not None:
-        for link in links_by_death_variable.get(character.death_variable.casefold(), []):
+    detail = character.detail
+    if detail is None:
+        return ()
+    if detail.dialog_resref is not None:
+        resrefs[detail.dialog_resref.casefold()] = detail.dialog_resref
+    if detail.death_variable is not None:
+        for link in links_by_death_variable.get(detail.death_variable.casefold(), []):
             resrefs.setdefault(link.target_resref.casefold(), link.target_resref)
-    return tuple(resrefs.values())
+    return tuple(sorted(resrefs.values(), key=lambda value: (value.casefold(), value)))
+
+
+def _extraction_state(
+    run_id: str,
+    status: DetailStatus,
+    timestamp: str,
+    error: str | None = None,
+) -> ExtractionState:
+    return ExtractionState(
+        run_id=run_id,
+        status=status,
+        error=error,
+        updated_at=timestamp,
+    )
+
+
+def _resource_search_text(record: CharacterRecord | DialogueRecord) -> str:
+    return compose_search_text(
+        record.resource_name,
+        record.resref,
+        record.source.path,
+    )
+
+
+def _character_search_text(
+    resource_search_text: str,
+    detail: CharacterData | None,
+) -> str:
+    if detail is None:
+        return resource_search_text
+    return compose_search_text(
+        resource_search_text,
+        detail.display_name,
+        detail.short_name,
+        detail.long_name,
+        detail.death_variable,
+        detail.dialog_resref,
+        detail.override_script,
+        detail.class_script,
+        detail.race_script,
+        detail.general_script,
+        detail.default_script,
+    )
+
+
+def _dialogue_line_count(dialogue: DialogueRecord) -> int:
+    return 0 if dialogue.detail is None else dialogue.detail.dialogue_line_count
 
 
 def _metadata_records[Record: _KeyedRecord](
@@ -2369,8 +2208,8 @@ def _same_identity(
     resource: CreResource | DlgResource,
 ) -> bool:
     return (
-        record.resource_name.casefold() == resource.resource_name.casefold()
+        record.resource_name == resource.resource_name
         and record.resref.casefold() == resource.resref.casefold()
-        and record.source_kind == resource.source_kind
-        and record.source_path == resource.source_path
+        and record.source.kind == resource.source_kind
+        and record.source.path == resource.source_path
     )

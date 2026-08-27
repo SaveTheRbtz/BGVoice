@@ -9,6 +9,7 @@ from bgvoice.models import (
     CampaignResourceBinding,
     CampaignResourceKind,
     CharacterDetail,
+    CharacterExtraction,
     CharacterResourceLink,
     CharacterResourceRole,
     CharacterSound,
@@ -44,18 +45,22 @@ from bgvoice.models import (
     clean_display_name,
     cre_kit_value_from_bytes,
     kit_ids_value_from_cre,
+    proposed_voice_id,
 )
 from tests.factories import make_dialogue_dump, make_dump, make_resource
 
 
 def test_character_detail_projects_voice_fields() -> None:
-    detail = CharacterDetail.from_dump(make_resource(), make_dump())
+    dump = make_dump()
+    extraction = CharacterExtraction.from_dump(make_resource(), dump)
+    detail = extraction.detail
 
+    assert extraction.resource_name == "AERIE.CRE"
+    assert extraction.serialized_size == len(dump.model_dump_json().encode("utf-8"))
     assert detail.display_name == "Aerie"
     assert detail.short_name == "^0xFF8B7D6DAerie^-"
     assert detail.death_variable == "Aerie"
     assert detail.dialog_resref == "AERIE"
-    assert detail.proposed_voice_id == "dv:aerie"
     assert (detail.gender_id, detail.class_id) == (2, 14)
     assert (detail.animation_id, detail.racial_enemy_id) == (0x6202, 255)
     assert detail.class_levels.model_dump() == {
@@ -82,10 +87,16 @@ def test_character_detail_projects_voice_fields() -> None:
     assert detail.cre_kit_value == 0x40000000
     assert detail.kit_ids_value == 0x4000
     assert (detail.general_script, detail.race_script, detail.large_portrait) == (None, None, None)
-    assert [sound.model_dump() for sound in detail.sounds] == [
+    assert [sound.model_dump() for sound in extraction.sounds] == [
         {"slot_id": 9, "strref": 2001, "text": "For the fallen!"},
         {"slot_id": 44, "strref": 2044, "text": "What is it, <CHARNAME>?"},
     ]
+    assert {"resource_name", "sounds", "serialized_size"}.isdisjoint(CharacterDetail.model_fields)
+
+
+def test_character_extraction_rejects_a_dump_for_another_resource() -> None:
+    with pytest.raises(AssertionError, match=r"inventory names.*dump"):
+        CharacterExtraction.from_dump(make_resource("AERIE.CRE"), make_dump("MINSC.CRE"))
 
 
 def test_character_detail_falls_back_to_resref() -> None:
@@ -98,33 +109,11 @@ def test_character_detail_falls_back_to_resref() -> None:
     assert detail.short_name is None
     assert detail.long_name is None
     assert detail.dialog_resref is None
-    assert detail.proposed_voice_id == "dv:aerie"
 
 
 def test_character_voice_identity_uses_long_name_then_cre_resref() -> None:
-    long_name = CharacterDetail.from_dump(
-        make_resource("RHian.CRE"),
-        make_dump(
-            "RHian.CRE",
-            short_name=None,
-            long_name="Rhian",
-            death_variable="NONE",
-            dialog="0",
-        ),
-    )
-    unnamed = CharacterDetail.from_dump(
-        make_resource("EMPTY.CRE"),
-        make_dump(
-            "EMPTY.CRE",
-            short_name=None,
-            long_name=None,
-            death_variable="NONE",
-            dialog=None,
-        ),
-    )
-
-    assert long_name.proposed_voice_id == "dlg:0:name:101"
-    assert unnamed.proposed_voice_id == "dlg:none:cre:empty"
+    assert proposed_voice_id("NONE", "0", 101, "RHian") == "dlg:0:name:101"
+    assert proposed_voice_id("NONE", None, None, "EMPTY") == "dlg:none:cre:empty"
 
 
 @pytest.mark.parametrize(
@@ -142,28 +131,21 @@ def test_character_voice_identity_is_stable_for_every_complete_cre(
     dialog: str | None,
     expected: str,
 ) -> None:
-    detail = CharacterDetail.from_dump(
-        make_resource(),
-        make_dump(death_variable=death_variable, dialog=dialog),
-    )
-
-    assert detail.proposed_voice_id == expected
+    assert proposed_voice_id(death_variable, dialog, 100, "AERIE") == expected
 
 
-def test_voice_resource_owns_members_dialogues_and_derived_fields() -> None:
+def test_voice_resource_owns_members_and_derived_fields() -> None:
     voice = VoiceResource(
         id=VoiceId("dv:hexxat"),
         display_name="Hexxat",
         prompt="Name: Hexxat\nGender: Female",
         variant_resource_names=["OHHEX8.CRE", "OHHEX25.CRE"],
-        dialogue_resrefs=["HEXXAT", "HEXXA25A"],
-        npc_line_count=202,
+        dialogue_resrefs=["HEXXA25A", "HEXXAT"],
     )
 
-    assert (voice.variant_count, voice.dialogue_count) == (2, 2)
-    assert voice.pydantic_json_size == len(voice.model_dump_json().encode("utf-8"))
+    assert voice.variant_count == 2
     assert voice.search_text == (
-        "dv:hexxat Hexxat Name: Hexxat\nGender: Female OHHEX8.CRE OHHEX25.CRE HEXXAT HEXXA25A"
+        "dv:hexxat Hexxat Name: Hexxat\nGender: Female OHHEX8.CRE OHHEX25.CRE HEXXA25A HEXXAT"
     )
 
 
@@ -449,19 +431,26 @@ def test_dialogue_metrics_and_lines_preserve_dlg_semantics() -> None:
     assert "SetGlobal" in edges[2].search_text
 
 
+def test_dialogue_extraction_owns_identity_children_and_serialized_size() -> None:
+    dump = make_dialogue_dump()
+    extraction = DialogueExtraction.from_dump(dump)
+
+    assert extraction.resource_name == "AERIE.DLG"
+    assert extraction.serialized_size == len(dump.model_dump_json().encode("utf-8"))
+    assert (len(extraction.lines), len(extraction.edges)) == (5, 3)
+    assert {"resource_name", "serialized_size"}.isdisjoint(DialogueDetail.model_fields)
+
+
 def test_domain_search_text_and_ids_are_case_insensitive_at_resource_boundaries() -> None:
     resource = make_resource()
-    character = CharacterDetail.from_dump(resource, make_dump())
     dialogue = make_dialogue_dump("aerie.dlg")
-    detail = DialogueDetail.from_dump(dialogue)
+    extraction = DialogueExtraction.from_dump(dialogue)
     line = DialogueLine.from_dump(dialogue)[0]
     edge = DialogueTransitionEdge.from_dump(dialogue)[0]
 
-    assert "Aerie" in character.search_text
     assert resource.source_path in resource.search_text
-    assert resource.source_path in character.search_text
     assert CharacterSound.id_for("aerie.cre", 9) == "AERIE.CRE:9"
-    assert detail.resref == "aerie"
+    assert extraction.resource_name == "aerie.dlg"
     assert line.id == "AERIE.DLG:npc:0:-"
     assert edge.id == "AERIE.DLG:0:0"
 
@@ -471,14 +460,16 @@ def test_dialogue_extraction_rejects_lines_from_another_resource() -> None:
     wrong_line = extraction.lines[0].model_copy(update={"dialogue_resource_name": "MINSC.DLG"})
 
     with pytest.raises(ValidationError, match=r"contains lines for.*MINSC\.DLG"):
-        DialogueExtraction(detail=extraction.detail, lines=[wrong_line], edges=extraction.edges)
+        DialogueExtraction.model_validate(
+            extraction.model_dump() | {"lines": [wrong_line.model_dump()]}
+        )
 
 
 def test_dialogue_extraction_reconciles_aggregate_and_line_records() -> None:
     extraction = DialogueExtraction.from_dump(make_dialogue_dump())
 
     with pytest.raises(ValidationError, match="line counts"):
-        DialogueExtraction(detail=extraction.detail, lines=[], edges=extraction.edges)
+        DialogueExtraction.model_validate(extraction.model_dump() | {"lines": []})
 
 
 def test_dialogue_transition_allows_implicit_current_dialog_destination() -> None:

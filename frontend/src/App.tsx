@@ -50,8 +50,8 @@ const DETAIL_STATUSES = ["complete", "pending", "failed"] as const satisfies rea
 const SOURCE_KINDS = ["override", "bif", "dlc"] as const satisfies readonly SourceKind[];
 const ATTRIBUTION_STATUSES = [
   "matched",
+  "partial_match",
   "missing_dialogue",
-  "dialogue_failed",
   "no_dialogue",
   "character_unavailable",
 ] as const satisfies readonly AttributionStatus[];
@@ -147,9 +147,11 @@ export default function App() {
   }, []);
   const attributionNote = stats == null
     ? "Loading attribution stage…"
-    : stats.attribution_completed_at == null
-      ? "Attribution not run"
-      : `Completed ${formatDate(stats.attribution_completed_at)}`;
+    : stats.attribution_publication === "stale"
+      ? "Needs rebuild after newer extraction"
+      : stats.attribution_publication === "missing"
+        ? "Not run"
+        : `Completed ${formatDate(stats.attribution_completed_at)}`;
 
   const openTab = useCallback((tab: BrowserTab) => {
     if (tab === activeTab) return;
@@ -250,7 +252,7 @@ export default function App() {
 
         <section className="stats-grid" aria-label="Pipeline summary">
           <Stat label="CRE variants" value={stats?.characters_total} note={`${formatCount(stats?.characters_complete)} complete`} />
-          <Stat label="Matched CREs" value={stats?.characters_matched} note={`${formatCount(stats?.characters_missing_dialogue)} missing references`} />
+          <Stat label="Matched CREs" value={stats?.characters_matched} note={`${formatCount(stats?.characters_partially_matched)} partial · ${formatCount(stats?.characters_missing_dialogue)} missing`} />
           <Stat label="Unavailable CREs" value={stats?.characters_unavailable} note={attributionNote} />
           <Stat label="DLG inventory" value={stats?.dialogues_total} note={`${formatCount(stats?.dialogues_complete)} fully decoded`} />
           <Stat label="Unattributed DLGs" value={stats?.dialogues_unattributed} note={`${formatCount(stats?.unattributed_dialogue_lines)} unassigned lines`} />
@@ -440,7 +442,7 @@ function CharacterBrowser({
           label="Attribution"
           value={query.attribution_status}
           values={ATTRIBUTION_STATUSES}
-          labels={{ matched: "Matched", missing_dialogue: "Missing DLG", dialogue_failed: "DLG failed", no_dialogue: "No DLG", character_unavailable: "Character unavailable" }}
+          labels={{ matched: "Matched", partial_match: "Partial match", missing_dialogue: "Missing DLG", no_dialogue: "No DLG", character_unavailable: "Character unavailable" }}
           onChange={(value) => browser.update("attribution_status", value)}
         />
         {activeFilters > 0 && (

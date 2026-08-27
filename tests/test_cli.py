@@ -9,6 +9,7 @@ from bgvoice.database import PipelineDatabase
 from bgvoice.models import (
     ExtractionProgress,
     ExtractionSummary,
+    RunKind,
     RunStatus,
     TerminalRunStatus,
 )
@@ -221,7 +222,16 @@ def test_web_and_attribution_commands_dispatch(
     monkeypatch.setattr("uvicorn.run", run_web)
 
     database = tmp_path / "pipeline.lancedb"
-    PipelineDatabase(database)
+    writer = PipelineDatabase(database)
+    for kind in (RunKind.CHARACTERS, RunKind.DIALOGUES, RunKind.METADATA):
+        run_id = writer.start_run(tmp_path, "iecli test", run_kind=kind)
+        writer.finish_run(
+            run_id,
+            status=RunStatus.COMPLETE,
+            attempted=0,
+            extracted=0,
+            failures=0,
+        )
     assert cli.main(["attribute-dialogues", "--database", str(database)]) == 0
     assert (
         cli.main(["web", "--database", str(database), "--host", "0.0.0.0", "--port", "8123"]) == 0

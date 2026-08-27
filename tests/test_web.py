@@ -13,13 +13,12 @@ from pydantic import model_validator
 
 import bgvoice.web as web_module
 from bgvoice.database import (
+    CharacterAttributionRecord,
     CharacterRecord,
-    DialogueLineRecord,
-    DialogueRecord,
     PipelineDatabase,
 )
 from bgvoice.models import (
-    CharacterDetail,
+    CharacterExtraction,
     DialogueExtraction,
     IdentifierDefinition,
     IdentifierKind,
@@ -49,8 +48,8 @@ def web_database(tmp_path: Path) -> Path:
         update={"header": aerie_dump.header.model_copy(update={"racial_enemy": RaceId(123)})}
     )
     details = [
-        CharacterDetail.from_dump(aerie, aerie_dump),
-        CharacterDetail.from_dump(
+        CharacterExtraction.from_dump(aerie, aerie_dump),
+        CharacterExtraction.from_dump(
             minsc,
             make_dump(
                 "MINSC.CRE",
@@ -60,7 +59,7 @@ def web_database(tmp_path: Path) -> Path:
                 dialog="MINSC",
             ),
         ),
-        CharacterDetail.from_dump(
+        CharacterExtraction.from_dump(
             empty,
             make_dump(
                 "EMPTY.CRE",
@@ -70,7 +69,7 @@ def web_database(tmp_path: Path) -> Path:
                 dialog="NONE",
             ),
         ),
-        CharacterDetail.from_dump(
+        CharacterExtraction.from_dump(
             ghost,
             make_dump(
                 "GHOST.CRE",
@@ -81,7 +80,7 @@ def web_database(tmp_path: Path) -> Path:
             ),
         ),
         *[
-            CharacterDetail.from_dump(
+            CharacterExtraction.from_dump(
                 resource,
                 make_dump(
                     resource.resource_name,
@@ -135,7 +134,7 @@ def web_database(tmp_path: Path) -> Path:
     )
     character_run = database.start_run(tmp_path, "iecli test")
     database.replace_inventory(character_run, [aerie, minsc, empty, ghost, *extras])
-    database.apply_detail_batch(details, [])
+    database.apply_detail_batch(character_run, details, [])
     database.finish_run(
         character_run,
         status=RunStatus.COMPLETE,
@@ -154,6 +153,7 @@ def web_database(tmp_path: Path) -> Path:
         ],
     )
     database.apply_dialogue_batch(
+        dialogue_run,
         [
             DialogueExtraction.from_dump(make_dialogue_dump()),
             DialogueExtraction.from_dump(make_dialogue_dump("UNUSED.DLG")),
@@ -213,9 +213,11 @@ def test_reader_is_healthy_and_reports_pipeline_totals(web_database: Path) -> No
             ) == (4, 1, 3, 1)
             assert (
                 stats.characters_matched,
+                stats.characters_partially_matched,
                 stats.characters_missing_dialogue,
                 stats.characters_dialogue_failed,
-            ) == (1, 1, 1)
+            ) == (1, 1, 1, 1)
+            assert stats.attribution_publication == "published"
             assert stats.attribution_completed_at is not None
             assert stats.characters_unavailable == 0
             assert (stats.dialogues_attributed, stats.dialogues_unattributed) == (2, 1)
@@ -228,6 +230,7 @@ def test_reader_is_healthy_and_reports_pipeline_totals(web_database: Path) -> No
                 stats.campaigns_total,
             ) == (5, 4, 1, 8, 2)
             assert [run.run_kind for run in stats.latest_runs] == [
+                "attribution",
                 "dialogues",
                 "characters",
                 "metadata",
@@ -250,8 +253,9 @@ def test_reader_observes_committed_writes_from_another_connection(web_database: 
             run_id = writer.start_run(web_database.parent, "iecli test")
             writer.replace_inventory(run_id, [resource])
             writer.apply_detail_batch(
+                run_id,
                 [
-                    CharacterDetail.from_dump(
+                    CharacterExtraction.from_dump(
                         resource,
                         make_dump(
                             "NEW.CRE",
@@ -777,7 +781,7 @@ def test_fts_pagination_sorts_the_complete_match_set(
     path = tmp_path / "fts-pages.lancedb"
     resources = [make_resource(f"R{index:02}.CRE") for index in range(35)]
     details = [
-        CharacterDetail.from_dump(
+        CharacterExtraction.from_dump(
             resource,
             make_dump(
                 resource.resource_name,
@@ -791,7 +795,7 @@ def test_fts_pagination_sorts_the_complete_match_set(
     database = PipelineDatabase(path)
     run_id = database.start_run(tmp_path, "iecli test")
     database.replace_inventory(run_id, resources)
-    database.apply_detail_batch(details, [])
+    database.apply_detail_batch(run_id, details, [])
     database.finish_run(
         run_id,
         status=RunStatus.COMPLETE,
@@ -803,6 +807,7 @@ def test_fts_pagination_sorts_the_complete_match_set(
     dialogue_run = database.start_run(tmp_path, "iecli test", run_kind=RunKind.DIALOGUES)
     database.replace_dialogue_inventory(dialogue_run, dialogue_resources)
     database.apply_dialogue_batch(
+        dialogue_run,
         [
             DialogueExtraction.from_dump(make_dialogue_dump(resource.resource_name))
             for resource in dialogue_resources
@@ -853,7 +858,7 @@ def test_fts_pagination_sorts_the_complete_match_set(
         ).json()
         assert (explicit["sort"], explicit["direction"]) == ("resource_name", "desc")
         assert explicit["items"][0]["resource_name"] == "R34.CRE"
-        assert CountingCharacterRecord.deserialized == 10
+        assert CountingCharacterRecord.deserialized == len(resources)
 
         explicit_names = [
             item["resource_name"]
@@ -939,10 +944,12 @@ def test_empty_database_and_missing_attribution_are_zeroed(tmp_path: Path) -> No
             stats = await reader.stats()
             assert stats.characters_total == 0
             assert stats.dialogues_total == 0
+            assert stats.attribution_publication == "missing"
             assert stats.attribution_completed_at is None
             assert (
                 stats.characters_unavailable,
                 stats.characters_matched,
+                stats.characters_partially_matched,
                 stats.characters_missing_dialogue,
                 stats.characters_dialogue_failed,
                 stats.characters_without_dialogue,
@@ -950,31 +957,26 @@ def test_empty_database_and_missing_attribution_are_zeroed(tmp_path: Path) -> No
                 stats.dialogues_unattributed,
                 stats.attributed_dialogue_lines,
                 stats.unattributed_dialogue_lines,
-            ) == (0,) * 9
+            ) == (0,) * 10
         finally:
             reader.close()
 
     asyncio.run(verify())
 
 
-def test_mixed_character_attribution_generation_is_not_published(web_database: Path) -> None:
-    connection = lancedb.connect(web_database)
-    table = connection.open_table("characters")
-    records = table.search().limit(None).to_pydantic(CharacterRecord)
-    changed = CharacterRecord.model_validate(
-        records[0]
-        .model_copy(update={"attribution_completed_at": "2000-01-01T00:00:00+00:00"})
-        .model_dump()
-    )
-    table.merge_insert("resource_name").when_matched_update_all().execute([changed])
+def test_newer_upstream_run_invalidates_published_attribution(web_database: Path) -> None:
+    writer = PipelineDatabase(web_database)
+    writer.start_run(web_database.parent, "iecli test", run_kind=RunKind.CHARACTERS)
 
     async def verify() -> None:
         reader = await PipelineReader.open(web_database)
         try:
             stats = await reader.stats()
+            assert stats.attribution_publication == "stale"
             assert stats.attribution_completed_at is None
             assert (
                 stats.characters_matched,
+                stats.characters_partially_matched,
                 stats.characters_missing_dialogue,
                 stats.characters_dialogue_failed,
                 stats.characters_without_dialogue,
@@ -982,13 +984,17 @@ def test_mixed_character_attribution_generation_is_not_published(web_database: P
                 stats.dialogues_unattributed,
                 stats.attributed_dialogue_lines,
                 stats.unattributed_dialogue_lines,
-            ) == (0,) * 8
+            ) == (0, 0, 0, 0, 0, 0, 3, 0, 8)
         finally:
             reader.close()
 
     asyncio.run(verify())
 
     with TestClient(create_app(web_database, web_database.parent / "missing-dist")) as client:
+        character = client.get("/api/characters/AERIE.CRE").json()
+        assert character["character"]["voice_id"] is None
+        assert character["attribution_status"] is None
+        assert client.get("/api/voices", params={"page_size": 10}).json()["total"] == 0
         for endpoint, total in (("dialogues", 3), ("lines", 10)):
             unfiltered = client.get(f"/api/{endpoint}", params={"page_size": 100}).json()
             assert unfiltered["total"] == total
@@ -1009,73 +1015,79 @@ def test_mixed_character_attribution_generation_is_not_published(web_database: P
             )
 
 
-def test_endpoints_mask_rows_from_a_different_attribution_generation(
+def test_endpoints_ignore_rows_from_an_incomplete_attribution_generation(
     web_database: Path,
 ) -> None:
-    changed_at = "2000-01-01T00:00:00+00:00"
+    writer = PipelineDatabase(web_database)
+    run_id = writer.start_run(
+        web_database.parent,
+        "iecli test",
+        run_kind=RunKind.ATTRIBUTION,
+    )
     connection = lancedb.connect(web_database)
-
-    dialogues = connection.open_table("dialogues")
-    dialogue = next(
+    table = connection.open_table("character_dialogues")
+    aerie = next(
         record
-        for record in dialogues.search().limit(None).to_pydantic(DialogueRecord)
-        if record.resource_name == "AERIE.DLG"
+        for record in table.search().limit(None).to_pydantic(CharacterAttributionRecord)
+        if record.character_resource_name == "AERIE.CRE"
     )
-    changed_dialogue = DialogueRecord.model_validate(
-        dialogue.model_copy(update={"attribution_completed_at": changed_at}).model_dump()
+    unpublished = CharacterAttributionRecord.model_validate(
+        aerie.model_copy(
+            update={
+                "key": CharacterAttributionRecord.key_for(run_id, aerie.character_resource_name),
+                "run_id": run_id,
+                "resolved_dialogue_resource_names": ["UNUSED.DLG"],
+            }
+        ).model_dump()
     )
-    dialogues.merge_insert("resource_name").when_matched_update_all().execute([changed_dialogue])
-
-    lines = connection.open_table("dialogue_lines")
-    changed_lines = [
-        DialogueLineRecord.model_validate(
-            line.model_copy(update={"attribution_completed_at": changed_at}).model_dump()
-        )
-        for line in lines.search().limit(None).to_pydantic(DialogueLineRecord)
-        if line.dialogue_resource_name == "AERIE.DLG"
-    ]
-    lines.merge_insert("id").when_matched_update_all().execute(changed_lines)
+    table.add([unpublished])
 
     with TestClient(create_app(web_database, web_database.parent / "missing-dist")) as client:
         unfiltered_dialogues = client.get("/api/dialogues", params={"page_size": 100}).json()
         dialogue_counts = {
             item["resource_name"]: item["character_count"] for item in unfiltered_dialogues["items"]
         }
-        assert dialogue_counts == {"AERIE.DLG": 0, "MINSC.DLG": 1, "UNUSED.DLG": 0}
+        assert dialogue_counts == {"AERIE.DLG": 1, "MINSC.DLG": 1, "UNUSED.DLG": 0}
 
         attributed_dialogues = client.get(
             "/api/dialogues", params={"attributed": "true", "page_size": 100}
         ).json()
-        assert [item["resource_name"] for item in attributed_dialogues["items"]] == ["MINSC.DLG"]
+        assert {item["resource_name"] for item in attributed_dialogues["items"]} == {
+            "AERIE.DLG",
+            "MINSC.DLG",
+        }
         unattributed_dialogues = client.get(
             "/api/dialogues", params={"attributed": "false", "page_size": 100}
         ).json()
         assert {item["resource_name"] for item in unattributed_dialogues["items"]} == {
-            "AERIE.DLG",
             "UNUSED.DLG",
         }
 
         unfiltered_lines = client.get("/api/lines", params={"page_size": 100}).json()
         assert unfiltered_lines["total"] == 10
-        assert all(item["character_count"] == 0 for item in unfiltered_lines["items"])
+        counts_by_dialogue = {
+            item["dialogue_resource_name"]: item["character_count"]
+            for item in unfiltered_lines["items"]
+        }
+        assert counts_by_dialogue == {"AERIE.DLG": 1, "UNUSED.DLG": 0}
         assert (
             client.get("/api/lines", params={"attributed": "true", "page_size": 100}).json()[
                 "total"
             ]
-            == 0
+            == 5
         )
         assert (
             client.get("/api/lines", params={"attributed": "false", "page_size": 100}).json()[
                 "total"
             ]
-            == 10
+            == 5
         )
 
         stats = client.get("/api/stats").json()
-        assert (stats["dialogues_attributed"], stats["dialogues_unattributed"]) == (1, 2)
+        assert (stats["dialogues_attributed"], stats["dialogues_unattributed"]) == (2, 1)
         assert (stats["attributed_dialogue_lines"], stats["unattributed_dialogue_lines"]) == (
-            0,
-            8,
+            4,
+            4,
         )
 
 

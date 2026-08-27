@@ -6,7 +6,6 @@ from pathlib import Path
 
 import lancedb
 import pytest
-from lancedb.expr import col, lit
 from lancedb.index import FTS
 from lancedb.pydantic import LanceModel
 from pydantic import ValidationError
@@ -17,6 +16,7 @@ from bgvoice.database import (
     CampaignCalendarRecord,
     CampaignDefinitionRecord,
     CampaignResourceBindingRecord,
+    CharacterAttributionRecord,
     CharacterRecord,
     CharacterResourceLinkRecord,
     CharacterSoundRecord,
@@ -46,7 +46,7 @@ from bgvoice.models import (
     CampaignDefinition,
     CampaignResourceBinding,
     CampaignResourceKind,
-    CharacterDetail,
+    CharacterExtraction,
     CharacterResourceLink,
     CharacterResourceRole,
     ClassId,
@@ -56,6 +56,7 @@ from bgvoice.models import (
     DialogueExtraction,
     DlgDump,
     EngineString,
+    ExtractionState,
     FavoredEnemyDefinition,
     HappinessAlignment,
     HappinessRule,
@@ -70,6 +71,7 @@ from bgvoice.models import (
     MonthDefinition,
     RaceId,
     RaceTextRow,
+    ResourceSource,
     ResourceTargetType,
     RunKind,
     RunStatus,
@@ -415,6 +417,10 @@ def _sound_rows(path: Path) -> list[CharacterSoundRecord]:
     return _rows(path, "character_sounds", CharacterSoundRecord)
 
 
+def _attribution_rows(path: Path) -> list[CharacterAttributionRecord]:
+    return _rows(path, "character_dialogues", CharacterAttributionRecord)
+
+
 def _voice_rows(path: Path) -> list[VoiceResourceRecord]:
     return _rows(path, "voice_resources", VoiceResourceRecord)
 
@@ -431,6 +437,29 @@ def _transition_rows(path: Path) -> list[DialogueTransitionRecord]:
     return _rows(path, "dialogue_transitions", DialogueTransitionRecord)
 
 
+def _finish_successful_run(database: PipelineDatabase, run_id: str) -> None:
+    database.finish_run(
+        run_id,
+        status=RunStatus.COMPLETE,
+        attempted=0,
+        extracted=0,
+        failures=0,
+    )
+
+
+def _finish_empty_stage(database: PipelineDatabase, game_root: Path, kind: RunKind) -> str:
+    run_id = database.start_run(game_root, "iecli test", run_kind=kind)
+    _finish_successful_run(database, run_id)
+    return run_id
+
+
+def _with_character_detail(
+    extraction: CharacterExtraction,
+    **updates: object,
+) -> CharacterExtraction:
+    return extraction.model_copy(update={"detail": extraction.detail.model_copy(update=updates)})
+
+
 def test_database_creates_exact_typed_schemas_and_native_indexes(tmp_path: Path) -> None:
     path = tmp_path / "pipeline.lancedb"
     PipelineDatabase(path)
@@ -439,6 +468,7 @@ def test_database_creates_exact_typed_schemas_and_native_indexes(tmp_path: Path)
     assert tables == {
         "characters",
         "character_sounds",
+        "character_dialogues",
         "voice_resources",
         "dialogues",
         "dialogue_lines",
@@ -466,6 +496,7 @@ def test_database_creates_exact_typed_schemas_and_native_indexes(tmp_path: Path)
     models: dict[str, type[LanceModel]] = {
         "characters": CharacterRecord,
         "character_sounds": CharacterSoundRecord,
+        "character_dialogues": CharacterAttributionRecord,
         "voice_resources": VoiceResourceRecord,
         "dialogues": DialogueRecord,
         "dialogue_lines": DialogueLineRecord,
@@ -637,7 +668,7 @@ def test_metadata_replacement_rejects_duplicate_stable_keys(tmp_path: Path) -> N
     assert database.identifier_definitions() == []
 
 
-def test_failed_metadata_replacement_cannot_leave_old_attribution_published(
+def test_failed_metadata_replacement_preserves_published_attribution(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -646,17 +677,26 @@ def test_failed_metadata_replacement_cannot_leave_old_attribution_published(
     metadata = make_metadata_extraction()
     metadata_run = database.start_run(tmp_path, "iecli test", run_kind=RunKind.METADATA)
     database.replace_metadata(metadata_run, metadata)
+    _finish_successful_run(database, metadata_run)
 
     character = make_resource()
     character_run = database.start_run(tmp_path, "iecli test")
     database.replace_inventory(character_run, [character])
-    database.apply_detail_batch([CharacterDetail.from_dump(character, make_dump())], [])
+    database.apply_detail_batch(
+        character_run, [CharacterExtraction.from_dump(character, make_dump())], []
+    )
     dialogue = make_dialogue_resource()
     dialogue_run = database.start_run(tmp_path, "iecli test", run_kind=RunKind.DIALOGUES)
     database.replace_dialogue_inventory(dialogue_run, [dialogue])
-    database.apply_dialogue_batch([DialogueExtraction.from_dump(make_dialogue_dump())], [])
-    database.rebuild_attributions()
-    assert _character_rows(path)[0].attribution_completed_at is not None
+    database.apply_dialogue_batch(
+        dialogue_run, [DialogueExtraction.from_dump(make_dialogue_dump())], []
+    )
+    _finish_successful_run(database, character_run)
+    _finish_successful_run(database, dialogue_run)
+    first = database.rebuild_attributions()
+    published_attributions = _attribution_rows(path)
+    published_voices = _voice_rows(path)
+    assert {row.run_id for row in published_attributions} == {first.run_id}
 
     replacement = metadata.model_copy(
         update={
@@ -685,15 +725,14 @@ def test_failed_metadata_replacement_cannot_leave_old_attribution_published(
 
     links = _rows(path, "character_resource_links", CharacterResourceLinkRecord)
     assert any(link.target_resref == "NEWDLG" for link in links)
-    assert all(row.attribution_completed_at is None for row in _character_rows(path))
-    assert all(
-        row.attribution_completed_at is None and row.character_count == 0
-        for row in _dialogue_rows(path)
-    )
-    assert all(
-        row.attribution_completed_at is None and row.character_count == 0
-        for row in _line_rows(path)
-    )
+    assert _attribution_rows(path) == published_attributions
+    assert _voice_rows(path) == published_voices
+    completed_attribution_runs = [
+        run
+        for run in _rows(path, "extraction_runs", ExtractionRunRecord)
+        if run.run_kind is RunKind.ATTRIBUTION and run.status is RunStatus.COMPLETE
+    ]
+    assert [run.id for run in completed_attribution_runs] == [first.run_id]
 
 
 def test_existing_table_requires_the_exact_arrow_schema(tmp_path: Path) -> None:
@@ -753,31 +792,34 @@ def test_unchanged_inventory_resumes_and_changed_identity_clears_details(
     character_run = database.start_run(tmp_path, "iecli test")
     database.replace_inventory(character_run, [character])
     pending_character = _character_rows(path)[0]
-    assert pending_character.source_kind is SourceKind.OVERRIDE
-    assert pending_character.detail_status is DetailStatus.PENDING
+    assert pending_character.source.kind is SourceKind.OVERRIDE
+    assert pending_character.extraction.status is DetailStatus.PENDING
     database.apply_detail_batch(
-        [CharacterDetail.from_dump(character, make_dump(short_name="Winged Cleric"))], []
+        character_run,
+        [CharacterExtraction.from_dump(character, make_dump(short_name="Winged Cleric"))],
+        [],
     )
     complete_character = _character_rows(path)[0]
+    assert complete_character.detail is not None
     assert (
-        complete_character.strength,
-        complete_character.strength_bonus,
-        complete_character.intelligence,
-        complete_character.wisdom,
-        complete_character.dexterity,
-        complete_character.constitution,
-        complete_character.charisma,
+        complete_character.detail.base_attributes.strength,
+        complete_character.detail.base_attributes.strength_bonus,
+        complete_character.detail.base_attributes.intelligence,
+        complete_character.detail.base_attributes.wisdom,
+        complete_character.detail.base_attributes.dexterity,
+        complete_character.detail.base_attributes.constitution,
+        complete_character.detail.base_attributes.charisma,
     ) == (10, 0, 16, 16, 17, 9, 14)
     assert (
-        complete_character.morale,
-        complete_character.morale_break,
-        complete_character.morale_recovery_time,
-        complete_character.reputation,
+        complete_character.detail.morale,
+        complete_character.detail.morale_break,
+        complete_character.detail.morale_recovery_time,
+        complete_character.detail.reputation,
     ) == (10, 5, 60, 0)
     dialogue_run = database.start_run(tmp_path, "iecli test", run_kind=RunKind.DIALOGUES)
     database.replace_dialogue_inventory(dialogue_run, [dialogue])
     extraction = DialogueExtraction.from_dump(make_dialogue_dump())
-    database.apply_dialogue_batch([extraction], [])
+    database.apply_dialogue_batch(dialogue_run, [extraction], [])
     line_ids = {line.id for line in _line_rows(path)}
     sound_ids = {sound.id for sound in _sound_rows(path)}
     transition_ids = {transition.id for transition in _transition_rows(path)}
@@ -805,11 +847,89 @@ def test_unchanged_inventory_resumes_and_changed_identity_clears_details(
 
     stored_character = _character_rows(path)[0]
     stored_dialogue = _dialogue_rows(path)[0]
-    assert (stored_character.detail_status, stored_character.display_name) == ("pending", None)
-    assert (stored_dialogue.detail_status, stored_dialogue.state_count) == ("pending", None)
+    assert (stored_character.extraction.status, stored_character.detail) == ("pending", None)
+    assert (stored_dialogue.extraction.status, stored_dialogue.detail) == ("pending", None)
     assert _sound_rows(path) == []
     assert _line_rows(path) == []
     assert _transition_rows(path) == []
+
+
+def test_failed_character_inventory_replacement_keeps_published_children(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "characters.lancedb"
+    database = PipelineDatabase(path)
+    character = make_resource()
+    run_id = database.start_run(tmp_path, "iecli test")
+    database.replace_inventory(run_id, [character])
+    database.apply_detail_batch(
+        run_id,
+        [CharacterExtraction.from_dump(character, make_dump())],
+        [],
+    )
+    published_character = _character_rows(path)
+    published_sounds = _sound_rows(path)
+    changed = character.model_copy(update={"source_path": "C:/changed/AERIE.CRE"})
+    replacement_run = database.start_run(tmp_path, "iecli test")
+
+    def fail_replace(
+        table_name: str,
+        _key: str,
+        _model: type[LanceModel],
+        _records: Sequence[LanceModel],
+    ) -> None:
+        assert table_name == "characters"
+        raise OSError("simulated character inventory failure")
+
+    monkeypatch.setattr(database, "_replace", fail_replace)
+    with pytest.raises(OSError, match="simulated character inventory failure"):
+        database.replace_inventory(replacement_run, [changed])
+
+    assert _character_rows(path) == published_character
+    assert _sound_rows(path) == published_sounds
+
+
+def test_failed_dialogue_inventory_replacement_keeps_published_children(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "dialogues.lancedb"
+    database = PipelineDatabase(path)
+    dialogue = make_dialogue_resource()
+    run_id = database.start_run(tmp_path, "iecli test", run_kind=RunKind.DIALOGUES)
+    database.replace_dialogue_inventory(run_id, [dialogue])
+    database.apply_dialogue_batch(
+        run_id,
+        [DialogueExtraction.from_dump(make_dialogue_dump())],
+        [],
+    )
+    published_dialogue = _dialogue_rows(path)
+    published_lines = _line_rows(path)
+    published_transitions = _transition_rows(path)
+    changed = dialogue.model_copy(update={"source_path": "C:/changed/AERIE.DLG"})
+    replacement_run = database.start_run(
+        tmp_path,
+        "iecli test",
+        run_kind=RunKind.DIALOGUES,
+    )
+
+    def fail_replace(
+        table_name: str,
+        _key: str,
+        _model: type[LanceModel],
+        _records: Sequence[LanceModel],
+    ) -> None:
+        assert table_name == "dialogues"
+        raise OSError("simulated dialogue inventory failure")
+
+    monkeypatch.setattr(database, "_replace", fail_replace)
+    with pytest.raises(OSError, match="simulated dialogue inventory failure"):
+        database.replace_dialogue_inventory(replacement_run, [changed])
+
+    assert _dialogue_rows(path) == published_dialogue
+    assert _line_rows(path) == published_lines
+    assert _transition_rows(path) == published_transitions
 
 
 def test_inventory_replacement_preserves_live_indexes(tmp_path: Path) -> None:
@@ -823,7 +943,8 @@ def test_inventory_replacement_preserves_live_indexes(tmp_path: Path) -> None:
     run_id = database.start_run(tmp_path, "iecli test")
     database.replace_inventory(run_id, [character])
     database.apply_detail_batch(
-        [CharacterDetail.from_dump(character, make_dump(short_name="Fresh voice"))],
+        run_id,
+        [CharacterExtraction.from_dump(character, make_dump(short_name="Fresh voice"))],
         [],
     )
 
@@ -838,9 +959,9 @@ def test_character_sound_slots_are_replaced_by_successful_refresh(tmp_path: Path
     character = make_resource()
     run_id = database.start_run(tmp_path, "iecli test")
     database.replace_inventory(run_id, [character])
-    detail = CharacterDetail.from_dump(character, make_dump(short_name="Winged Cleric"))
+    extraction = CharacterExtraction.from_dump(character, make_dump(short_name="Winged Cleric"))
 
-    database.apply_detail_batch([detail], [])
+    database.apply_detail_batch(run_id, [extraction], [])
     sounds = sorted(_sound_rows(path), key=lambda sound: sound.slot_id)
     assert [(sound.id, sound.strref) for sound in sounds] == [
         ("AERIE.CRE:9", 2001),
@@ -850,7 +971,11 @@ def test_character_sound_slots_are_replaced_by_successful_refresh(tmp_path: Path
     sound_table = lancedb.connect(path).open_table("character_sounds")
     assert sound_table.search("Winged", query_type="fts").limit(10).to_arrow().num_rows == 2
 
-    database.apply_detail_batch([detail.model_copy(update={"sounds": detail.sounds[:1]})], [])
+    database.apply_detail_batch(
+        run_id,
+        [extraction.model_copy(update={"sounds": extraction.sounds[:1]})],
+        [],
+    )
     assert [sound.id for sound in _sound_rows(path)] == ["AERIE.CRE:9"]
 
 
@@ -863,8 +988,8 @@ def test_interrupted_sound_upsert_keeps_slots_and_marks_character_retryable(
     character = make_resource()
     run_id = database.start_run(tmp_path, "iecli test")
     database.replace_inventory(run_id, [character])
-    detail = CharacterDetail.from_dump(character, make_dump())
-    database.apply_detail_batch([detail], [])
+    extraction = CharacterExtraction.from_dump(character, make_dump())
+    database.apply_detail_batch(run_id, [extraction], [])
     old_sounds = _sound_rows(path)
 
     def fail_sound_upsert(
@@ -877,10 +1002,10 @@ def test_interrupted_sound_upsert_keeps_slots_and_marks_character_retryable(
 
     monkeypatch.setattr(database, "_upsert", fail_sound_upsert)
     with pytest.raises(OSError, match="simulated sound write failure"):
-        database.apply_detail_batch([detail], [])
+        database.apply_detail_batch(run_id, [extraction], [])
 
     assert _sound_rows(path) == old_sounds
-    assert _character_rows(path)[0].detail_status == "pending"
+    assert _character_rows(path)[0].extraction.status == "pending"
     assert database.detail_targets(refresh=False) == {"AERIE.CRE"}
 
 
@@ -892,11 +1017,15 @@ def test_failed_refresh_clears_stale_fields_lines_and_search_text(tmp_path: Path
     character_run = database.start_run(tmp_path, "iecli test")
     database.replace_inventory(character_run, [character])
     database.apply_detail_batch(
-        [CharacterDetail.from_dump(character, make_dump(short_name="Winged Cleric"))], []
+        character_run,
+        [CharacterExtraction.from_dump(character, make_dump(short_name="Winged Cleric"))],
+        [],
     )
     dialogue_run = database.start_run(tmp_path, "iecli test", run_kind=RunKind.DIALOGUES)
     database.replace_dialogue_inventory(dialogue_run, [dialogue])
-    database.apply_dialogue_batch([DialogueExtraction.from_dump(make_dialogue_dump())], [])
+    database.apply_dialogue_batch(
+        dialogue_run, [DialogueExtraction.from_dump(make_dialogue_dump())], []
+    )
     assert len(_sound_rows(path)) == 2
     assert len(_transition_rows(path)) == 3
 
@@ -904,8 +1033,12 @@ def test_failed_refresh_clears_stale_fields_lines_and_search_text(tmp_path: Path
     database.replace_inventory(refresh_character_run, [character])
     refresh_dialogue_run = database.start_run(tmp_path, "iecli test", run_kind=RunKind.DIALOGUES)
     database.replace_dialogue_inventory(refresh_dialogue_run, [dialogue])
-    database.apply_detail_batch([], [(character.resource_name, "bad CRE refresh")])
-    database.apply_dialogue_batch([], [(dialogue.resource_name, "bad DLG refresh")])
+    database.apply_detail_batch(
+        refresh_character_run, [], [(character.resource_name, "bad CRE refresh")]
+    )
+    database.apply_dialogue_batch(
+        refresh_dialogue_run, [], [(dialogue.resource_name, "bad DLG refresh")]
+    )
     database.finish_run(
         refresh_character_run,
         status=RunStatus.COMPLETE_WITH_ERRORS,
@@ -923,14 +1056,14 @@ def test_failed_refresh_clears_stale_fields_lines_and_search_text(tmp_path: Path
 
     stored_character = _character_rows(path)[0]
     stored_dialogue = _dialogue_rows(path)[0]
-    assert stored_character.display_name is None
+    assert stored_character.detail is None
     assert stored_character.serialized_size is None
-    assert stored_character.detail_error == "bad CRE refresh"
+    assert stored_character.extraction.error == "bad CRE refresh"
     assert "Winged" not in stored_character.search_text
     assert character.source_path in stored_character.search_text
-    assert stored_dialogue.state_count is None
+    assert stored_dialogue.detail is None
     assert stored_dialogue.serialized_size is None
-    assert stored_dialogue.detail_error == "bad DLG refresh"
+    assert stored_dialogue.extraction.error == "bad DLG refresh"
     assert _sound_rows(path) == []
     assert _line_rows(path) == []
     assert _transition_rows(path) == []
@@ -946,33 +1079,34 @@ def test_invalid_batches_are_rejected_before_mutation(tmp_path: Path) -> None:
     dialogue_run = database.start_run(tmp_path, "iecli test", run_kind=RunKind.DIALOGUES)
     database.replace_dialogue_inventory(dialogue_run, [dialogue])
     extraction = DialogueExtraction.from_dump(make_dialogue_dump())
-    database.apply_dialogue_batch([extraction], [])
+    database.apply_dialogue_batch(dialogue_run, [extraction], [])
     before_characters = _character_rows(path)
     before_sounds = _sound_rows(path)
     before_dialogues = _dialogue_rows(path)
     before_lines = _line_rows(path)
     before_transitions = _transition_rows(path)
 
-    detail = CharacterDetail.from_dump(character, make_dump())
+    detail = CharacterExtraction.from_dump(character, make_dump())
     with pytest.raises(AssertionError, match="duplicate keys"):
-        database.apply_detail_batch([detail, detail], [])
+        database.apply_detail_batch(character_run, [detail, detail], [])
     duplicate_sounds = detail.model_copy(update={"sounds": [detail.sounds[0]] * 2})
     with pytest.raises(AssertionError, match="duplicate keys"):
-        database.apply_detail_batch([duplicate_sounds], [])
+        database.apply_detail_batch(character_run, [duplicate_sounds], [])
     with pytest.raises(AssertionError, match="both success and failure"):
-        database.apply_detail_batch([detail], [(character.resource_name, "bad")])
+        database.apply_detail_batch(character_run, [detail], [(character.resource_name, "bad")])
     with pytest.raises(AssertionError, match="outside the inventory"):
         unknown = make_resource("OTHER.CRE")
         database.apply_detail_batch(
-            [CharacterDetail.from_dump(unknown, make_dump("OTHER.CRE"))], []
+            character_run,
+            [CharacterExtraction.from_dump(unknown, make_dump("OTHER.CRE"))],
+            [],
         )
 
-    mismatched = extraction.model_copy(
-        update={"detail": extraction.detail.model_copy(update={"resref": "OTHER"})}
-    )
-    with pytest.raises(AssertionError, match="inventory has"):
-        database.apply_dialogue_batch([mismatched], [])
+    mismatched = extraction.model_copy(update={"resource_name": "OTHER.DLG"})
+    with pytest.raises(AssertionError, match="outside the inventory"):
+        database.apply_dialogue_batch(dialogue_run, [mismatched], [])
     duplicate_lines = DialogueExtraction(
+        resource_name=extraction.resource_name,
         detail=extraction.detail,
         lines=[
             extraction.lines[0],
@@ -982,24 +1116,27 @@ def test_invalid_batches_are_rejected_before_mutation(tmp_path: Path) -> None:
             extraction.lines[4],
         ],
         edges=extraction.edges,
+        serialized_size=extraction.serialized_size,
     )
     with pytest.raises(AssertionError, match="duplicate keys"):
-        database.apply_dialogue_batch([duplicate_lines], [])
+        database.apply_dialogue_batch(dialogue_run, [duplicate_lines], [])
     invalid_coordinate = DialogueExtraction(
+        resource_name=extraction.resource_name,
         detail=extraction.detail,
         lines=[
             extraction.lines[0].model_copy(update={"transition_index": 0}),
             *extraction.lines[1:],
         ],
         edges=extraction.edges,
+        serialized_size=extraction.serialized_size,
     )
     with pytest.raises(ValidationError, match="NPC lines must omit"):
-        database.apply_dialogue_batch([invalid_coordinate], [])
+        database.apply_dialogue_batch(dialogue_run, [invalid_coordinate], [])
     duplicate_edges = extraction.model_copy(
         update={"edges": [extraction.edges[0], extraction.edges[0], extraction.edges[2]]}
     )
     with pytest.raises(AssertionError, match="duplicate keys"):
-        database.apply_dialogue_batch([duplicate_edges], [])
+        database.apply_dialogue_batch(dialogue_run, [duplicate_edges], [])
 
     assert _character_rows(path) == before_characters
     assert _sound_rows(path) == before_sounds
@@ -1014,10 +1151,10 @@ def test_line_ids_are_stable_and_replacement_does_not_duplicate_rows(tmp_path: P
     dialogue_run = database.start_run(tmp_path, "iecli test", run_kind=RunKind.DIALOGUES)
     database.replace_dialogue_inventory(dialogue_run, [make_dialogue_resource()])
     extraction = DialogueExtraction.from_dump(make_dialogue_dump())
-    database.apply_dialogue_batch([extraction], [])
+    database.apply_dialogue_batch(dialogue_run, [extraction], [])
     first_ids = [line.id for line in _line_rows(path)]
     first_transition_ids = [transition.id for transition in _transition_rows(path)]
-    database.apply_dialogue_batch([extraction], [])
+    database.apply_dialogue_batch(dialogue_run, [extraction], [])
     second_ids = [line.id for line in _line_rows(path)]
     second_transition_ids = [transition.id for transition in _transition_rows(path)]
 
@@ -1060,11 +1197,13 @@ def test_dialogue_batch_preserves_unresolved_scripts_and_ignored_exit_bytes(
     payload["states"][1]["transitions"][0]["action_text"] = None
     extraction = DialogueExtraction.from_dump(DlgDump.model_validate(payload, strict=True))
 
-    database.apply_dialogue_batch([extraction], [])
+    database.apply_dialogue_batch(run_id, [extraction], [])
 
     state = next(row for row in _line_rows(path) if row.id == "AERIE.DLG:npc:0:-")
     exit_edge = next(row for row in _transition_rows(path) if row.id == "AERIE.DLG:0:1")
     scripted_edge = next(row for row in _transition_rows(path) if row.id == "AERIE.DLG:1:2")
+    assert state.dialogue_resource_name == "AERIE.DLG"
+    assert exit_edge.dialogue_resource_name == "AERIE.DLG"
     assert (state.state_trigger_index, state.state_trigger_text) == (0, None)
     assert (exit_edge.next_dialog, exit_edge.terminates_dialog) == ("AERIE", True)
     assert (scripted_edge.trigger_index, scripted_edge.trigger_text) == (3, None)
@@ -1081,7 +1220,7 @@ def test_interrupted_line_upsert_keeps_old_lines_and_marks_dialogue_retryable(
     run_id = database.start_run(tmp_path, "iecli test", run_kind=RunKind.DIALOGUES)
     database.replace_dialogue_inventory(run_id, [dialogue])
     extraction = DialogueExtraction.from_dump(make_dialogue_dump())
-    database.apply_dialogue_batch([extraction], [])
+    database.apply_dialogue_batch(run_id, [extraction], [])
     old_lines = _line_rows(path)
 
     def fail_line_upsert(
@@ -1094,10 +1233,10 @@ def test_interrupted_line_upsert_keeps_old_lines_and_marks_dialogue_retryable(
 
     monkeypatch.setattr(database, "_upsert", fail_line_upsert)
     with pytest.raises(OSError, match="simulated Lance write failure"):
-        database.apply_dialogue_batch([extraction], [])
+        database.apply_dialogue_batch(run_id, [extraction], [])
 
     assert _line_rows(path) == old_lines
-    assert _dialogue_rows(path)[0].detail_status == "pending"
+    assert _dialogue_rows(path)[0].extraction.status == "pending"
     assert database.dialogue_targets(refresh=False) == ["AERIE.DLG"]
 
 
@@ -1111,7 +1250,7 @@ def test_interrupted_transition_upsert_keeps_graph_and_marks_dialogue_retryable(
     run_id = database.start_run(tmp_path, "iecli test", run_kind=RunKind.DIALOGUES)
     database.replace_dialogue_inventory(run_id, [dialogue])
     extraction = DialogueExtraction.from_dump(make_dialogue_dump())
-    database.apply_dialogue_batch([extraction], [])
+    database.apply_dialogue_batch(run_id, [extraction], [])
     old_transitions = _transition_rows(path)
     original_upsert = database._upsert
 
@@ -1127,10 +1266,10 @@ def test_interrupted_transition_upsert_keeps_graph_and_marks_dialogue_retryable(
 
     monkeypatch.setattr(database, "_upsert", fail_transition_upsert)
     with pytest.raises(OSError, match="simulated transition write failure"):
-        database.apply_dialogue_batch([extraction], [])
+        database.apply_dialogue_batch(run_id, [extraction], [])
 
     assert _transition_rows(path) == old_transitions
-    assert _dialogue_rows(path)[0].detail_status == "pending"
+    assert _dialogue_rows(path)[0].extraction.status == "pending"
     assert database.dialogue_targets(refresh=False) == ["AERIE.DLG"]
 
 
@@ -1148,13 +1287,13 @@ def test_attribution_reconciles_every_character_dialogue_and_line(tmp_path: Path
     character_run = database.start_run(tmp_path, "iecli test")
     database.replace_inventory(character_run, resources)
     details = [
-        CharacterDetail.from_dump(resources[0], make_dump("AERIE.CRE", dialog="AERIE")),
-        CharacterDetail.from_dump(resources[1], make_dump("CLONE.CRE", dialog="AERIE")),
-        CharacterDetail.from_dump(resources[2], make_dump("NODLG.CRE", dialog=None)),
-        CharacterDetail.from_dump(resources[3], make_dump("MISSING.CRE", dialog="GHOST")),
-        CharacterDetail.from_dump(resources[5], make_dump("FAILDLG.CRE", dialog="FAIL")),
+        CharacterExtraction.from_dump(resources[0], make_dump("AERIE.CRE", dialog="AERIE")),
+        CharacterExtraction.from_dump(resources[1], make_dump("CLONE.CRE", dialog="AERIE")),
+        CharacterExtraction.from_dump(resources[2], make_dump("NODLG.CRE", dialog=None)),
+        CharacterExtraction.from_dump(resources[3], make_dump("MISSING.CRE", dialog="GHOST")),
+        CharacterExtraction.from_dump(resources[5], make_dump("FAILDLG.CRE", dialog="FAIL")),
     ]
-    database.apply_detail_batch(details, [])
+    database.apply_detail_batch(character_run, details, [])
 
     dialogues = [
         make_dialogue_resource("AERIE.DLG"),
@@ -1164,18 +1303,24 @@ def test_attribution_reconciles_every_character_dialogue_and_line(tmp_path: Path
     dialogue_run = database.start_run(tmp_path, "iecli test", run_kind=RunKind.DIALOGUES)
     database.replace_dialogue_inventory(dialogue_run, dialogues)
     database.apply_dialogue_batch(
+        dialogue_run,
         [
             DialogueExtraction.from_dump(make_dialogue_dump("AERIE.DLG")),
             DialogueExtraction.from_dump(make_dialogue_dump("UNUSED.DLG")),
         ],
         [("FAIL.DLG", "broken DLG")],
     )
+    _finish_successful_run(database, character_run)
+    _finish_successful_run(database, dialogue_run)
+    _finish_empty_stage(database, tmp_path, RunKind.METADATA)
 
     summary = database.rebuild_attributions()
     assert summary.model_dump() == {
+        "run_id": summary.run_id,
         "characters_total": 6,
         "characters_unavailable": 1,
-        "characters_matched": 2,
+        "characters_matched": 3,
+        "characters_partially_matched": 0,
         "characters_missing_dialogue": 1,
         "characters_dialogue_failed": 1,
         "characters_without_dialogue": 1,
@@ -1185,36 +1330,48 @@ def test_attribution_reconciles_every_character_dialogue_and_line(tmp_path: Path
         "attributed_dialogue_lines": 4,
         "unattributed_dialogue_lines": 4,
     }
-    characters = {row.resource_name: row for row in _character_rows(path)}
-    stored_dialogues = {row.resource_name: row for row in _dialogue_rows(path)}
-    assert characters["FAILDLG.CRE"].attribution_status == "dialogue_failed"
-    assert stored_dialogues["AERIE.DLG"].character_count == 2
-    assert stored_dialogues["FAIL.DLG"].character_count == 1
-    assert stored_dialogues["UNUSED.DLG"].character_count == 0
-    assert {
-        line.character_count
-        for line in _line_rows(path)
-        if line.dialogue_resource_name == "AERIE.DLG"
-    } == {2}
+    attributions = {
+        row.character_resource_name: row
+        for row in _attribution_rows(path)
+        if row.run_id == summary.run_id
+    }
+    assert attributions["FAILDLG.CRE"].status == "matched"
+    assert attributions["FAILDLG.CRE"].dialogue_status == "failed"
+    assert attributions["AERIE.CRE"].resolved_dialogue_resource_names == ["AERIE.DLG"]
+    assert attributions["CLONE.CRE"].resolved_dialogue_resource_names == ["AERIE.DLG"]
+    assert attributions["MISSING.CRE"].resolved_dialogue_resource_names == []
+    assert all(not hasattr(row, "character_count") for row in _line_rows(path))
     connection = lancedb.connect(path)
-    for table_name in ("characters", "dialogues", "dialogue_lines"):
+    for table_name in ("character_dialogues", "voice_resources"):
         table = connection.open_table(table_name)
         for index in TABLE_INDEXES[table_name]:
             stats = table.index_stats(index.name)
             assert stats is not None
             assert stats.num_unindexed_rows == 0
 
+    published_attributions = _attribution_rows(path)
+    published_voices = _voice_rows(path)
     next_run = database.start_run(tmp_path, "iecli test")
     database.replace_inventory(next_run, resources)
-    assert all(row.attribution_status is None for row in _character_rows(path))
-    assert all(
-        row.character_count == 0 and row.attribution_completed_at is None
-        for row in _dialogue_rows(path)
-    )
-    assert all(
-        row.character_count == 0 and row.attribution_completed_at is None
-        for row in _line_rows(path)
-    )
+    assert _attribution_rows(path) == published_attributions
+    assert _voice_rows(path) == published_voices
+
+
+def test_attribution_requires_current_successful_inputs_from_one_install(tmp_path: Path) -> None:
+    database = PipelineDatabase(tmp_path / "pipeline.lancedb")
+    _finish_empty_stage(database, tmp_path, RunKind.CHARACTERS)
+    with pytest.raises(AssertionError, match="requires a dialogues run"):
+        database.rebuild_attributions()
+
+    _finish_empty_stage(database, tmp_path, RunKind.DIALOGUES)
+    _finish_empty_stage(database, tmp_path / "other-game", RunKind.METADATA)
+    with pytest.raises(AssertionError, match="same game install"):
+        database.rebuild_attributions()
+
+    _finish_empty_stage(database, tmp_path, RunKind.METADATA)
+    database.start_run(tmp_path, "iecli test", run_kind=RunKind.CHARACTERS)
+    with pytest.raises(AssertionError, match="terminal successful characters run"):
+        database.rebuild_attributions()
 
 
 def test_attribution_includes_normalized_party_dialogue_links(tmp_path: Path) -> None:
@@ -1248,12 +1405,14 @@ def test_attribution_includes_normalized_party_dialogue_links(tmp_path: Path) ->
     )
     metadata_run = database.start_run(tmp_path, "iecli test", run_kind=RunKind.METADATA)
     database.replace_metadata(metadata_run, metadata)
+    _finish_successful_run(database, metadata_run)
 
     character = make_resource()
     character_run = database.start_run(tmp_path, "iecli test")
     database.replace_inventory(character_run, [character])
     database.apply_detail_batch(
-        [CharacterDetail.from_dump(character, make_dump(dialog="AERIE"))],
+        character_run,
+        [CharacterExtraction.from_dump(character, make_dump(dialog="AERIE"))],
         [],
     )
 
@@ -1264,31 +1423,24 @@ def test_attribution_includes_normalized_party_dialogue_links(tmp_path: Path) ->
     dialogue_run = database.start_run(tmp_path, "iecli test", run_kind=RunKind.DIALOGUES)
     database.replace_dialogue_inventory(dialogue_run, dialogue_resources)
     database.apply_dialogue_batch(
+        dialogue_run,
         [
             DialogueExtraction.from_dump(make_dialogue_dump("AERIE.DLG")),
             DialogueExtraction.from_dump(make_dialogue_dump("BAERIE.DLG")),
         ],
         [],
     )
+    _finish_successful_run(database, character_run)
+    _finish_successful_run(database, dialogue_run)
 
     summary = database.rebuild_attributions()
-    stored_character = _character_rows(path)[0]
-    stored_dialogues = _dialogue_rows(path)
+    attribution = next(row for row in _attribution_rows(path) if row.run_id == summary.run_id)
     assert summary.attributed_dialogue_lines == 8
-    assert stored_character.attribution_status is not None
-    assert stored_character.attribution_status.value == "matched"
-    assert stored_character.dialogue_status is DetailStatus.COMPLETE
-    assert (stored_character.declared_dialogue_count, stored_character.resolved_dialogue_count) == (
-        3,
-        2,
-    )
-    assert stored_character.dialogue_line_count == 8
-    assert stored_character.dialogue_state_count == 4
-    assert stored_character.dialogue_transition_count == 6
-    assert stored_character.dialogue_serialized_size == sum(
-        dialogue.serialized_size or 0 for dialogue in stored_dialogues
-    )
-    assert {dialogue.character_count for dialogue in stored_dialogues} == {1}
+    assert attribution.status.value == "partial_match"
+    assert attribution.dialogue_status is DetailStatus.COMPLETE
+    assert attribution.declared_dialogue_resrefs == ["AERIE", "BAERIE", "GHOST"]
+    assert attribution.missing_dialogue_resrefs == ["GHOST"]
+    assert attribution.resolved_dialogue_resource_names == ["AERIE.DLG", "BAERIE.DLG"]
 
 
 def test_attribution_builds_voice_resources_from_shared_cre_variants(
@@ -1299,6 +1451,7 @@ def test_attribution_builds_voice_resources_from_shared_cre_variants(
     metadata = make_metadata_extraction()
     metadata_run = database.start_run(tmp_path, "iecli test", run_kind=RunKind.METADATA)
     database.replace_metadata(metadata_run, metadata)
+    _finish_successful_run(database, metadata_run)
 
     resources = [
         make_resource(name)
@@ -1310,12 +1463,12 @@ def test_attribution_builds_voice_resources_from_shared_cre_variants(
             "OHHEXMS.CRE",
         )
     ]
-    direct_dialogues = ("HEXXAT", "HEXXAT", "HEXXA25A", "FAIL", "GHOST")
+    direct_dialogues = ("HEXXAT", "hexxat", "HEXXA25A", "FAIL", "GHOST")
     character_run = database.start_run(tmp_path, "iecli test")
     database.replace_inventory(character_run, resources)
-    details: list[CharacterDetail] = []
+    details: list[CharacterExtraction] = []
     for index, (resource, dialog) in enumerate(zip(resources, direct_dialogues, strict=True)):
-        detail = CharacterDetail.from_dump(
+        extraction = CharacterExtraction.from_dump(
             resource,
             make_dump(
                 resource.resource_name,
@@ -1326,9 +1479,15 @@ def test_attribution_builds_voice_resources_from_shared_cre_variants(
             ),
         )
         if index < 3:
-            detail = detail.model_copy(update={"kit_ids_value": KitIdsValue(0x4001)})
-        details.append(detail)
-    database.apply_detail_batch(details, [])
+            extraction = extraction.model_copy(
+                update={
+                    "detail": extraction.detail.model_copy(
+                        update={"kit_ids_value": KitIdsValue(0x4001)}
+                    )
+                }
+            )
+        details.append(extraction)
+    database.apply_detail_batch(character_run, details, [])
 
     dialogue_resources = [
         make_dialogue_resource("HEXXAT.DLG"),
@@ -1338,35 +1497,38 @@ def test_attribution_builds_voice_resources_from_shared_cre_variants(
     dialogue_run = database.start_run(tmp_path, "iecli test", run_kind=RunKind.DIALOGUES)
     database.replace_dialogue_inventory(dialogue_run, dialogue_resources)
     database.apply_dialogue_batch(
+        dialogue_run,
         [
             DialogueExtraction.from_dump(make_dialogue_dump("HEXXAT.DLG")),
             DialogueExtraction.from_dump(make_dialogue_dump("HEXXA25A.DLG")),
         ],
         [("FAIL.DLG", "broken DLG")],
     )
+    _finish_successful_run(database, character_run)
+    _finish_successful_run(database, dialogue_run)
 
-    database.rebuild_attributions()
+    summary = database.rebuild_attributions()
 
-    assert {character.voice_id for character in _character_rows(path)} == {"dv:hexxat"}
-    voice = _voice_rows(path)[0]
-    assert voice.id == "dv:hexxat"
+    voices = [voice for voice in _voice_rows(path) if voice.run_id == summary.run_id]
+    assert len(voices) == 1
+    voice = voices[0]
+    assert voice.voice_id == "dv:hexxat"
     assert voice.display_name == "Hexxat"
     assert voice.variant_resource_names == sorted(
         [resource.resource_name for resource in resources], key=str.casefold
     )
-    assert voice.dialogue_resrefs == ["FAIL", "HEXXA25A", "HEXXAT"]
-    assert (voice.variant_count, voice.dialogue_count, voice.npc_line_count) == (5, 3, 4)
+    assert voice.dialogue_resrefs == ["FAIL", "GHOST", "HEXXA25A", "HEXXAT"]
     assert voice.prompt == (
         "Name: Hexxat\nGender: Female\nRace: Elf\nClass: Cleric Mage\nKit: Berserker\n"
         "Alignment: Lawful Good"
     )
-    assert voice.serialized_size > 0
     voice_table = lancedb.connect(path).open_table("voice_resources")
     assert voice_table.search("Hexxat", query_type="fts").limit(10).to_arrow().num_rows == 1
+    assert voice_table.search("HEXXA25A", query_type="fts").limit(10).to_arrow().num_rows == 1
 
     refresh_run = database.start_run(tmp_path, "iecli test")
     database.replace_inventory(refresh_run, resources)
-    assert _voice_rows(path) == []
+    assert _voice_rows(path) == voices
 
 
 def test_attribution_disambiguates_shared_script_variables_and_resolved_names(
@@ -1381,63 +1543,81 @@ def test_attribution_disambiguates_shared_script_variables_and_resolved_names(
     run_id = database.start_run(tmp_path, "iecli test")
     database.replace_inventory(run_id, resources)
 
-    alhel = CharacterDetail.from_dump(
-        resources[0],
-        make_dump(
-            "ALHEL.CRE",
-            short_name="Alhelor",
-            long_name="Alhelor",
-            death_variable="NOBLEORDER",
-            dialog=None,
+    alhel = _with_character_detail(
+        CharacterExtraction.from_dump(
+            resources[0],
+            make_dump(
+                "ALHEL.CRE",
+                short_name="Alhelor",
+                long_name="Alhelor",
+                death_variable="NOBLEORDER",
+                dialog=None,
+            ),
         ),
-    ).model_copy(update={"short_name_strref": 29640})
-    alhel_variant = CharacterDetail.from_dump(
-        resources[1],
-        make_dump(
-            "ALHEL2.CRE",
-            short_name="Alhelor",
-            long_name="Alhelor",
-            death_variable="NOBLEORDER",
-            dialog=None,
+        short_name_strref=29640,
+    )
+    alhel_variant = _with_character_detail(
+        CharacterExtraction.from_dump(
+            resources[1],
+            make_dump(
+                "ALHEL2.CRE",
+                short_name="Alhelor",
+                long_name="Alhelor",
+                death_variable="NOBLEORDER",
+                dialog=None,
+            ),
         ),
-    ).model_copy(update={"short_name_strref": 39640})
-    jolus = CharacterDetail.from_dump(
-        resources[2],
-        make_dump(
-            "JOLUS.CRE",
-            short_name="Sir Jolus",
-            long_name="Sir Jolus",
-            death_variable="NOBLEORDER",
-            dialog=None,
+        short_name_strref=39640,
+    )
+    jolus = _with_character_detail(
+        CharacterExtraction.from_dump(
+            resources[2],
+            make_dump(
+                "JOLUS.CRE",
+                short_name="Sir Jolus",
+                long_name="Sir Jolus",
+                death_variable="NOBLEORDER",
+                dialog=None,
+            ),
         ),
-    ).model_copy(update={"short_name_strref": 29599})
-    bugabo = CharacterDetail.from_dump(
+        short_name_strref=29599,
+    )
+    bugabo = CharacterExtraction.from_dump(
         resources[3],
         make_dump(
             "BUGABO02.CRE", short_name=None, long_name=None, death_variable="PETTIN", dialog=None
         ),
     )
-    pettin = CharacterDetail.from_dump(
-        resources[4],
-        make_dump(
-            "PETTIN.CRE",
-            short_name="Ettin",
-            long_name="Ettin",
-            death_variable="PETTIN",
-            dialog=None,
+    pettin = _with_character_detail(
+        CharacterExtraction.from_dump(
+            resources[4],
+            make_dump(
+                "PETTIN.CRE",
+                short_name="Ettin",
+                long_name="Ettin",
+                death_variable="PETTIN",
+                dialog=None,
+            ),
         ),
-    ).model_copy(update={"short_name_strref": 249431})
-    database.apply_detail_batch([alhel, alhel_variant, jolus, bugabo, pettin], [])
+        short_name_strref=249431,
+    )
+    database.apply_detail_batch(run_id, [alhel, alhel_variant, jolus, bugabo, pettin], [])
+    _finish_successful_run(database, run_id)
+    _finish_empty_stage(database, tmp_path, RunKind.DIALOGUES)
+    _finish_empty_stage(database, tmp_path, RunKind.METADATA)
 
-    database.rebuild_attributions()
+    summary = database.rebuild_attributions()
 
-    characters = {row.resource_name: row for row in _character_rows(path)}
-    assert characters["ALHEL.CRE"].voice_id == "dv:nobleorder:name:29640"
-    assert characters["ALHEL2.CRE"].voice_id == "dv:nobleorder:name:29640"
-    assert characters["JOLUS.CRE"].voice_id == "dv:nobleorder:name:29599"
-    assert characters["BUGABO02.CRE"].voice_id == "dv:pettin"
-    assert characters["PETTIN.CRE"].voice_id == "dv:pettin"
-    pettin_voice = next(voice for voice in _voice_rows(path) if voice.id == "dv:pettin")
+    voices = {
+        voice.voice_id: voice for voice in _voice_rows(path) if voice.run_id == summary.run_id
+    }
+    assert voices["dv:nobleorder:name:29640"].variant_resource_names == [
+        "ALHEL.CRE",
+        "ALHEL2.CRE",
+    ]
+    assert voices["dv:nobleorder:name:29599"].variant_resource_names == ["JOLUS.CRE"]
+    assert voices["dv:pettin"].variant_resource_names == ["BUGABO02.CRE", "PETTIN.CRE"]
+    pettin_voice = voices["dv:pettin"]
     assert pettin_voice.display_name == "Ettin"
     assert pettin_voice.prompt.startswith("Name: Ettin\n")
 
@@ -1448,11 +1628,12 @@ def test_voice_prompt_uses_one_actual_cre_metadata_tuple(tmp_path: Path) -> None
     metadata = make_metadata_extraction()
     metadata_run = database.start_run(tmp_path, "iecli test", run_kind=RunKind.METADATA)
     database.replace_metadata(metadata_run, metadata)
+    _finish_successful_run(database, metadata_run)
 
     resources = [make_resource("SENDAI.CRE"), make_resource("SENDAI_.CRE")]
     character_run = database.start_run(tmp_path, "iecli test")
     database.replace_inventory(character_run, resources)
-    elf_cleric_mage = CharacterDetail.from_dump(
+    elf_cleric_mage = CharacterExtraction.from_dump(
         resources[0],
         make_dump(
             "SENDAI.CRE",
@@ -1462,58 +1643,32 @@ def test_voice_prompt_uses_one_actual_cre_metadata_tuple(tmp_path: Path) -> None
             dialog=None,
         ),
     )
-    human_fighter = CharacterDetail.from_dump(
-        resources[1],
-        make_dump(
-            "SENDAI_.CRE",
-            short_name="Sendai",
-            long_name="Sendai",
-            death_variable="SENDAI",
-            dialog=None,
+    human_fighter = _with_character_detail(
+        CharacterExtraction.from_dump(
+            resources[1],
+            make_dump(
+                "SENDAI_.CRE",
+                short_name="Sendai",
+                long_name="Sendai",
+                death_variable="SENDAI",
+                dialog=None,
+            ),
         ),
-    ).model_copy(
-        update={
-            "race_id": RaceId(1),
-            "class_id": ClassId(2),
-            "alignment_id": AlignmentId(33),
-        }
+        race_id=RaceId(1),
+        class_id=ClassId(2),
+        alignment_id=AlignmentId(33),
     )
-    database.apply_detail_batch([elf_cleric_mage, human_fighter], [])
+    database.apply_detail_batch(character_run, [elf_cleric_mage, human_fighter], [])
+    _finish_successful_run(database, character_run)
+    _finish_empty_stage(database, tmp_path, RunKind.DIALOGUES)
 
-    database.rebuild_attributions()
+    summary = database.rebuild_attributions()
 
-    voice = _voice_rows(path)[0]
-    assert voice.id == "dv:sendai"
+    voice = next(voice for voice in _voice_rows(path) if voice.run_id == summary.run_id)
+    assert voice.voice_id == "dv:sendai"
     assert voice.prompt == (
         "Name: Sendai\nGender: Female\nRace: Elf\nClass: Cleric Mage\nAlignment: Lawful Good"
     )
-
-
-def test_attribution_rejects_incomplete_stored_line_sets(tmp_path: Path) -> None:
-    path = tmp_path / "pipeline.lancedb"
-    database = PipelineDatabase(path)
-    character = make_resource()
-    character_run = database.start_run(tmp_path, "iecli test")
-    database.replace_inventory(character_run, [character])
-    database.apply_detail_batch(
-        [CharacterDetail.from_dump(character, make_dump(dialog="AERIE"))],
-        [],
-    )
-    run_id = database.start_run(tmp_path, "iecli test", run_kind=RunKind.DIALOGUES)
-    database.replace_dialogue_inventory(run_id, [make_dialogue_resource()])
-    database.apply_dialogue_batch(
-        [DialogueExtraction.from_dump(make_dialogue_dump())],
-        [],
-    )
-    database.rebuild_attributions()
-    published_at = _character_rows(path)[0].attribution_completed_at
-    assert published_at is not None
-    lines = lancedb.connect(path).open_table("dialogue_lines")
-    lines.delete(col("id") == lit("AERIE.DLG:npc:0:-"))
-
-    with pytest.raises(AssertionError, match="stores line counts"):
-        database.rebuild_attributions()
-    assert _character_rows(path)[0].attribution_completed_at == published_at
 
 
 def test_interrupted_attribution_is_not_published(
@@ -1526,33 +1681,59 @@ def test_interrupted_attribution_is_not_published(
     character_run = database.start_run(tmp_path, "iecli test")
     database.replace_inventory(character_run, [character])
     database.apply_detail_batch(
-        [CharacterDetail.from_dump(character, make_dump())],
+        character_run,
+        [CharacterExtraction.from_dump(character, make_dump())],
         [],
     )
     dialogue_run = database.start_run(tmp_path, "iecli test", run_kind=RunKind.DIALOGUES)
     database.replace_dialogue_inventory(dialogue_run, [make_dialogue_resource()])
     database.apply_dialogue_batch(
+        dialogue_run,
         [DialogueExtraction.from_dump(make_dialogue_dump())],
         [],
     )
-    database.rebuild_attributions()
+    _finish_successful_run(database, character_run)
+    _finish_successful_run(database, dialogue_run)
+    _finish_empty_stage(database, tmp_path, RunKind.METADATA)
+    published = database.rebuild_attributions()
+    published_attributions = [
+        row for row in _attribution_rows(path) if row.run_id == published.run_id
+    ]
+    published_voices = [row for row in _voice_rows(path) if row.run_id == published.run_id]
 
-    original_merge = database._merge
+    original_upsert = database._upsert
 
-    def fail_line_publication(
+    def fail_voice_publication(
         table_name: str,
         key: str,
         records: Sequence[LanceModel],
     ) -> None:
-        if table_name == "dialogue_lines":
+        if table_name == "voice_resources":
             raise OSError("simulated attribution write failure")
-        original_merge(table_name, key, records)
+        original_upsert(table_name, key, records)
 
-    monkeypatch.setattr(database, "_merge", fail_line_publication)
+    monkeypatch.setattr(database, "_upsert", fail_voice_publication)
     with pytest.raises(OSError, match="simulated attribution write failure"):
         database.rebuild_attributions()
 
-    assert _character_rows(path)[0].attribution_completed_at is None
+    runs = _rows(path, "extraction_runs", ExtractionRunRecord)
+    completed = [
+        run
+        for run in runs
+        if run.run_kind is RunKind.ATTRIBUTION and run.status is RunStatus.COMPLETE
+    ]
+    failed = [
+        run
+        for run in runs
+        if run.run_kind is RunKind.ATTRIBUTION and run.status is RunStatus.FAILED
+    ]
+    assert [run.id for run in completed] == [published.run_id]
+    assert len(failed) == 1
+    assert [
+        row for row in _attribution_rows(path) if row.run_id == published.run_id
+    ] == published_attributions
+    assert [row for row in _voice_rows(path) if row.run_id == published.run_id] == published_voices
+    assert not [row for row in _voice_rows(path) if row.run_id == failed[0].id]
 
 
 def test_stats_runs_and_full_text_indexes_follow_completed_batches(tmp_path: Path) -> None:
@@ -1563,8 +1744,9 @@ def test_stats_runs_and_full_text_indexes_follow_completed_batches(tmp_path: Pat
     assert len(run_id) == 32
     database.replace_inventory(run_id, resources)
     database.apply_detail_batch(
+        run_id,
         [
-            CharacterDetail.from_dump(
+            CharacterExtraction.from_dump(
                 resources[0], make_dump(short_name="The Winged Cleric", dialog="AERIE")
             )
         ],
@@ -1667,33 +1849,25 @@ def test_index_failure_leaves_run_open_for_failed_finalization(
 
 def test_storage_models_enforce_non_relational_invariants() -> None:
     with pytest.raises(ValidationError, match="Input should be"):
+        ResourceSource(kind="archive", path="A.DLG")
+    source = ResourceSource(kind=SourceKind.OVERRIDE, path="A.DLG")
+    pending = ExtractionState(
+        run_id="run", status=DetailStatus.PENDING, error=None, updated_at="now"
+    )
+    with pytest.raises(ValidationError, match="only complete DLGs carry a serialized size"):
         DialogueRecord(
             resource_name="A.DLG",
             resref="A",
-            source_kind="archive",
-            source_path="A.DLG",
-            detail_status=DetailStatus.PENDING,
-            updated_at="now",
-            character_count=0,
-            search_text="A",
-        )
-    with pytest.raises(ValidationError, match="greater than or equal to 0"):
-        DialogueRecord(
-            resource_name="A.DLG",
-            resref="A",
-            source_kind="override",
-            source_path="A.DLG",
-            detail_status="pending",
-            updated_at="now",
-            character_count=-1,
+            source=source,
+            extraction=pending,
+            serialized_size=1,
             search_text="A",
         )
     with pytest.raises(ValidationError, match="dialogue line id must be"):
         DialogueLineRecord(
             id="wrong",
+            run_id="run",
             dialogue_resource_name="A.DLG",
-            dialogue_resref="A",
-            source_kind="override",
             line_kind="npc",
             state_index=0,
             transition_index=None,
@@ -1701,15 +1875,13 @@ def test_storage_models_enforce_non_relational_invariants() -> None:
             text="Hello",
             tokens=[],
             serialized_size=1,
-            character_count=0,
             search_text="A Hello",
         )
     with pytest.raises(ValidationError, match="character sound id must be"):
         CharacterSoundRecord(
             id="wrong",
+            run_id="run",
             character_resource_name="A.CRE",
-            character_resref="A",
-            source_kind="override",
             slot_id=9,
             strref=1,
             text="Attack!",
@@ -1718,9 +1890,8 @@ def test_storage_models_enforce_non_relational_invariants() -> None:
         )
     implicit_current_dialog = DialogueTransitionRecord(
         id="A.DLG:0:0",
+        run_id="run",
         dialogue_resource_name="A.DLG",
-        dialogue_resref="A",
-        source_kind="override",
         state_index=0,
         transition_index=0,
         flags_raw=0,

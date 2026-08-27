@@ -12,7 +12,7 @@ import bgvoice.pipeline as pipeline
 from bgvoice.database import ExtractionRunRecord, PipelineDatabase
 from bgvoice.models import (
     BanterTimingSettings,
-    CharacterDetail,
+    CharacterExtraction,
     CreDump,
     CreResource,
     DlgDump,
@@ -271,14 +271,15 @@ def test_fatal_batch_write_preserves_committed_run_progress(
     save_count = 0
 
     def fail_second_save(
-        details: Sequence[CharacterDetail],
+        run_id: str,
+        details: Sequence[CharacterExtraction],
         failures: Sequence[tuple[str, str]],
     ) -> None:
         nonlocal save_count
         save_count += 1
         if save_count == 2:
             raise OSError("simulated Lance write failure")
-        original_save(details, failures)
+        original_save(run_id, details, failures)
 
     monkeypatch.setattr(pipeline, "_WRITE_BATCH_SIZE", 1)
     monkeypatch.setattr(database, "apply_detail_batch", fail_second_save)

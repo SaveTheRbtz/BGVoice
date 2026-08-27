@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 from operator import attrgetter
 from pathlib import Path
-from typing import Annotated, Literal, Protocol, cast
+from typing import Annotated, Literal, cast
 
 import lancedb
 from fastapi import FastAPI, HTTPException, Query
@@ -19,7 +19,6 @@ from lancedb.db import AsyncConnection
 from lancedb.expr import Expr, col, lit
 from lancedb.pydantic import LanceModel
 from lancedb.query import (
-    AsyncFTSQuery,
     BooleanQuery,
     ColumnOrdering,
     FullTextOperator,
@@ -35,8 +34,10 @@ from bgvoice.database import (
     TABLE_NAMES,
     CampaignDefinitionRecord,
     CampaignResourceBindingRecord,
+    CharacterAttributionRecord,
     CharacterRecord,
     ClassTextRecord,
+    DialogueData,
     DialogueLineRecord,
     DialogueRecord,
     DialogueTransitionRecord,
@@ -48,15 +49,17 @@ from bgvoice.database import (
     VoiceResourceRecord,
 )
 from bgvoice.models import (
+    AttributionPublicationStatus,
     AttributionStatus,
     CampaignResourceKind,
     DetailStatus,
-    DialogueDetail,
     DialogueLineKind,
     IdentifierKind,
     RunKind,
     RunStatus,
     SourceKind,
+    VoiceId,
+    VoiceResource,
 )
 
 type CharacterSort = Literal[
@@ -91,6 +94,7 @@ type LineSort = Literal[
 ]
 type SortDirection = Literal["asc", "desc"]
 type StableColumn = Literal["resource_name", "id", "key"]
+type ChildParentColumn = Literal["character_resource_name", "dialogue_resource_name"]
 type RaceSort = Literal["race_id", "row_name", "name", "source_resource"]
 type ClassSort = Literal["class_id", "row_name", "lower_name", "fallen"]
 type KitSort = Literal["row_id", "row_name", "lower_name", "class_id"]
@@ -126,10 +130,6 @@ class ApiModel(BaseModel):
     """Strict response model for the HTTP boundary."""
 
     model_config = ConfigDict(strict=True, extra="forbid")
-
-
-class _Keyed(Protocol):
-    key: str
 
 
 class PageQuery(BaseModel):
@@ -527,9 +527,11 @@ class PipelineStats(ApiModel):
     characters_complete: int = Field(ge=0)
     characters_failed: int = Field(ge=0)
     characters_with_dialogue: int = Field(ge=0)
+    attribution_publication: AttributionPublicationStatus
     attribution_completed_at: str | None
     characters_unavailable: int = Field(ge=0)
     characters_matched: int = Field(ge=0)
+    characters_partially_matched: int = Field(ge=0)
     characters_missing_dialogue: int = Field(ge=0)
     characters_dialogue_failed: int = Field(ge=0)
     characters_without_dialogue: int = Field(ge=0)
@@ -563,7 +565,7 @@ class PipelineStats(ApiModel):
 class CharacterDetailPayload(ApiModel):
     resource_name: str
     display_name: str
-    voice_id: str
+    voice_id: str | None
     short_name: str | None
     short_name_strref: int
     long_name: str | None
@@ -615,9 +617,21 @@ class CharacterDetailPayload(ApiModel):
     cre_version: str
 
 
+class DialogueDetailPayload(ApiModel):
+    resource_name: str
+    resref: str
+    dlg_version: str
+    state_count: int
+    transition_count: int
+    npc_line_count: int
+    player_line_count: int
+    journal_line_count: int
+    dialogue_line_count: int
+
+
 class CharacterDetailResponse(ApiModel):
     character: CharacterDetailPayload
-    dialogue: DialogueDetail | None
+    dialogue: DialogueDetailPayload | None
     source_kind: SourceKind
     source_path: str
     character_serialized_size: int
@@ -635,30 +649,6 @@ class _Projection(LanceModel):
     model_config = ConfigDict(strict=True, extra="forbid")
 
 
-class _AttributionMarker(_Projection):
-    attribution_completed_at: str | None
-
-
-class _CharacterStats(_AttributionMarker):
-    detail_status: DetailStatus = Field(strict=False)
-    has_dialog: bool
-    attribution_status: AttributionStatus | None = Field(strict=False)
-
-
-class _DialogueStats(_Projection):
-    detail_status: DetailStatus = Field(strict=False)
-    dialogue_line_count: int | None
-    character_count: int
-    attribution_completed_at: str | None
-
-
-class _CharacterFacets(_Projection):
-    source_kind: SourceKind = Field(strict=False)
-    gender_id: int | None
-    race_id: int | None
-    class_id: int | None
-
-
 class _CharacterSearchResult(CharacterRecord):
     score: float = Field(alias="_score")
 
@@ -667,19 +657,7 @@ class _DialogueSearchResult(DialogueRecord):
     score: float = Field(alias="_score")
 
 
-class _LineSearchResult(DialogueLineRecord):
-    score: float = Field(alias="_score")
-
-
 class _VoiceSearchResult(VoiceResourceRecord):
-    score: float = Field(alias="_score")
-
-
-class _TransitionSearchResult(DialogueTransitionRecord):
-    score: float = Field(alias="_score")
-
-
-class _IdentifierSearchResult(IdentifierDefinitionRecord):
     score: float = Field(alias="_score")
 
 
@@ -711,6 +689,35 @@ class _MetadataSnapshot:
 
 
 @dataclass(frozen=True, slots=True)
+class _AttributionSnapshot:
+    publication: AttributionPublicationStatus
+    run: ExtractionRunRecord | None
+    by_character: dict[str, CharacterAttributionRecord]
+    character_count_by_dialogue: Counter[str]
+    voices: list[VoiceResourceRecord]
+    voice_by_character: dict[str, VoiceResourceRecord]
+
+    @property
+    def completed_at(self) -> str | None:
+        return None if self.run is None else self.run.completed_at
+
+
+@dataclass(frozen=True, slots=True)
+class _CharacterDialogueMetrics:
+    attribution_status: AttributionStatus | None = None
+    dialogue_status: DetailStatus | None = None
+    declared_dialogue_count: int | None = None
+    resolved_dialogue_count: int | None = None
+    dialogue_line_count: int | None = None
+    npc_line_count: int | None = None
+    player_line_count: int | None = None
+    journal_line_count: int | None = None
+    dialogue_state_count: int | None = None
+    dialogue_transition_count: int | None = None
+    dialogue_serialized_size: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class PipelineReader:
     """Strongly consistent typed reads over one local LanceDB database."""
 
@@ -718,6 +725,7 @@ class PipelineReader:
     _connection: AsyncConnection
     characters_table: AsyncTable
     character_sounds_table: AsyncTable
+    character_dialogues_table: AsyncTable
     voices_table: AsyncTable
     dialogues_table: AsyncTable
     lines_table: AsyncTable
@@ -782,6 +790,7 @@ class PipelineReader:
             connection,
             tables["characters"],
             tables["character_sounds"],
+            tables["character_dialogues"],
             tables["voice_resources"],
             tables["dialogues"],
             tables["dialogue_lines"],
@@ -829,20 +838,70 @@ class PipelineReader:
             favored_enemies=cast(list[FavoredEnemyRecord], rows[6]),
         )
 
+    async def _attribution_snapshot(self) -> _AttributionSnapshot:
+        runs = cast(
+            list[ExtractionRunRecord],
+            await self.runs_table.query().to_pydantic(ExtractionRunRecord),
+        )
+        completed = [
+            run
+            for run in runs
+            if run.run_kind is RunKind.ATTRIBUTION and run.status is RunStatus.COMPLETE
+        ]
+        if not completed:
+            return _empty_attribution_snapshot(AttributionPublicationStatus.MISSING)
+        run = max(completed, key=_completed_run_order)
+        latest_inputs = {
+            kind: _latest_run_id(runs, kind)
+            for kind in (RunKind.CHARACTERS, RunKind.DIALOGUES, RunKind.METADATA)
+        }
+        if latest_inputs != {
+            RunKind.CHARACTERS: run.character_input_run_id,
+            RunKind.DIALOGUES: run.dialogue_input_run_id,
+            RunKind.METADATA: run.metadata_input_run_id,
+        }:
+            return _empty_attribution_snapshot(AttributionPublicationStatus.STALE)
+
+        attribution_rows, voice_rows = await asyncio.gather(
+            self.character_dialogues_table.query()
+            .where(col("run_id") == lit(run.id))
+            .to_pydantic(CharacterAttributionRecord),
+            self.voices_table.query()
+            .where(col("run_id") == lit(run.id))
+            .to_pydantic(VoiceResourceRecord),
+        )
+        attributions = cast(list[CharacterAttributionRecord], attribution_rows)
+        voices = cast(list[VoiceResourceRecord], voice_rows)
+        by_character = {row.character_resource_name.casefold(): row for row in attributions}
+        assert len(by_character) == len(attributions), (
+            "published attribution contains duplicate character rows"
+        )
+        character_count_by_dialogue: Counter[str] = Counter()
+        for row in attributions:
+            character_count_by_dialogue.update(
+                name.casefold() for name in row.resolved_dialogue_resource_names
+            )
+        voice_by_character: dict[str, VoiceResourceRecord] = {}
+        for voice in voices:
+            for resource_name in voice.variant_resource_names:
+                key = resource_name.casefold()
+                assert key not in voice_by_character, (
+                    f"published voices assign {resource_name!r} more than once"
+                )
+                voice_by_character[key] = voice
+        return _AttributionSnapshot(
+            publication=AttributionPublicationStatus.PUBLISHED,
+            run=run,
+            by_character=by_character,
+            character_count_by_dialogue=character_count_by_dialogue,
+            voices=voices,
+            voice_by_character=voice_by_character,
+        )
+
     async def stats(self) -> PipelineStats:
-        (
-            character_rows,
-            dialogue_rows,
-            run_rows,
-            line_records_total,
-            metadata,
-        ) = await asyncio.gather(
-            self.characters_table.query()
-            .select(list(_CharacterStats.model_fields))
-            .to_pydantic(_CharacterStats),
-            self.dialogues_table.query()
-            .select(list(_DialogueStats.model_fields))
-            .to_pydantic(_DialogueStats),
+        character_rows, dialogue_rows, run_rows, metadata = await asyncio.gather(
+            self.characters_table.query().to_pydantic(CharacterRecord),
+            self.dialogues_table.query().to_pydantic(DialogueRecord),
             self.runs_table.query()
             .order_by(
                 [
@@ -852,13 +911,31 @@ class PipelineReader:
             )
             .limit(8)
             .to_pydantic(ExtractionRunRecord),
-            self.lines_table.count_rows(),
             self._metadata_snapshot(),
         )
+        characters = cast(list[CharacterRecord], character_rows)
+        dialogues = cast(list[DialogueRecord], dialogue_rows)
+        attribution = await self._attribution_snapshot()
+        character_children = _child_generation_predicate(
+            "character_resource_name",
+            (
+                (row.resource_name, row.extraction.run_id)
+                for row in characters
+                if row.extraction.status is DetailStatus.COMPLETE
+            ),
+        )
+        dialogue_children = _child_generation_predicate(
+            "dialogue_resource_name",
+            (
+                (row.resource_name, row.extraction.run_id)
+                for row in dialogues
+                if row.extraction.status is DetailStatus.COMPLETE
+            ),
+        )
         (
-            voices_total,
             character_sounds_total,
             soundset_lines_total,
+            line_records_total,
             transition_edges_total,
             character_resource_links_total,
             interaction_rules_total,
@@ -868,10 +945,10 @@ class PipelineReader:
             happiness_rules_total,
             banter_timing_settings_total,
         ) = await asyncio.gather(
-            self.voices_table.count_rows(),
-            self.character_sounds_table.count_rows(),
+            _count_rows(self.character_sounds_table, character_children),
             self.soundset_lines_table.count_rows(),
-            self.transitions_table.count_rows(),
+            _count_rows(self.lines_table, dialogue_children),
+            _count_rows(self.transitions_table, dialogue_children),
             self.character_resource_links_table.count_rows(),
             self.interaction_rules_table.count_rows(),
             self.engine_strings_table.count_rows(),
@@ -880,29 +957,18 @@ class PipelineReader:
             self.happiness_rules_table.count_rows(),
             self.banter_timing_settings_table.count_rows(),
         )
-        characters = cast(list[_CharacterStats], character_rows)
-        dialogues = cast(list[_DialogueStats], dialogue_rows)
         latest_runs = cast(list[ExtractionRunRecord], run_rows)
-
-        attribution_completed_at = _published_attribution_timestamp(characters)
-        if attribution_completed_at is None:
-            attribution_counts: Counter[AttributionStatus | None] = Counter()
-            attributed_dialogues: list[_DialogueStats] = []
-            unattributed_dialogues: list[_DialogueStats] = []
-        else:
-            attribution_counts = Counter(row.attribution_status for row in characters)
-            attributed_dialogues = [
-                row
-                for row in dialogues
-                if row.attribution_completed_at == attribution_completed_at
-                and row.character_count > 0
-            ]
-            unattributed_dialogues = [
-                row
-                for row in dialogues
-                if row.attribution_completed_at != attribution_completed_at
-                or row.character_count == 0
-            ]
+        attribution_counts = Counter(row.status for row in attribution.by_character.values())
+        attributed_dialogues = [
+            row
+            for row in dialogues
+            if attribution.character_count_by_dialogue[row.resource_name.casefold()] > 0
+        ]
+        unattributed_dialogues = [
+            row
+            for row in dialogues
+            if attribution.character_count_by_dialogue[row.resource_name.casefold()] == 0
+        ]
 
         return PipelineStats(
             database_path=str(self.path),
@@ -911,21 +977,36 @@ class PipelineReader:
             ),
             characters_total=len(characters),
             characters_complete=sum(
-                row.detail_status is DetailStatus.COMPLETE for row in characters
+                row.extraction.status is DetailStatus.COMPLETE for row in characters
             ),
-            characters_failed=sum(row.detail_status is DetailStatus.FAILED for row in characters),
-            characters_with_dialogue=sum(row.has_dialog for row in characters),
-            attribution_completed_at=attribution_completed_at,
+            characters_failed=sum(
+                row.extraction.status is DetailStatus.FAILED for row in characters
+            ),
+            characters_with_dialogue=sum(
+                row.detail is not None and row.detail.dialog_resref is not None
+                for row in characters
+            ),
+            attribution_publication=attribution.publication,
+            attribution_completed_at=attribution.completed_at,
             characters_unavailable=attribution_counts[AttributionStatus.CHARACTER_UNAVAILABLE],
             characters_matched=attribution_counts[AttributionStatus.MATCHED],
+            characters_partially_matched=attribution_counts[AttributionStatus.PARTIAL_MATCH],
             characters_missing_dialogue=attribution_counts[AttributionStatus.MISSING_DIALOGUE],
-            characters_dialogue_failed=attribution_counts[AttributionStatus.DIALOGUE_FAILED],
+            characters_dialogue_failed=sum(
+                row.dialogue_status is DetailStatus.FAILED
+                for row in attribution.by_character.values()
+            ),
             characters_without_dialogue=attribution_counts[AttributionStatus.NO_DIALOGUE],
             dialogues_total=len(dialogues),
-            dialogues_complete=sum(row.detail_status is DetailStatus.COMPLETE for row in dialogues),
-            dialogue_lines=sum(row.dialogue_line_count or 0 for row in dialogues),
+            dialogues_complete=sum(
+                row.extraction.status is DetailStatus.COMPLETE for row in dialogues
+            ),
+            dialogue_lines=sum(
+                _dialogue_metric(row, lambda detail: detail.dialogue_line_count)
+                for row in dialogues
+            ),
             line_records_total=line_records_total,
-            voices_total=voices_total,
+            voices_total=len(attribution.voices),
             character_sounds_total=character_sounds_total,
             soundset_lines_total=soundset_lines_total,
             transition_edges_total=transition_edges_total,
@@ -946,10 +1027,12 @@ class PipelineReader:
             dialogues_attributed=len(attributed_dialogues),
             dialogues_unattributed=len(unattributed_dialogues),
             attributed_dialogue_lines=sum(
-                row.dialogue_line_count or 0 for row in attributed_dialogues
+                _dialogue_metric(row, lambda detail: detail.dialogue_line_count)
+                for row in attributed_dialogues
             ),
             unattributed_dialogue_lines=sum(
-                row.dialogue_line_count or 0 for row in unattributed_dialogues
+                _dialogue_metric(row, lambda detail: detail.dialogue_line_count)
+                for row in unattributed_dialogues
             ),
             latest_runs=[
                 ExtractionRunSummary.model_validate(run, from_attributes=True)
@@ -959,28 +1042,26 @@ class PipelineReader:
 
     async def filter_options(self) -> FilterOptions:
         character_rows, metadata = await asyncio.gather(
-            self.characters_table.query()
-            .select(list(_CharacterFacets.model_fields))
-            .to_pydantic(_CharacterFacets),
+            self.characters_table.query().to_pydantic(CharacterRecord),
             self._metadata_snapshot(),
         )
-        characters = cast(list[_CharacterFacets], character_rows)
+        characters = cast(list[CharacterRecord], character_rows)
         labels = _LabelResolver.from_snapshot(metadata)
         metadata_class_ids = [
             row.value for row in metadata.identifiers if row.kind is IdentifierKind.CLASS
         ]
         return FilterOptions(
-            source_kinds=_string_facets(row.source_kind for row in characters),
+            source_kinds=_string_facets(row.source.kind for row in characters),
             gender_ids=_integer_facets(
-                (row.gender_id for row in characters if row.gender_id is not None),
+                (row.detail.gender_id for row in characters if row.detail is not None),
                 labels.identifier_labels(IdentifierKind.GENDER),
             ),
             race_ids=_integer_facets(
-                (row.race_id for row in characters if row.race_id is not None),
+                (row.detail.race_id for row in characters if row.detail is not None),
                 labels.race_labels,
             ),
             class_ids=_integer_facets(
-                (row.class_id for row in characters if row.class_id is not None),
+                (row.detail.class_id for row in characters if row.detail is not None),
                 labels.class_labels,
             ),
             metadata_class_ids=_integer_facets(metadata_class_ids, labels.class_labels),
@@ -994,126 +1075,161 @@ class PipelineReader:
             ],
         )
 
-    async def _attribution_marker(self) -> str | None:
-        rows = cast(
-            list[_AttributionMarker],
-            await self.characters_table.query()
-            .select(list(_AttributionMarker.model_fields))
-            .to_pydantic(_AttributionMarker),
-        )
-        return _published_attribution_timestamp(rows)
-
     async def characters(self, query: CharacterQuery) -> CharacterPage:
-        conditions: list[Expr] = []
-        if query.status is not None:
-            conditions.append(col("detail_status") == lit(query.status))
-        if query.source_kind is not None:
-            conditions.append(col("source_kind") == lit(query.source_kind))
-        if query.gender_id is not None:
-            conditions.append(col("gender_id") == lit(query.gender_id))
-        if query.race_id is not None:
-            conditions.append(col("race_id") == lit(query.race_id))
-        if query.class_id is not None:
-            conditions.append(col("class_id") == lit(query.class_id))
-        if query.attribution_status is not None:
-            conditions.append(col("attribution_status") == lit(query.attribution_status))
-        if query.has_dialog is not None:
-            conditions.append(col("has_dialog") == lit(query.has_dialog))
-        predicate = _combine(conditions)
         tokens = _search_tokens(query.q)
         sort = query.sort or ("relevance" if tokens else "serialized_size")
         direction: SortDirection = "desc" if sort == "relevance" else query.direction
-        page_result, metadata = await asyncio.gather(
-            _records_page(
+        matches, dialogue_rows, metadata = await asyncio.gather(
+            _records_all(
                 table=self.characters_table,
                 model=CharacterRecord,
                 search_model=_CharacterSearchResult,
-                stable_column="resource_name",
-                predicate=predicate,
                 tokens=tokens,
-                ordering=(
-                    None if sort == "relevance" else _ordering(sort, direction, "resource_name")
-                ),
-                page=query,
+                predicate=None,
+                key_of=lambda row: row.resource_name,
+                score_of=lambda row: row.score,
             ),
+            self.dialogues_table.query().to_pydantic(DialogueRecord),
             self._metadata_snapshot(),
         )
-        total, records = page_result
+        records, scores = matches
+        attribution = await self._attribution_snapshot()
+        dialogues = {
+            row.resource_name.casefold(): row for row in cast(list[DialogueRecord], dialogue_rows)
+        }
         labels = _LabelResolver.from_snapshot(metadata)
+        rows: list[CharacterRow] = []
+        for record in records:
+            key = record.resource_name.casefold()
+            character_attribution = attribution.by_character.get(key)
+            voice = attribution.voice_by_character.get(key)
+            rows.append(
+                _character_row(
+                    record,
+                    character_attribution,
+                    voice,
+                    dialogues,
+                    labels,
+                )
+            )
+        if query.status is not None:
+            rows = [row for row in rows if row.detail_status is query.status]
+        if query.source_kind is not None:
+            rows = [row for row in rows if row.source_kind is query.source_kind]
+        if query.gender_id is not None:
+            rows = [row for row in rows if row.gender_id == query.gender_id]
+        if query.race_id is not None:
+            rows = [row for row in rows if row.race_id == query.race_id]
+        if query.class_id is not None:
+            rows = [row for row in rows if row.class_id == query.class_id]
+        if query.attribution_status is not None:
+            rows = [row for row in rows if row.attribution_status is query.attribution_status]
+        if query.has_dialog is not None:
+            rows = [row for row in rows if (row.dialog_resref is not None) is query.has_dialog]
+        rows = (
+            _relevance_order(rows, scores, lambda row: row.resource_name)
+            if sort == "relevance"
+            else _metadata_order(rows, sort, direction, lambda row: row.resource_name)
+        )
 
         return CharacterPage(
-            items=[_character_row(record, labels) for record in records],
+            items=_page_items(rows, query),
             page=query.page,
             page_size=query.page_size,
-            total=total,
-            page_count=_page_count(total, query.page_size),
+            total=len(rows),
+            page_count=_page_count(len(rows), query.page_size),
             sort=sort,
             direction=direction,
         )
 
     async def dialogues(self, query: DialogueQuery) -> DialoguePage:
-        attribution_marker = await self._attribution_marker()
-        conditions: list[Expr] = []
-        if query.status is not None:
-            conditions.append(col("detail_status") == lit(query.status))
-        if query.source_kind is not None:
-            conditions.append(col("source_kind") == lit(query.source_kind))
-        if query.attributed is not None:
-            conditions.append(_attribution_filter(query.attributed, attribution_marker))
-        predicate = _combine(conditions)
         tokens = _search_tokens(query.q)
         sort = query.sort or ("relevance" if tokens else "dialogue_line_count")
         direction: SortDirection = "desc" if sort == "relevance" else query.direction
-        total, records = await _records_page(
+        records, scores = await _records_all(
             table=self.dialogues_table,
             model=DialogueRecord,
             search_model=_DialogueSearchResult,
-            stable_column="resource_name",
-            predicate=predicate,
             tokens=tokens,
-            ordering=(None if sort == "relevance" else _ordering(sort, direction, "resource_name")),
-            page=query,
+            predicate=None,
+            key_of=lambda row: row.resource_name,
+            score_of=lambda row: row.score,
+        )
+        attribution = await self._attribution_snapshot()
+        rows = [
+            _dialogue_row(
+                record,
+                attribution.character_count_by_dialogue[record.resource_name.casefold()],
+            )
+            for record in records
+        ]
+        if query.status is not None:
+            rows = [row for row in rows if row.detail_status is query.status]
+        if query.source_kind is not None:
+            rows = [row for row in rows if row.source_kind is query.source_kind]
+        if query.attributed is not None:
+            rows = [row for row in rows if (row.character_count > 0) is query.attributed]
+        rows = (
+            _relevance_order(rows, scores, lambda row: row.resource_name)
+            if sort == "relevance"
+            else _metadata_order(rows, sort, direction, lambda row: row.resource_name)
         )
 
         return DialoguePage(
-            items=[
-                DialogueRow.model_validate(
-                    record.model_dump(include=set(DialogueRow.model_fields))
-                    | {
-                        "character_count": _published_character_count(
-                            record.character_count,
-                            record.attribution_completed_at,
-                            attribution_marker,
-                        )
-                    }
-                )
-                for record in records
-            ],
+            items=_page_items(rows, query),
             page=query.page,
             page_size=query.page_size,
-            total=total,
-            page_count=_page_count(total, query.page_size),
+            total=len(rows),
+            page_count=_page_count(len(rows), query.page_size),
             sort=sort,
             direction=direction,
         )
 
     async def lines(self, query: LineQuery) -> DialogueLinePage:
-        attribution_marker = await self._attribution_marker()
-        conditions: list[Expr] = []
-        if query.line_kind is not None:
-            conditions.append(col("line_kind") == lit(query.line_kind))
-        if query.source_kind is not None:
-            conditions.append(col("source_kind") == lit(query.source_kind))
-        if query.attributed is not None:
-            conditions.append(_attribution_filter(query.attributed, attribution_marker))
-        predicate = _combine(conditions)
+        dialogue_rows = cast(
+            list[DialogueRecord],
+            await self.dialogues_table.query().to_pydantic(DialogueRecord),
+        )
+        attribution = await self._attribution_snapshot()
+        dialogues = {row.resource_name.casefold(): row for row in dialogue_rows}
+        allowed_dialogues = [
+            dialogue
+            for dialogue in dialogues.values()
+            if dialogue.extraction.status is DetailStatus.COMPLETE
+            and (query.source_kind is None or dialogue.source.kind is query.source_kind)
+            and (
+                query.attributed is None
+                or (attribution.character_count_by_dialogue[dialogue.resource_name.casefold()] > 0)
+                is query.attributed
+            )
+        ]
         tokens = _search_tokens(query.q)
         sort = query.sort or ("relevance" if tokens else "serialized_size")
         direction: SortDirection = "desc" if sort == "relevance" else query.direction
+        child_generation = _child_generation_predicate(
+            "dialogue_resource_name",
+            (
+                (dialogue.resource_name, dialogue.extraction.run_id)
+                for dialogue in allowed_dialogues
+            ),
+        )
+        if child_generation is None:
+            return DialogueLinePage(
+                items=[],
+                page=query.page,
+                page_size=query.page_size,
+                total=0,
+                page_count=1,
+                sort=sort,
+                direction=direction,
+            )
+        conditions = [child_generation]
+        if query.line_kind is not None:
+            conditions.append(col("line_kind") == lit(query.line_kind))
+        predicate = _combine(conditions)
         total, records = await _records_page(
             table=self.lines_table,
             model=DialogueLineRecord,
-            search_model=_LineSearchResult,
             stable_column="id",
             predicate=predicate,
             tokens=tokens,
@@ -1123,15 +1239,12 @@ class PipelineReader:
 
         return DialogueLinePage(
             items=[
-                DialogueLineRow.model_validate(
-                    record.model_dump(include=set(DialogueLineRow.model_fields))
-                    | {
-                        "character_count": _published_character_count(
-                            record.character_count,
-                            record.attribution_completed_at,
-                            attribution_marker,
-                        )
-                    }
+                _dialogue_line_row(
+                    record,
+                    dialogues[record.dialogue_resource_name.casefold()],
+                    attribution.character_count_by_dialogue[
+                        record.dialogue_resource_name.casefold()
+                    ],
                 )
                 for record in records
             ],
@@ -1144,55 +1257,84 @@ class PipelineReader:
         )
 
     async def voices(self, query: VoiceQuery) -> VoicePage:
-        conditions: list[Expr] = []
-        if query.voice_id is not None:
-            conditions.append(col("id") == lit(query.voice_id))
-        if query.has_dialogue is not None:
-            conditions.append(
-                col("dialogue_count") > lit(0)
-                if query.has_dialogue
-                else col("dialogue_count") == lit(0)
-            )
-        predicate = _combine(conditions)
         tokens = _search_tokens(query.q)
         sort = query.sort or ("relevance" if tokens else "npc_line_count")
         direction: SortDirection = "desc" if sort == "relevance" else query.direction
-        total, records = await _records_page(
-            table=self.voices_table,
-            model=VoiceResourceRecord,
-            search_model=_VoiceSearchResult,
-            stable_column="id",
-            predicate=predicate,
-            tokens=tokens,
-            ordering=None if sort == "relevance" else _ordering(sort, direction, "id"),
-            page=query,
+        dialogue_rows = cast(
+            list[DialogueRecord],
+            await self.dialogues_table.query().to_pydantic(DialogueRecord),
+        )
+        attribution = await self._attribution_snapshot()
+        if attribution.run is None:
+            records: list[VoiceResourceRecord] = []
+            scores: dict[str, float] = {}
+        else:
+            records, scores = await _records_all(
+                table=self.voices_table,
+                model=VoiceResourceRecord,
+                search_model=_VoiceSearchResult,
+                tokens=tokens,
+                predicate=col("run_id") == lit(attribution.run.id),
+                key_of=lambda row: row.voice_id,
+                score_of=lambda row: row.score,
+            )
+        dialogues_by_resref = {row.resref.casefold(): row for row in dialogue_rows}
+        rows = [_voice_row(record, dialogues_by_resref) for record in records]
+        if query.voice_id is not None:
+            rows = [row for row in rows if row.id == query.voice_id]
+        if query.has_dialogue is not None:
+            rows = [row for row in rows if (row.dialogue_count > 0) is query.has_dialogue]
+        rows = (
+            _relevance_order(rows, scores, lambda row: row.id)
+            if sort == "relevance"
+            else _metadata_order(rows, sort, direction, lambda row: row.id)
         )
         return VoicePage(
-            items=[
-                VoiceRow.model_validate(record.model_dump(include=set(VoiceRow.model_fields)))
-                for record in records
-            ],
+            items=_page_items(rows, query),
             page=query.page,
             page_size=query.page_size,
-            total=total,
-            page_count=_page_count(total, query.page_size),
+            total=len(rows),
+            page_count=_page_count(len(rows), query.page_size),
             sort=sort,
             direction=direction,
         )
 
     async def transitions(self, query: TransitionQuery) -> TransitionPage:
-        predicate = (
-            col("terminates_dialog") == lit(query.terminates_dialog)
-            if query.terminates_dialog is not None
-            else None
+        dialogue_rows = cast(
+            list[DialogueRecord],
+            await self.dialogues_table.query().to_pydantic(DialogueRecord),
         )
+        dialogues = {row.resource_name.casefold(): row for row in dialogue_rows}
+        allowed_dialogues = [
+            row for row in dialogue_rows if row.extraction.status is DetailStatus.COMPLETE
+        ]
         tokens = _search_tokens(query.q)
         sort = query.sort or ("relevance" if tokens else "location")
         direction: SortDirection = "desc" if sort == "relevance" else query.direction
+        child_generation = _child_generation_predicate(
+            "dialogue_resource_name",
+            (
+                (dialogue.resource_name, dialogue.extraction.run_id)
+                for dialogue in allowed_dialogues
+            ),
+        )
+        if child_generation is None:
+            return TransitionPage(
+                items=[],
+                page=query.page,
+                page_size=query.page_size,
+                total=0,
+                page_count=1,
+                sort=sort,
+                direction=direction,
+            )
+        conditions = [child_generation]
+        if query.terminates_dialog is not None:
+            conditions.append(col("terminates_dialog") == lit(query.terminates_dialog))
+        predicate = _combine(conditions)
         total, records = await _records_page(
             table=self.transitions_table,
             model=DialogueTransitionRecord,
-            search_model=_TransitionSearchResult,
             stable_column="id",
             predicate=predicate,
             tokens=tokens,
@@ -1201,8 +1343,9 @@ class PipelineReader:
         )
         return TransitionPage(
             items=[
-                TransitionRow.model_validate(
-                    record.model_dump(include=set(TransitionRow.model_fields))
+                _transition_row(
+                    record,
+                    dialogues[record.dialogue_resource_name.casefold()],
                 )
                 for record in records
             ],
@@ -1248,9 +1391,9 @@ class PipelineReader:
         sort: RaceSort | Literal["relevance"] = query.sort or ("relevance" if tokens else "race_id")
         direction: SortDirection = "desc" if sort == "relevance" else query.direction
         rows = (
-            _relevance_order(rows, scores)
+            _relevance_order(rows, scores, lambda row: row.key)
             if sort == "relevance"
-            else _metadata_order(rows, sort, direction)
+            else _metadata_order(rows, sort, direction, lambda row: row.key)
         )
         return RacePage(
             items=_page_items(rows, query),
@@ -1305,9 +1448,9 @@ class PipelineReader:
         )
         direction: SortDirection = "desc" if sort == "relevance" else query.direction
         rows = (
-            _relevance_order(rows, scores)
+            _relevance_order(rows, scores, lambda row: row.key)
             if sort == "relevance"
-            else _metadata_order(rows, sort, direction)
+            else _metadata_order(rows, sort, direction, lambda row: row.key)
         )
         return ClassPage(
             items=_page_items(rows, query),
@@ -1364,9 +1507,9 @@ class PipelineReader:
         sort: KitSort | Literal["relevance"] = query.sort or ("relevance" if tokens else "row_id")
         direction: SortDirection = "desc" if sort == "relevance" else query.direction
         rows = (
-            _relevance_order(rows, scores)
+            _relevance_order(rows, scores, lambda row: row.key)
             if sort == "relevance"
-            else _metadata_order(rows, sort, direction)
+            else _metadata_order(rows, sort, direction, lambda row: row.key)
         )
         return KitPage(
             items=_page_items(rows, query),
@@ -1392,7 +1535,6 @@ class PipelineReader:
         total, records = await _records_page(
             table=self.identifiers_table,
             model=IdentifierDefinitionRecord,
-            search_model=_IdentifierSearchResult,
             stable_column="key",
             predicate=predicate,
             tokens=tokens,
@@ -1420,57 +1562,62 @@ class PipelineReader:
             self._metadata_snapshot(),
         )
         records = cast(list[CharacterRecord], record_rows)
-        if not records or records[0].detail_status is not DetailStatus.COMPLETE:
+        if not records or records[0].detail is None:
             return None
         record = records[0]
         assert record.serialized_size is not None
-        character = _character_detail_payload(record, _LabelResolver.from_snapshot(metadata))
+        key = record.resource_name.casefold()
 
-        dialogue: DialogueDetail | None = None
+        dialogue: DialogueDetailPayload | None = None
         dialogue_serialized_size: int | None = None
-        if record.dialog_resref is not None:
+        character_detail = record.detail
+        assert character_detail is not None
+        if character_detail.dialog_resref is not None:
             dialogue_rows = cast(
                 list[DialogueRecord],
                 await self.dialogues_table.query()
-                .where(col("resref") == lit(record.dialog_resref))
+                .where(col("resref") == lit(character_detail.dialog_resref))
                 .limit(1)
                 .to_pydantic(DialogueRecord),
             )
         else:
             dialogue_rows = []
-        if dialogue_rows and dialogue_rows[0].detail_status is DetailStatus.COMPLETE:
+        if dialogue_rows and dialogue_rows[0].detail is not None:
             direct = dialogue_rows[0]
-            assert direct.state_count is not None
-            assert direct.transition_count is not None
-            assert direct.dlg_version is not None
-            assert direct.npc_line_count is not None
-            assert direct.player_line_count is not None
-            assert direct.journal_line_count is not None
-            assert direct.dialogue_line_count is not None
             assert direct.serialized_size is not None
+            detail = direct.detail
+            assert detail is not None
             dialogue_serialized_size = direct.serialized_size
-            dialogue = DialogueDetail(
+            dialogue = DialogueDetailPayload(
                 resource_name=direct.resource_name,
                 resref=direct.resref,
-                dlg_version=direct.dlg_version,
-                state_count=direct.state_count,
-                transition_count=direct.transition_count,
-                npc_line_count=direct.npc_line_count,
-                player_line_count=direct.player_line_count,
-                journal_line_count=direct.journal_line_count,
-                dialogue_line_count=direct.dialogue_line_count,
-                pydantic_json_size=direct.serialized_size,
+                dlg_version=detail.dlg_version,
+                state_count=detail.state_count,
+                transition_count=detail.transition_count,
+                npc_line_count=detail.npc_line_count,
+                player_line_count=detail.player_line_count,
+                journal_line_count=detail.journal_line_count,
+                dialogue_line_count=detail.dialogue_line_count,
             )
 
+        attribution = await self._attribution_snapshot()
+        character = _character_detail_payload(
+            record,
+            attribution.voice_by_character.get(key),
+            _LabelResolver.from_snapshot(metadata),
+        )
+        character_attribution = attribution.by_character.get(key)
         return CharacterDetailResponse(
             character=character,
             dialogue=dialogue,
-            source_kind=record.source_kind,
-            source_path=record.source_path,
+            source_kind=record.source.kind,
+            source_path=record.source.path,
             character_serialized_size=record.serialized_size,
             dialogue_serialized_size=dialogue_serialized_size,
-            updated_at=record.updated_at,
-            attribution_status=record.attribution_status,
+            updated_at=record.extraction.updated_at,
+            attribution_status=(
+                None if character_attribution is None else character_attribution.status
+            ),
         )
 
 
@@ -1682,78 +1829,310 @@ class _LabelResolver:
         return self.identifier_label(IdentifierKind.KIT, value)
 
 
-def _character_row(record: CharacterRecord, labels: _LabelResolver) -> CharacterRow:
-    data = record.model_dump(include=set(CharacterRow.model_fields) - _CHARACTER_LABEL_FIELDS)
-    data |= _character_labels(record, labels)
-    return CharacterRow.model_validate(data)
+def _character_row(
+    record: CharacterRecord,
+    attribution: CharacterAttributionRecord | None,
+    voice: VoiceResourceRecord | None,
+    dialogues: Mapping[str, DialogueRecord],
+    labels: _LabelResolver,
+) -> CharacterRow:
+    detail = record.detail
+    metrics = _character_dialogue_metrics(attribution, dialogues)
+    resolved_labels = _character_labels(record, labels)
+    return CharacterRow(
+        resource_name=record.resource_name,
+        display_name=None if detail is None else detail.display_name,
+        voice_id=None if voice is None else voice.voice_id,
+        resref=record.resref,
+        source_kind=record.source.kind,
+        dialog_resref=None if detail is None else detail.dialog_resref,
+        gender_id=None if detail is None else detail.gender_id,
+        race_id=None if detail is None else detail.race_id,
+        class_id=None if detail is None else detail.class_id,
+        alignment_id=None if detail is None else detail.alignment_id,
+        enemy_ally_id=None if detail is None else detail.enemy_ally_id,
+        general_id=None if detail is None else detail.general_id,
+        specific_id=None if detail is None else detail.specific_id,
+        animation_id=None if detail is None else detail.animation_id,
+        racial_enemy_id=None if detail is None else detail.racial_enemy_id,
+        cre_kit_value=None if detail is None else detail.cre_kit_value,
+        kit_ids_value=None if detail is None else detail.kit_ids_value,
+        first_class_level=(None if detail is None else detail.class_levels.first_class),
+        second_class_level=(None if detail is None else detail.class_levels.second_class),
+        third_class_level=(None if detail is None else detail.class_levels.third_class),
+        detail_status=record.extraction.status,
+        detail_error=record.extraction.error,
+        attribution_status=metrics.attribution_status,
+        serialized_size=record.serialized_size,
+        dialogue_status=metrics.dialogue_status,
+        declared_dialogue_count=metrics.declared_dialogue_count,
+        resolved_dialogue_count=metrics.resolved_dialogue_count,
+        dialogue_line_count=metrics.dialogue_line_count,
+        npc_line_count=metrics.npc_line_count,
+        player_line_count=metrics.player_line_count,
+        journal_line_count=metrics.journal_line_count,
+        dialogue_state_count=metrics.dialogue_state_count,
+        dialogue_transition_count=metrics.dialogue_transition_count,
+        dialogue_serialized_size=metrics.dialogue_serialized_size,
+        updated_at=record.extraction.updated_at,
+        **resolved_labels,
+    )
 
 
 def _character_detail_payload(
     record: CharacterRecord,
+    voice: VoiceResourceRecord | None,
     labels: _LabelResolver,
 ) -> CharacterDetailPayload:
-    data = record.model_dump(
-        include=set(CharacterDetailPayload.model_fields) - _CHARACTER_LABEL_FIELDS
+    detail = record.detail
+    assert detail is not None
+    return CharacterDetailPayload(
+        resource_name=record.resource_name,
+        voice_id=None if voice is None else voice.voice_id,
+        display_name=detail.display_name,
+        short_name=detail.short_name,
+        short_name_strref=detail.short_name_strref,
+        long_name=detail.long_name,
+        long_name_strref=detail.long_name_strref,
+        death_variable=detail.death_variable,
+        dialog_resref=detail.dialog_resref,
+        gender_id=detail.gender_id,
+        gender_label=labels.identifier_label(IdentifierKind.GENDER, detail.gender_id),
+        race_id=detail.race_id,
+        race_label=labels.race_label(detail.race_id),
+        class_id=detail.class_id,
+        class_label=labels.class_label(detail.class_id),
+        alignment_id=detail.alignment_id,
+        alignment_label=labels.identifier_label(IdentifierKind.ALIGNMENT, detail.alignment_id),
+        enemy_ally_id=detail.enemy_ally_id,
+        enemy_ally_label=labels.identifier_label(IdentifierKind.ENEMY_ALLY, detail.enemy_ally_id),
+        general_id=detail.general_id,
+        general_label=labels.identifier_label(IdentifierKind.GENERAL, detail.general_id),
+        specific_id=detail.specific_id,
+        specific_label=labels.identifier_label(IdentifierKind.SPECIFIC, detail.specific_id),
+        animation_id=detail.animation_id,
+        animation_label=labels.identifier_label(IdentifierKind.ANIMATION, detail.animation_id),
+        racial_enemy_id=detail.racial_enemy_id,
+        racial_enemy_label=labels.favored_enemy_label(detail.racial_enemy_id),
+        cre_kit_value=detail.cre_kit_value,
+        kit_ids_value=detail.kit_ids_value,
+        kit_label=labels.kit_label(detail.kit_ids_value, detail.class_id),
+        first_class_level=detail.class_levels.first_class,
+        second_class_level=detail.class_levels.second_class,
+        third_class_level=detail.class_levels.third_class,
+        strength=detail.base_attributes.strength,
+        strength_bonus=detail.base_attributes.strength_bonus,
+        intelligence=detail.base_attributes.intelligence,
+        wisdom=detail.base_attributes.wisdom,
+        dexterity=detail.base_attributes.dexterity,
+        constitution=detail.base_attributes.constitution,
+        charisma=detail.base_attributes.charisma,
+        morale=detail.morale,
+        morale_break=detail.morale_break,
+        morale_recovery_time=detail.morale_recovery_time,
+        reputation=detail.reputation,
+        override_script=detail.override_script,
+        class_script=detail.class_script,
+        race_script=detail.race_script,
+        general_script=detail.general_script,
+        default_script=detail.default_script,
+        small_portrait=detail.small_portrait,
+        large_portrait=detail.large_portrait,
+        cre_version=detail.cre_version,
     )
-    data |= _character_labels(record, labels)
-    return CharacterDetailPayload.model_validate(data)
-
-
-_CHARACTER_LABEL_FIELDS = {
-    "gender_label",
-    "race_label",
-    "class_label",
-    "alignment_label",
-    "enemy_ally_label",
-    "general_label",
-    "specific_label",
-    "animation_label",
-    "racial_enemy_label",
-    "kit_label",
-}
 
 
 def _character_labels(record: CharacterRecord, labels: _LabelResolver) -> dict[str, str | None]:
+    detail = record.detail
     return {
         "gender_label": _optional_identifier_label(
             labels,
             IdentifierKind.GENDER,
-            record.gender_id,
+            None if detail is None else detail.gender_id,
         ),
-        "race_label": None if record.race_id is None else labels.race_label(record.race_id),
-        "class_label": None if record.class_id is None else labels.class_label(record.class_id),
+        "race_label": None if detail is None else labels.race_label(detail.race_id),
+        "class_label": None if detail is None else labels.class_label(detail.class_id),
         "alignment_label": _optional_identifier_label(
             labels,
             IdentifierKind.ALIGNMENT,
-            record.alignment_id,
+            None if detail is None else detail.alignment_id,
         ),
         "enemy_ally_label": _optional_identifier_label(
             labels,
             IdentifierKind.ENEMY_ALLY,
-            record.enemy_ally_id,
+            None if detail is None else detail.enemy_ally_id,
         ),
         "general_label": _optional_identifier_label(
             labels,
             IdentifierKind.GENERAL,
-            record.general_id,
+            None if detail is None else detail.general_id,
         ),
         "specific_label": _optional_identifier_label(
             labels,
             IdentifierKind.SPECIFIC,
-            record.specific_id,
+            None if detail is None else detail.specific_id,
         ),
         "animation_label": _optional_identifier_label(
             labels,
             IdentifierKind.ANIMATION,
-            record.animation_id,
+            None if detail is None else detail.animation_id,
         ),
         "racial_enemy_label": (
-            None
-            if record.racial_enemy_id is None
-            else labels.favored_enemy_label(record.racial_enemy_id)
+            None if detail is None else labels.favored_enemy_label(detail.racial_enemy_id)
         ),
-        "kit_label": labels.kit_label(record.kit_ids_value, record.class_id),
+        "kit_label": (
+            None if detail is None else labels.kit_label(detail.kit_ids_value, detail.class_id)
+        ),
     }
+
+
+def _character_dialogue_metrics(
+    attribution: CharacterAttributionRecord | None,
+    dialogues: Mapping[str, DialogueRecord],
+) -> _CharacterDialogueMetrics:
+    if attribution is None:
+        return _CharacterDialogueMetrics()
+    resolved = [
+        dialogues[name.casefold()]
+        for name in attribution.resolved_dialogue_resource_names
+        if name.casefold() in dialogues
+    ]
+    if not resolved:
+        return _CharacterDialogueMetrics(
+            attribution_status=attribution.status,
+            dialogue_status=attribution.dialogue_status,
+            declared_dialogue_count=len(attribution.declared_dialogue_resrefs),
+            resolved_dialogue_count=0,
+        )
+    return _CharacterDialogueMetrics(
+        attribution_status=attribution.status,
+        dialogue_status=attribution.dialogue_status,
+        declared_dialogue_count=len(attribution.declared_dialogue_resrefs),
+        resolved_dialogue_count=len(resolved),
+        dialogue_line_count=sum(
+            _dialogue_metric(row, lambda detail: detail.dialogue_line_count) for row in resolved
+        ),
+        npc_line_count=sum(
+            _dialogue_metric(row, lambda detail: detail.npc_line_count) for row in resolved
+        ),
+        player_line_count=sum(
+            _dialogue_metric(row, lambda detail: detail.player_line_count) for row in resolved
+        ),
+        journal_line_count=sum(
+            _dialogue_metric(row, lambda detail: detail.journal_line_count) for row in resolved
+        ),
+        dialogue_state_count=sum(
+            _dialogue_metric(row, lambda detail: detail.state_count) for row in resolved
+        ),
+        dialogue_transition_count=sum(
+            _dialogue_metric(row, lambda detail: detail.transition_count) for row in resolved
+        ),
+        dialogue_serialized_size=sum(row.serialized_size or 0 for row in resolved),
+    )
+
+
+def _dialogue_row(record: DialogueRecord, character_count: int) -> DialogueRow:
+    detail = record.detail
+    return DialogueRow(
+        resource_name=record.resource_name,
+        resref=record.resref,
+        source_kind=record.source.kind,
+        source_path=record.source.path,
+        detail_status=record.extraction.status,
+        detail_error=record.extraction.error,
+        serialized_size=record.serialized_size,
+        dialogue_line_count=(None if detail is None else detail.dialogue_line_count),
+        npc_line_count=None if detail is None else detail.npc_line_count,
+        player_line_count=None if detail is None else detail.player_line_count,
+        journal_line_count=None if detail is None else detail.journal_line_count,
+        character_count=character_count,
+        updated_at=record.extraction.updated_at,
+    )
+
+
+def _dialogue_metric(
+    record: DialogueRecord,
+    select: Callable[[DialogueData], int],
+) -> int:
+    return 0 if record.detail is None else select(record.detail)
+
+
+def _dialogue_line_row(
+    record: DialogueLineRecord,
+    dialogue: DialogueRecord,
+    character_count: int,
+) -> DialogueLineRow:
+    return DialogueLineRow(
+        id=record.id,
+        dialogue_resource_name=record.dialogue_resource_name,
+        dialogue_resref=dialogue.resref,
+        source_kind=dialogue.source.kind,
+        line_kind=record.line_kind,
+        state_index=record.state_index,
+        state_trigger_index=record.state_trigger_index,
+        state_trigger_text=record.state_trigger_text,
+        transition_index=record.transition_index,
+        strref=record.strref,
+        text=record.text,
+        tokens=record.tokens,
+        serialized_size=record.serialized_size,
+        character_count=character_count,
+    )
+
+
+def _transition_row(
+    record: DialogueTransitionRecord,
+    dialogue: DialogueRecord,
+) -> TransitionRow:
+    return TransitionRow(
+        id=record.id,
+        dialogue_resource_name=record.dialogue_resource_name,
+        dialogue_resref=dialogue.resref,
+        source_kind=dialogue.source.kind,
+        state_index=record.state_index,
+        transition_index=record.transition_index,
+        flags_raw=record.flags_raw,
+        flags_decoded=record.flags_decoded,
+        trigger_index=record.trigger_index,
+        trigger_text=record.trigger_text,
+        action_index=record.action_index,
+        action_text=record.action_text,
+        next_dialog=record.next_dialog,
+        next_state_index=record.next_state_index,
+        terminates_dialog=record.terminates_dialog,
+        serialized_size=record.serialized_size,
+    )
+
+
+def _voice_row(
+    record: VoiceResourceRecord,
+    dialogues: Mapping[str, DialogueRecord],
+) -> VoiceRow:
+    voice = VoiceResource(
+        id=VoiceId(record.voice_id),
+        display_name=record.display_name,
+        prompt=record.prompt,
+        variant_resource_names=record.variant_resource_names,
+        dialogue_resrefs=record.dialogue_resrefs,
+    )
+    ordered_dialogues = [
+        dialogues[resref.casefold()]
+        for resref in voice.dialogue_resrefs
+        if resref.casefold() in dialogues
+    ]
+    return VoiceRow(
+        id=voice.id,
+        display_name=voice.display_name,
+        prompt=voice.prompt,
+        variant_resource_names=voice.variant_resource_names,
+        dialogue_resrefs=[row.resref for row in ordered_dialogues],
+        variant_count=voice.variant_count,
+        dialogue_count=len(ordered_dialogues),
+        npc_line_count=sum(
+            _dialogue_metric(row, lambda detail: detail.npc_line_count) for row in ordered_dialogues
+        ),
+        serialized_size=len(voice.model_dump_json().encode("utf-8")),
+    )
 
 
 def _optional_identifier_label(
@@ -2051,24 +2430,26 @@ def _identifier_value_scores(
     return scores
 
 
-def _relevance_order[Row: _Keyed](
+def _relevance_order[Row](
     rows: Sequence[Row],
     scores: Mapping[str, float],
+    key_of: Callable[[Row], str],
 ) -> list[Row]:
-    return sorted(rows, key=lambda row: (-scores[row.key], row.key))
+    return sorted(rows, key=lambda row: (-scores[key_of(row)], key_of(row)))
 
 
-def _metadata_order[Row: _Keyed](
+def _metadata_order[Row](
     rows: Sequence[Row],
     column: str,
     direction: SortDirection,
+    key_of: Callable[[Row], str],
 ) -> list[Row]:
     non_null = [row for row in rows if getattr(row, column) is not None]
     null = sorted(
         (row for row in rows if getattr(row, column) is None),
-        key=lambda row: row.key,
+        key=key_of,
     )
-    non_null.sort(key=lambda row: row.key)
+    non_null.sort(key=key_of)
     non_null.sort(key=attrgetter(column), reverse=direction == "desc")
     return [*non_null, *null]
 
@@ -2078,11 +2459,43 @@ def _page_items[Row](rows: Sequence[Row], query: PageQuery) -> list[Row]:
     return list(rows[offset : offset + query.page_size])
 
 
+async def _records_all[Record: LanceModel, SearchRecord: LanceModel](
+    *,
+    table: AsyncTable,
+    model: type[Record],
+    search_model: type[SearchRecord],
+    tokens: tuple[str, ...],
+    predicate: Expr | None,
+    key_of: Callable[[Record], str],
+    score_of: Callable[[SearchRecord], float],
+) -> tuple[list[Record], dict[str, float]]:
+    if not tokens:
+        query = table.query()
+        if predicate is not None:
+            query = query.where(predicate)
+        rows = cast(list[Record], await query.to_pydantic(model))
+        return rows, {}
+
+    limit = await table.count_rows(predicate.to_sql() if predicate is not None else None)
+    if limit == 0:
+        return [], {}
+    search = table.query().nearest_to_text(_fts_query(tokens))
+    if predicate is not None:
+        search = search.where(predicate)
+    scored = cast(
+        list[SearchRecord],
+        await search.limit(limit).select([*model.model_fields, "_score"]).to_pydantic(search_model),
+    )
+    records = [model.model_validate(row.model_dump(exclude={"score"})) for row in scored]
+    return records, {
+        key_of(record): score_of(row) for record, row in zip(records, scored, strict=True)
+    }
+
+
 async def _records_page[Record: LanceModel](
     *,
     table: AsyncTable,
     model: type[Record],
-    search_model: type[Record],
     stable_column: StableColumn,
     predicate: Expr | None,
     tokens: tuple[str, ...],
@@ -2091,37 +2504,26 @@ async def _records_page[Record: LanceModel](
 ) -> tuple[int, list[Record]]:
     """Run the typed pagination path shared by record-backed browser tables."""
     if tokens:
-
-        def search() -> AsyncFTSQuery:
-            query = table.query().nearest_to_text(_fts_query(tokens))
-            return query.where(predicate) if predicate is not None else query
-
-        match_limit = max(1, await table.count_rows())
-        if ordering is None:
-            matches, record_rows = await asyncio.gather(
-                search().limit(match_limit).select([stable_column, "_score"]).to_arrow(),
-                search()
-                .offset(_page_offset(page))
-                .limit(page.page_size)
-                .select([*model.model_fields, "_score"])
-                .to_pydantic(search_model),
-            )
-            return cast(int, matches.num_rows), cast(list[Record], record_rows)
-
+        match_limit = await table.count_rows(predicate.to_sql() if predicate is not None else None)
+        if match_limit == 0:
+            return 0, []
         projected_columns = list(
             dict.fromkeys(
                 [
                     stable_column,
-                    *(item.column_name for item in ordering),
+                    *(item.column_name for item in ordering or []),
                     "_score",
                 ]
             )
         )
-        matches = await search().limit(match_limit).select(projected_columns).to_arrow()
+        search = table.query().nearest_to_text(_fts_query(tokens))
+        if predicate is not None:
+            search = search.where(predicate)
+        matches = await search.limit(match_limit).select(projected_columns).to_arrow()
         if matches.num_rows == 0:
             return 0, []
 
-        matches = matches.sort_by(
+        sort_order = (
             [
                 (
                     item.column_name,
@@ -2130,7 +2532,10 @@ async def _records_page[Record: LanceModel](
                 )
                 for item in ordering
             ]
+            if ordering is not None
+            else [("_score", "descending", "at_end"), (stable_column, "ascending", "at_end")]
         )
+        matches = matches.sort_by(sort_order)
         page_keys = cast(
             list[str],
             matches.column(stable_column).slice(_page_offset(page), page.page_size).to_pylist(),
@@ -2165,34 +2570,52 @@ async def _records_page[Record: LanceModel](
     return total, cast(list[Record], record_rows)
 
 
-def _published_attribution_timestamp(rows: Sequence[_AttributionMarker]) -> str | None:
-    if not rows:
+def _latest_run_id(runs: Sequence[ExtractionRunRecord], kind: RunKind) -> str | None:
+    matches = [run for run in runs if run.run_kind is kind]
+    if not matches:
         return None
-    timestamp = rows[0].attribution_completed_at
-    if timestamp is None or any(row.attribution_completed_at != timestamp for row in rows):
+    return max(matches, key=lambda run: (run.started_at, run.id)).id
+
+
+def _completed_run_order(run: ExtractionRunRecord) -> tuple[str, str]:
+    assert run.completed_at is not None, f"completed run {run.id} has no completion time"
+    return run.completed_at, run.id
+
+
+def _empty_attribution_snapshot(
+    publication: AttributionPublicationStatus,
+) -> _AttributionSnapshot:
+    return _AttributionSnapshot(
+        publication=publication,
+        run=None,
+        by_character={},
+        character_count_by_dialogue=Counter(),
+        voices=[],
+        voice_by_character={},
+    )
+
+
+def _child_generation_predicate(
+    parent_column: ChildParentColumn,
+    parents: Iterable[tuple[str, str]],
+) -> Expr | None:
+    names_by_run: dict[str, list[str]] = defaultdict(list)
+    for resource_name, run_id in parents:
+        names_by_run[run_id].append(resource_name)
+    predicates = [
+        (col("run_id") == lit(run_id)) & col(parent_column).isin(resource_names)
+        for run_id, resource_names in names_by_run.items()
+    ]
+    if not predicates:
         return None
-    return timestamp
+    result = predicates[0]
+    for predicate in predicates[1:]:
+        result |= predicate
+    return result
 
 
-def _attribution_filter(attributed: bool, published_at: str | None) -> Expr:
-    character_count = col("character_count")
-    if published_at is None:
-        return character_count < lit(0) if attributed else character_count >= lit(0)
-
-    same_generation = col("attribution_completed_at") == lit(published_at)
-    if attributed:
-        return same_generation.and_(character_count > lit(0))
-    return (character_count == lit(0)).or_(col("attribution_completed_at") != lit(published_at))
-
-
-def _published_character_count(
-    character_count: int,
-    attributed_at: str | None,
-    published_at: str | None,
-) -> int:
-    if published_at is None or attributed_at != published_at:
-        return 0
-    return character_count
+async def _count_rows(table: AsyncTable, predicate: Expr | None) -> int:
+    return 0 if predicate is None else await table.count_rows(predicate.to_sql())
 
 
 def _combine(conditions: list[Expr]) -> Expr | None:

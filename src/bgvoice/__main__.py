@@ -16,6 +16,8 @@ _DEFAULT_DATABASE = Path("data/bgvoice.lancedb")
 
 def build_parser() -> argparse.ArgumentParser:
     """Describe the BGVoice command line."""
+    workers = os.process_cpu_count()
+    assert workers is not None, "Python could not determine the available CPU count"
     parser = argparse.ArgumentParser(prog="bgvoice")
     commands = parser.add_subparsers(dest="command", required=True)
 
@@ -43,7 +45,7 @@ def build_parser() -> argparse.ArgumentParser:
         extraction.add_argument(
             "--workers",
             type=_positive_int,
-            default=os.process_cpu_count() or 1,
+            default=workers,
             help="concurrent iecli processes (default: available logical CPU count)",
         )
     for extraction in (characters, dialogues):

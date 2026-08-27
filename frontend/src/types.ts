@@ -2,12 +2,13 @@ export type SourceKind = "override" | "bif" | "dlc";
 export type DetailStatus = "pending" | "complete" | "failed";
 export type AttributionStatus =
   | "matched"
+  | "partial_match"
   | "missing_dialogue"
-  | "dialogue_failed"
   | "no_dialogue"
   | "character_unavailable";
+export type AttributionPublication = "missing" | "stale" | "published";
 type DialogueLineKind = "npc" | "player" | "journal";
-type RunKind = "characters" | "dialogues" | "metadata";
+type RunKind = "characters" | "dialogues" | "metadata" | "attribution";
 type RunStatus =
   | "running"
   | "complete"
@@ -211,8 +212,10 @@ export interface PipelineStats {
   characters_complete: number;
   characters_failed: number;
   characters_with_dialogue: number;
+  attribution_publication: AttributionPublication;
   characters_unavailable: number;
   characters_matched: number;
+  characters_partially_matched: number;
   characters_missing_dialogue: number;
   characters_dialogue_failed: number;
   characters_without_dialogue: number;
@@ -246,7 +249,7 @@ export interface PipelineStats {
 
 interface CharacterDetail {
   resource_name: string;
-  voice_id: string;
+  voice_id: string | null;
   display_name: string;
   short_name: string | null;
   short_name_strref: number;
@@ -309,7 +312,6 @@ interface DialogueDetail {
   player_line_count: number;
   journal_line_count: number;
   dialogue_line_count: number;
-  pydantic_json_size: number;
 }
 
 export interface CharacterDetailResponse {

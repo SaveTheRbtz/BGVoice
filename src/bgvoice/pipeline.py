@@ -10,7 +10,7 @@ from bgvoice.database import PipelineDatabase
 from bgvoice.iecli import CharacterIeCliClient, DialogueIeCliClient, MetadataIeCliClient
 from bgvoice.metadata import build_metadata
 from bgvoice.models import (
-    CharacterDetail,
+    CharacterExtraction,
     CreResource,
     DialogueExtraction,
     DlgResource,
@@ -69,6 +69,7 @@ def extract_metadata(
             database.finish_run(
                 run_id,
                 status=RunStatus.FAILED,
+                discovered=discovered,
                 attempted=discovered,
                 extracted=0,
                 failures=0,
@@ -98,14 +99,18 @@ def extract_characters(
         target_names = database.detail_targets(refresh=refresh)
         return [resource for resource in resources if resource.resource_name in target_names]
 
-    def extract_details(resources: Sequence[CreResource], committed: CommitCallback) -> None:
+    def extract_details(
+        run_id: str,
+        resources: Sequence[CreResource],
+        committed: CommitCallback,
+    ) -> None:
         _extract_resources(
             resources,
             root,
             name=lambda resource: resource.resource_name,
             dump=client.dump_creature,
-            build=CharacterDetail.from_dump,
-            save=database.apply_detail_batch,
+            build=CharacterExtraction.from_dump,
+            save=lambda details, failures: database.apply_detail_batch(run_id, details, failures),
             workers=int(workers),
             thread_name_prefix="iecli-cre",
             progress=progress,
@@ -139,14 +144,18 @@ def extract_dialogues(
     def select_targets(_resources: Sequence[DlgResource]) -> list[str]:
         return database.dialogue_targets(refresh=refresh)
 
-    def extract_details(resource_names: Sequence[str], committed: CommitCallback) -> None:
+    def extract_details(
+        run_id: str,
+        resource_names: Sequence[str],
+        committed: CommitCallback,
+    ) -> None:
         _extract_resources(
             resource_names,
             root,
             name=lambda resource_name: resource_name,
             dump=client.dump_dialogue,
             build=lambda _resource_name, dump: DialogueExtraction.from_dump(dump),
-            save=database.apply_dialogue_batch,
+            save=lambda details, failures: database.apply_dialogue_batch(run_id, details, failures),
             workers=int(workers),
             thread_name_prefix="iecli-dlg",
             progress=progress,
@@ -174,7 +183,7 @@ def _run_extraction[Inventory, Target](
     discover: Callable[[Path], list[Inventory]],
     store_inventory: Callable[[str, Sequence[Inventory]], None],
     select_targets: Callable[[Sequence[Inventory]], list[Target]],
-    extract_details: Callable[[Sequence[Target], CommitCallback], None],
+    extract_details: Callable[[str, Sequence[Target], CommitCallback], None],
 ) -> ExtractionSummary:
     """Run the shared inventory, detail, and durable finalization lifecycle."""
     run_id = database.start_run(game_root, iecli_version, run_kind=run_kind)
@@ -193,7 +202,7 @@ def _run_extraction[Inventory, Target](
             extracted += succeeded
             failed += failures
 
-        extract_details(targets, record_commit)
+        extract_details(run_id, targets, record_commit)
 
         status: TerminalRunStatus = RunStatus.COMPLETE_WITH_ERRORS if failed else RunStatus.COMPLETE
         database.finish_run(
@@ -220,6 +229,7 @@ def _run_extraction[Inventory, Target](
             database.finish_run(
                 run_id,
                 status=RunStatus.FAILED,
+                discovered=discovered,
                 attempted=attempted,
                 extracted=extracted,
                 failures=failed,

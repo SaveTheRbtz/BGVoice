@@ -30,16 +30,25 @@ class DetailStatus(StrEnum):
 
 class AttributionStatus(StrEnum):
     MATCHED = "matched"
+    PARTIAL_MATCH = "partial_match"
     MISSING_DIALOGUE = "missing_dialogue"
-    DIALOGUE_FAILED = "dialogue_failed"
     NO_DIALOGUE = "no_dialogue"
     CHARACTER_UNAVAILABLE = "character_unavailable"
+
+
+class AttributionPublicationStatus(StrEnum):
+    """Whether a completed attribution generation matches current inputs."""
+
+    MISSING = "missing"
+    STALE = "stale"
+    PUBLISHED = "published"
 
 
 class RunKind(StrEnum):
     CHARACTERS = "characters"
     DIALOGUES = "dialogues"
     METADATA = "metadata"
+    ATTRIBUTION = "attribution"
 
 
 class RunStatus(StrEnum):
@@ -164,6 +173,33 @@ class DlgResource(IeCliProjection):
     @property
     def search_text(self) -> str:
         return compose_search_text(self.resource_name, self.resref, self.source_path)
+
+
+class ResourceSource(StrictModel):
+    """Physical origin of one effective Infinity Engine resource."""
+
+    kind: SourceKind = Field(strict=False)
+    path: str = Field(min_length=1)
+
+    @classmethod
+    def from_resource(cls, resource: CreResource | DlgResource) -> Self:
+        return cls(kind=resource.source_kind, path=resource.source_path)
+
+
+class ExtractionState(StrictModel):
+    """Lifecycle of the detail currently attached to a resource."""
+
+    run_id: str = Field(min_length=1)
+    status: DetailStatus = Field(strict=False)
+    error: str | None = None
+    updated_at: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_error(self) -> Self:
+        assert (self.status is DetailStatus.FAILED) == (self.error is not None), (
+            "only failed extraction states carry an error"
+        )
+        return self
 
 
 class StringReference(IeCliProjection):
@@ -432,9 +468,6 @@ class CharacterSound(StrictModel):
 class CharacterDetail(StrictModel):
     """Normalized, voice-relevant detail from one CRE resource."""
 
-    resource_name: str
-    resref: ResRef
-    source_path: str = Field(min_length=1)
     display_name: str
     short_name: str | None
     short_name_strref: UInt32
@@ -467,40 +500,7 @@ class CharacterDetail(StrictModel):
     default_script: str | None
     small_portrait: str | None
     large_portrait: str | None
-    sounds: list[CharacterSound]
     cre_version: str
-
-    @property
-    def proposed_voice_id(self) -> VoiceId:
-        """Return this CRE's speaker identity before cross-CRE disambiguation."""
-        return proposed_voice_id(
-            self.death_variable,
-            self.dialog_resref,
-            self.short_name_strref
-            if self.short_name is not None
-            else self.long_name_strref
-            if self.long_name is not None
-            else None,
-            self.resref,
-        )
-
-    @property
-    def search_text(self) -> str:
-        return compose_search_text(
-            self.resource_name,
-            self.resref,
-            self.source_path,
-            self.display_name,
-            self.short_name,
-            self.long_name,
-            self.death_variable,
-            self.dialog_resref,
-            self.override_script,
-            self.class_script,
-            self.race_script,
-            self.general_script,
-            self.default_script,
-        )
 
     @classmethod
     def from_dump(cls, resource: CreResource, dump: CreDump) -> Self:
@@ -512,9 +512,6 @@ class CharacterDetail(StrictModel):
         classification = header.classification
         scripts = header.scripts
         return cls(
-            resource_name=resource.resource_name,
-            resref=resource.resref,
-            source_path=resource.source_path,
             display_name=display_name,
             short_name=short_name,
             short_name_strref=header.short_name.strref,
@@ -547,36 +544,52 @@ class CharacterDetail(StrictModel):
             default_script=_optional_resref(scripts.default_script),
             small_portrait=_optional_resref(header.small_portrait),
             large_portrait=_optional_resref(header.large_portrait),
+            cre_version=dump.version,
+        )
+
+
+class CharacterExtraction(StrictModel):
+    """Transient output of extracting one CRE and its normalized child rows."""
+
+    resource_name: str = Field(min_length=1)
+    detail: CharacterDetail
+    sounds: list[CharacterSound]
+    serialized_size: int = Field(ge=0)
+
+    @classmethod
+    def from_dump(cls, resource: CreResource, dump: CreDump) -> Self:
+        assert resource.resource_name.casefold() == dump.resource_name.casefold(), (
+            f"CRE inventory names {resource.resource_name!r}; dump is {dump.resource_name!r}"
+        )
+        detail = CharacterDetail.from_dump(resource, dump)
+        return cls(
+            resource_name=resource.resource_name,
+            detail=detail,
             sounds=[
                 CharacterSound(
                     slot_id=SoundSlotId(slot_id),
                     strref=reference.strref,
                     text=reference.text,
                 )
-                for slot_id, reference in enumerate(header.soundset)
+                for slot_id, reference in enumerate(dump.header.soundset)
                 if reference.strref != 0xFFFF_FFFF
             ],
-            cre_version=dump.version,
+            serialized_size=len(dump.model_dump_json().encode("utf-8")),
         )
 
 
 class VoiceResource(StrictModel):
-    """One speaker voice shared by one or more concrete CRE variants."""
+    """Canonical voice identity shared by one or more concrete CRE variants."""
 
     id: VoiceId
     display_name: str = Field(min_length=1)
     prompt: str = Field(min_length=1)
     variant_resource_names: list[Annotated[str, Field(min_length=1)]] = Field(min_length=1)
-    dialogue_resrefs: list[ResRef]
-    npc_line_count: int = Field(ge=0)
+    dialogue_resrefs: list[Annotated[str, Field(min_length=1, max_length=8)]]
 
     @property
     def variant_count(self) -> int:
         return len(self.variant_resource_names)
-
-    @property
-    def dialogue_count(self) -> int:
-        return len(self.dialogue_resrefs)
 
     @property
     def search_text(self) -> str:
@@ -587,10 +600,6 @@ class VoiceResource(StrictModel):
             *self.variant_resource_names,
             *self.dialogue_resrefs,
         )
-
-    @property
-    def pydantic_json_size(self) -> int:
-        return len(self.model_dump_json().encode("utf-8"))
 
 
 class IdentifierDefinition(StrictModel):
@@ -1024,8 +1033,6 @@ class MetadataExtraction(StrictModel):
 class DialogueDetail(StrictModel):
     """Normalized, sortable metrics for one DLG resource."""
 
-    resource_name: str
-    resref: str
     dlg_version: str
     state_count: UInt32
     transition_count: UInt32
@@ -1033,7 +1040,6 @@ class DialogueDetail(StrictModel):
     player_line_count: int = Field(ge=0)
     journal_line_count: int = Field(ge=0)
     dialogue_line_count: int = Field(ge=0)
-    pydantic_json_size: int = Field(ge=0)
 
     @model_validator(mode="after")
     def validate_counts(self) -> Self:
@@ -1060,8 +1066,6 @@ class DialogueDetail(StrictModel):
         )
         npc_lines = len(dump.states)
         return cls(
-            resource_name=dump.resource_name,
-            resref=_resref_from_resource_name(dump.resource_name, ".DLG"),
             dlg_version=dump.version,
             state_count=dump.header.num_states,
             transition_count=dump.header.num_transitions,
@@ -1069,7 +1073,6 @@ class DialogueDetail(StrictModel):
             player_line_count=player_lines,
             journal_line_count=journal_lines,
             dialogue_line_count=npc_lines + player_lines,
-            pydantic_json_size=len(dump.model_dump_json().encode("utf-8")),
         )
 
 
@@ -1245,9 +1248,11 @@ class DialogueTransitionEdge(StrictModel):
 class DialogueExtraction(StrictModel):
     """One DLG's aggregate metrics and addressable line records."""
 
+    resource_name: str = Field(min_length=1)
     detail: DialogueDetail
     lines: list[DialogueLine]
     edges: list[DialogueTransitionEdge]
+    serialized_size: int = Field(ge=0)
 
     @model_validator(mode="after")
     def validate_line_resources(self) -> Self:
@@ -1255,11 +1260,11 @@ class DialogueExtraction(StrictModel):
             {
                 line.dialogue_resource_name
                 for line in self.lines
-                if line.dialogue_resource_name.casefold() != self.detail.resource_name.casefold()
+                if line.dialogue_resource_name.casefold() != self.resource_name.casefold()
             }
         )
         assert not unexpected, (
-            f"DLG extraction {self.detail.resource_name!r} contains lines for {unexpected}"
+            f"DLG extraction {self.resource_name!r} contains lines for {unexpected}"
         )
         counts = Counter(line.line_kind for line in self.lines)
         expected: dict[DialogueLineKind, int] = {
@@ -1268,31 +1273,33 @@ class DialogueExtraction(StrictModel):
             DialogueLineKind.JOURNAL: self.detail.journal_line_count,
         }
         assert all(counts[kind] == count for kind, count in expected.items()), (
-            f"DLG extraction {self.detail.resource_name!r} line counts are "
+            f"DLG extraction {self.resource_name!r} line counts are "
             f"{dict(counts)}; expected {expected}"
         )
         assert len(self.edges) == self.detail.transition_count, (
-            f"DLG extraction {self.detail.resource_name!r} contains {len(self.edges)} edges; "
+            f"DLG extraction {self.resource_name!r} contains {len(self.edges)} edges; "
             f"expected {self.detail.transition_count}"
         )
         unexpected_edges = sorted(
             {
                 edge.dialogue_resource_name
                 for edge in self.edges
-                if edge.dialogue_resource_name.casefold() != self.detail.resource_name.casefold()
+                if edge.dialogue_resource_name.casefold() != self.resource_name.casefold()
             }
         )
         assert not unexpected_edges, (
-            f"DLG extraction {self.detail.resource_name!r} contains edges for {unexpected_edges}"
+            f"DLG extraction {self.resource_name!r} contains edges for {unexpected_edges}"
         )
         return self
 
     @classmethod
     def from_dump(cls, dump: DlgDump) -> Self:
         return cls(
+            resource_name=dump.resource_name,
             detail=DialogueDetail.from_dump(dump),
             lines=DialogueLine.from_dump(dump),
             edges=DialogueTransitionEdge.from_dump(dump),
+            serialized_size=len(dump.model_dump_json().encode("utf-8")),
         )
 
 
@@ -1333,9 +1340,11 @@ class DatabaseStats(StrictModel):
 class AttributionSummary(StrictModel):
     """Complete accounting of active characters and extracted DLG resources."""
 
+    run_id: str = Field(min_length=1)
     characters_total: int = Field(ge=0)
     characters_unavailable: int = Field(ge=0)
     characters_matched: int = Field(ge=0)
+    characters_partially_matched: int = Field(ge=0)
     characters_missing_dialogue: int = Field(ge=0)
     characters_dialogue_failed: int = Field(ge=0)
     characters_without_dialogue: int = Field(ge=0)
@@ -1406,9 +1415,3 @@ def _optional_resref(value: str | None) -> str | None:
     if stripped is None or stripped.upper() == "NONE":
         return None
     return stripped
-
-
-def _resref_from_resource_name(resource_name: str, suffix: str) -> str:
-    if resource_name.casefold().endswith(suffix.casefold()):
-        return resource_name[: -len(suffix)]
-    return resource_name
