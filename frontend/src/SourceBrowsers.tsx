@@ -159,7 +159,7 @@ function TransitionLocation({ transition }: { transition: DialogueTransition }) 
   );
 }
 
-export function SoundSlot({ slotId, symbols, groups }: {
+function SoundSlot({ slotId, symbols, groups }: {
   slotId: number;
   symbols: readonly string[];
   groups: readonly string[];
@@ -187,7 +187,7 @@ function ExpandableText({ value, unresolved }: { value: string | undefined; unre
   );
 }
 
-export function ScriptText({ index, text, empty }: {
+function ScriptText({ index, text, empty }: {
   index: number | undefined;
   text: string | undefined;
   empty: string;

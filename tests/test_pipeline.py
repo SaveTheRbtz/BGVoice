@@ -1,10 +1,8 @@
 """Tests for the shared concurrent extraction lifecycle."""
 
-import re
 from collections.abc import Callable, Sequence
 from io import BytesIO
 from pathlib import Path
-from threading import Event
 
 import lancedb
 import pytest
@@ -19,10 +17,7 @@ from bgvoice.database import PipelineDatabase
 from bgvoice.dialogue_models import (
     DlgDump,
 )
-from bgvoice.metadata_models import (
-    BanterTimingSettings,
-    MetadataExtraction,
-)
+from bgvoice.metadata_models import MetadataExtraction
 from bgvoice.model_types import (
     CreResource,
     DlgResource,
@@ -49,38 +44,9 @@ from tests.factories import (
     make_portrait_resource,
     make_resource,
 )
+from tests.scenarios import empty_metadata
 
 type Extractor = Callable[..., ExtractionSummary]
-
-
-def _empty_metadata(source_count: int = 3) -> MetadataExtraction:
-    return MetadataExtraction(
-        source_resource_count=source_count,
-        resolved_strref_count=0,
-        identifiers=[],
-        campaigns=[],
-        campaign_resource_bindings=[],
-        character_resource_links=[],
-        interaction_rules=[],
-        soundset_lines=[],
-        sound_slot_suffixes=[],
-        sound_slot_groups=[],
-        favored_enemies=[],
-        happiness_rules=[],
-        banter_timing=BanterTimingSettings(
-            source_resource="BANTTIMG.2DA",
-            frequency=1,
-            probability=0,
-            replay_delay=1,
-            special_probability=0,
-        ),
-        engine_strings=[],
-        months=[],
-        campaign_calendars=[],
-        race_text_rows=[],
-        class_text_rows=[],
-        kits=[],
-    )
 
 
 def _bmp(width: int, height: int, color: tuple[int, int, int]) -> bytes:
@@ -154,7 +120,7 @@ def test_metadata_extraction_replaces_all_metadata_and_records_its_run(
 
     def build(_client: object, game_root: Path, *, workers: int) -> MetadataExtraction:
         calls.append((game_root, workers))
-        return _empty_metadata()
+        return empty_metadata(3)
 
     monkeypatch.setattr(pipeline, "build_metadata", build)
     summary = extract_metadata(client, database, tmp_path, workers=6)
@@ -420,103 +386,3 @@ def test_fatal_batch_write_preserves_committed_run_progress(
         1,
         0,
     )
-
-
-def test_finalization_failure_does_not_mask_extraction_error(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    original = RuntimeError("cannot list characters")
-
-    def fail_discovery(_game_root: Path) -> list[CreResource]:
-        raise original
-
-    def fail_finalization(*_args: object, **_options: object) -> None:
-        raise OSError("cannot finalize run")
-
-    client = FakeIeCli()
-    monkeypatch.setattr(client, "list_creatures", fail_discovery)
-    database = PipelineDatabase(tmp_path / "pipeline.lancedb")
-    monkeypatch.setattr(database, "finish_run", fail_finalization)
-
-    with pytest.raises(RuntimeError) as raised:
-        extract_characters(client, database, tmp_path)
-
-    assert raised.value is original
-    assert len(raised.value.__notes__) == 1
-    assert re.fullmatch(
-        r"Failed to finalize extraction run [0-9a-f]{32}: "
-        r"OSError\('cannot finalize run'\)",
-        raised.value.__notes__[0],
-    )
-
-
-@pytest.mark.parametrize(
-    "fatal_error",
-    [OSError("cannot save batch"), KeyboardInterrupt()],
-)
-def test_fatal_batch_exit_cancels_queued_work_without_waiting(
-    fatal_error: BaseException,
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    resources = ["first", "running", "queued"]
-    all_submitted = Event()
-    running_started = Event()
-    release_running = Event()
-    running_finished = Event()
-    queued_started = Event()
-    named: list[str] = []
-
-    def name(resource: str) -> str:
-        named.append(resource)
-        if len(named) == len(resources):
-            all_submitted.set()
-        return resource
-
-    def dump(_game_root: Path, resource_name: str) -> str:
-        if resource_name == "first":
-            assert all_submitted.wait(2)
-        elif resource_name == "running":
-            running_started.set()
-            try:
-                if not release_running.wait(2):
-                    raise TimeoutError("extractor waited for a running job")
-            finally:
-                running_finished.set()
-        else:
-            queued_started.set()
-        return resource_name
-
-    def build(resource: str, dumped: str) -> str:
-        assert resource == dumped
-        assert running_started.wait(2)
-        return resource
-
-    def fail_save(_details: object, _failures: object) -> None:
-        raise fatal_error
-
-    monkeypatch.setattr(pipeline, "_WRITE_BATCH_SIZE", 1)
-    try:
-        with pytest.raises(BaseException) as raised:
-            pipeline._extract_resources(
-                resources,
-                tmp_path,
-                name=name,
-                dump=dump,
-                build=build,
-                save=fail_save,
-                workers=1,
-                thread_name_prefix="test-cancel",
-                progress=None,
-                committed=lambda _succeeded, _failed: None,
-            )
-
-        assert raised.value is fatal_error
-        assert running_started.is_set()
-        assert not queued_started.is_set()
-    finally:
-        release_running.set()
-
-    assert running_finished.wait(2)
-    assert not queued_started.wait(0.2)

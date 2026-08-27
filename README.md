@@ -140,6 +140,10 @@ retaining their raw engine IDs.
 Ruff and ESLint enforce a cyclomatic-complexity ceiling of 15. The ceiling is a guardrail, not a
 target: cohesive local code is preferred over one-use helpers created only to lower a score.
 
+Tests follow the same principle. Small table-driven tests protect parsing and domain invariants;
+one shared representative database covers read-only queries; mutation tests receive isolated
+copies; and tests marked `integration` cross the pipeline, LanceDB, Connect, and HTTP boundaries.
+
 ```powershell
 uv run ruff format --check .
 uv run ruff check .
@@ -152,6 +156,7 @@ cd frontend
 pnpm typecheck
 pnpm lint
 pnpm test
+pnpm test:coverage
 pnpm build
 ```
 

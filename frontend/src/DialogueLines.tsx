@@ -180,7 +180,7 @@ function DialogueLineRow({ line, expanded, onToggle }: {
   );
 }
 
-export function LineContext({ tokens, triggerIndex, triggerText }: {
+function LineContext({ tokens, triggerIndex, triggerText }: {
   tokens: readonly string[];
   triggerIndex: number | undefined;
   triggerText: string | undefined;

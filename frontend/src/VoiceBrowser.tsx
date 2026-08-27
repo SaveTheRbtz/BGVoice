@@ -155,7 +155,7 @@ function VoiceList({ browser, selected, search }: {
   );
 }
 
-export function VoiceCard({ voice, selected, search = "" }: {
+function VoiceCard({ voice, selected, search = "" }: {
   voice: Voice;
   selected: boolean;
   search?: string;
@@ -180,7 +180,7 @@ export function VoiceCard({ voice, selected, search = "" }: {
   );
 }
 
-export function VoiceAvatar({ voice, size = "large" }: {
+function VoiceAvatar({ voice, size = "large" }: {
   voice: Pick<Voice, "displayName" | "portrait">;
   size?: "small" | "large";
 }) {
@@ -205,7 +205,7 @@ export function VoiceAvatar({ voice, size = "large" }: {
   );
 }
 
-export function VoiceDetail({ voice, requestedId, error, search = "" }: {
+function VoiceDetail({ voice, requestedId, error, search = "" }: {
   voice: Voice | null;
   requestedId: string | null;
   error: string | null;
@@ -276,7 +276,7 @@ type ResourceLinksProps =
   | { title: string; references: readonly CharacterReference[]; kind: "character" }
   | { title: string; references: readonly DialogueReference[]; kind: "dialogue" };
 
-export function ResourceLinks(props: ResourceLinksProps) {
+function ResourceLinks(props: ResourceLinksProps) {
   const references = [...props.references].sort(byLineCount);
   const path = props.kind === "character" ? characterPath : dialoguePath;
   const links = references.map((reference) => ({

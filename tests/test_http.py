@@ -1,0 +1,268 @@
+"""Public-path integration through extraction, LanceDB, Connect, and FastAPI."""
+
+from io import BytesIO
+from pathlib import Path
+
+import pytest
+from fastapi.testclient import TestClient
+from httpx2 import Response
+from PIL import Image
+
+from bgvoice.character_models import CreDump
+from bgvoice.database import PipelineDatabase
+from bgvoice.dialogue_models import DlgDump
+from bgvoice.model_types import (
+    CreResource,
+    DlgResource,
+    PortraitResource,
+    RunKind,
+    StringReference,
+)
+from bgvoice.pipeline import extract_characters, extract_dialogues, extract_portraits
+from bgvoice.web import create_app
+from tests.factories import (
+    make_dialogue_dump,
+    make_dialogue_resource,
+    make_dump,
+    make_portrait_resource,
+    make_resource,
+)
+from tests.scenarios import finish_empty_stage
+
+pytestmark = pytest.mark.integration
+
+_PARENT = "installations/bg2ee-eet"
+_CONNECT_HEADERS = {
+    "content-type": "application/json",
+    "connect-protocol-version": "1",
+}
+
+
+def _bmp() -> bytes:
+    output = BytesIO()
+    Image.new("RGB", (54, 84), (1, 2, 3)).save(output, format="BMP")
+    return output.getvalue()
+
+
+class PipelineClient:
+    """One-resource ie-cli implementation for the public integration path."""
+
+    def version(self) -> str:
+        return "iecli integration"
+
+    def list_creatures(self, game_root: Path) -> list[CreResource]:
+        return [make_resource()]
+
+    def list_dialogues(self, game_root: Path) -> list[DlgResource]:
+        return [make_dialogue_resource()]
+
+    def list_portraits(self, game_root: Path) -> list[PortraitResource]:
+        return [make_portrait_resource()]
+
+    def dump_creature(self, game_root: Path, resource_name: str) -> CreDump:
+        return make_dump(resource_name)
+
+    def dump_dialogue(self, game_root: Path, resource_name: str) -> DlgDump:
+        return make_dialogue_dump(resource_name)
+
+    def read_raw_resource(self, game_root: Path, resource_name: str) -> bytes:
+        return _bmp()
+
+    def read_text_resource(self, game_root: Path, resource_name: str) -> str:
+        raise AssertionError("metadata is outside this focused integration scenario")
+
+    def resolve_string(self, game_root: Path, strref: int) -> StringReference:
+        return StringReference(strref=strref, text=f"text {strref}")
+
+
+def _connect(client: TestClient, method: str, payload: dict[str, object]) -> Response:
+    return client.post(
+        f"/connect/bgvoice.v1.PipelineService/{method}",
+        headers=_CONNECT_HEADERS,
+        json=payload,
+    )
+
+
+def test_pipeline_output_is_browsable_over_connect_and_portrait_http(tmp_path: Path) -> None:
+    path = tmp_path / "pipeline.lancedb"
+    game_root = tmp_path / "game"
+    client = PipelineClient()
+    database = PipelineDatabase(path)
+
+    assert extract_characters(client, database, game_root, workers=2).status == "complete"
+    assert extract_dialogues(client, database, game_root, workers=2).status == "complete"
+    finish_empty_stage(database, game_root, RunKind.METADATA)
+    assert extract_portraits(client, database, game_root, workers=2).extracted == 1
+    summary = database.rebuild_attributions()
+    assert (summary.characters_matched, summary.attributed_dialogue_lines) == (1, 4)
+
+    with TestClient(create_app(path)) as web:
+        voices = _connect(
+            web,
+            "ListVoices",
+            {"parent": _PARENT, "pageSize": 10, "filter": 'search("Aerie")'},
+        )
+        assert voices.status_code == 200
+        voice = voices.json()["voices"][0]
+        assert (voice["displayName"], voice["npcLineCount"]) == ("Aerie", "2")
+        assert voice["characters"][0]["engineResourceName"] == "AERIE.CRE"
+
+        lines = _connect(
+            web,
+            "ListDialogueLines",
+            {"parent": _PARENT, "pageSize": 10, "filter": 'line_kind = "npc"'},
+        )
+        assert lines.status_code == 200
+        assert {line["text"] for line in lines.json()["dialogueLines"]} == {
+            "Hello.",
+            "A quest for <DAYANDMONTH>.",
+        }
+
+        portrait = web.get(f"/v1/{_PARENT}/portraits/aeries:download")
+        assert portrait.status_code == 200
+        assert portrait.headers["content-type"] == "image/png"
+        assert portrait.content.startswith(b"\x89PNG\r\n\x1a\n")
+
+
+@pytest.mark.parametrize(
+    ("list_method", "response_field", "get_method", "full_field"),
+    [
+        ("ListVoices", "voices", "GetVoice", "prompt"),
+        ("ListCharacters", "characters", "GetCharacter", "detail"),
+        ("ListDialogues", "dialogues", "GetDialogue", "detail"),
+        ("ListDialogueLines", "dialogueLines", "GetDialogueLine", "text"),
+        (
+            "ListDialogueTransitions",
+            "dialogueTransitions",
+            "GetDialogueTransition",
+            "flagsRaw",
+        ),
+        ("ListCharacterSounds", "characterSounds", "GetCharacterSound", "text"),
+        ("ListPortraits", "portraits", "GetPortrait", "mediaType"),
+        ("ListRaces", "races", "GetRace", "texts"),
+        (
+            "ListCharacterClasses",
+            "characterClasses",
+            "GetCharacterClass",
+            "texts",
+        ),
+        ("ListKits", "kits", "GetKit", "displayName"),
+        (
+            "ListIdentifierDefinitions",
+            "identifierDefinitions",
+            "GetIdentifierDefinition",
+            "symbols",
+        ),
+        ("ListCampaigns", "campaigns", "GetCampaign", "campaignId"),
+        ("ListExtractionRuns", "extractionRuns", "GetExtractionRun", "runId"),
+    ],
+)
+def test_connect_lists_and_gets_each_full_resource(
+    list_method: str,
+    response_field: str,
+    get_method: str,
+    full_field: str,
+    shared_scenario_database: Path,
+) -> None:
+    with TestClient(create_app(shared_scenario_database)) as client:
+        payload: dict[str, object] = {
+            "parent": _PARENT,
+            "pageSize": 2,
+            "view": "VIEW_FULL",
+        }
+        if list_method == "ListRaces":
+            payload["filter"] = 'search("Elf")'
+        elif list_method == "ListCharacterClasses":
+            payload["filter"] = "class_id = 14"
+        response = _connect(
+            client,
+            list_method,
+            payload,
+        )
+        first = response.json()[response_field][0]
+        fetched = _connect(
+            client,
+            get_method,
+            {"name": first["name"], "view": "VIEW_FULL"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()[response_field]
+    assert int(response.json()["totalSize"]) >= len(response.json()[response_field])
+    assert fetched.status_code == 200
+    assert fetched.json()["name"] == first["name"]
+    assert full_field in fetched.json()
+
+
+def test_connect_pagination_and_errors_are_publicly_typed(
+    shared_scenario_database: Path,
+) -> None:
+    with TestClient(create_app(shared_scenario_database)) as client:
+        installation = _connect(client, "GetInstallation", {"name": _PARENT})
+        first = _connect(
+            client,
+            "ListCharacters",
+            {"parent": _PARENT, "pageSize": 10, "orderBy": "engine_resource_name asc"},
+        )
+        second = _connect(
+            client,
+            "ListCharacters",
+            {
+                "parent": _PARENT,
+                "pageSize": 10,
+                "pageToken": first.json()["nextPageToken"],
+                "orderBy": "engine_resource_name asc",
+            },
+        )
+        invalid_filter = _connect(
+            client,
+            "ListCharacters",
+            {"parent": _PARENT, "filter": 'source_kind = "archive"'},
+        )
+        changed_token = _connect(
+            client,
+            "ListCharacters",
+            {
+                "parent": _PARENT,
+                "pageSize": 25,
+                "pageToken": first.json()["nextPageToken"],
+            },
+        )
+        missing = _connect(
+            client,
+            "GetVoice",
+            {"name": f"{_PARENT}/voices/missing"},
+        )
+        missing_installation = _connect(
+            client,
+            "GetInstallation",
+            {"name": "installations/missing"},
+        )
+        missing_portrait = client.get(f"/v1/{_PARENT}/portraits/missing:download")
+        wrong_installation = client.get("/v1/installations/missing/portraits/aeries:download")
+
+    assert installation.status_code == 200
+    assert installation.json()["summary"]["characters"] == "12"
+    assert (len(first.json()["characters"]), len(second.json()["characters"])) == (10, 2)
+    assert not second.json().get("nextPageToken")
+    assert invalid_filter.status_code == 400
+    assert changed_token.status_code == 400
+    assert missing.status_code == 404
+    assert missing_installation.status_code == 404
+    assert missing_portrait.status_code == 404
+    assert wrong_installation.status_code == 404
+
+
+def test_spa_static_assets_and_deep_links_share_one_host(
+    shared_scenario_database: Path,
+    tmp_path: Path,
+) -> None:
+    dist = tmp_path / "dist"
+    (dist / "assets").mkdir(parents=True)
+    (dist / "index.html").write_text("<h1>BGVoice SPA</h1>", encoding="utf-8")
+    (dist / "assets" / "app.css").write_text("body{}", encoding="utf-8")
+
+    with TestClient(create_app(shared_scenario_database, dist)) as client:
+        assert "BGVoice SPA" in client.get("/voices/aerie").text
+        assert client.get("/assets/app.css").text == "body{}"
+        assert client.get("/missing-route").text == "<h1>BGVoice SPA</h1>"

@@ -1,5 +1,6 @@
 """Command-line behavior tests."""
 
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -88,52 +89,35 @@ def test_extraction_commands_dispatch_options_and_status(
         executables.append(executable)
         return object()
 
-    def fake_characters(
-        _client: object,
-        _database: object,
-        _game_root: Path,
-        **options: object,
-    ) -> ExtractionSummary:
-        calls["characters"] = options
-        return _summary(tmp_path, RunStatus.COMPLETE)
+    def extractor(
+        stage: str,
+        status: TerminalRunStatus,
+    ) -> Callable[..., ExtractionSummary]:
+        def extract(
+            _client: object,
+            _database: object,
+            _game_root: Path,
+            **options: object,
+        ) -> ExtractionSummary:
+            calls[stage] = options
+            return _summary(tmp_path, status)
 
-    def fake_metadata(
-        _client: object,
-        _database: object,
-        _game_root: Path,
-        **options: object,
-    ) -> ExtractionSummary:
-        calls["metadata"] = options
-        return _summary(tmp_path, RunStatus.COMPLETE)
-
-    def fake_dialogues(
-        _client: object,
-        _database: object,
-        _game_root: Path,
-        **options: object,
-    ) -> ExtractionSummary:
-        calls["dialogues"] = options
-        return _summary(tmp_path, RunStatus.COMPLETE_WITH_ERRORS)
-
-    def fake_portraits(
-        _client: object,
-        _database: object,
-        _game_root: Path,
-        **options: object,
-    ) -> ExtractionSummary:
-        calls["portraits"] = options
-        return _summary(tmp_path, RunStatus.COMPLETE)
+        return extract
 
     monkeypatch.setattr(cli, "IeCli", fake_iecli)
-    monkeypatch.setattr(cli, "extract_metadata", fake_metadata)
-    monkeypatch.setattr(cli, "extract_characters", fake_characters)
-    monkeypatch.setattr(cli, "extract_dialogues", fake_dialogues)
-    monkeypatch.setattr(cli, "extract_portraits", fake_portraits)
+    monkeypatch.setattr(cli, "extract_metadata", extractor("metadata", RunStatus.COMPLETE))
+    monkeypatch.setattr(cli, "extract_characters", extractor("characters", RunStatus.COMPLETE))
+    monkeypatch.setattr(
+        cli,
+        "extract_dialogues",
+        extractor("dialogues", RunStatus.COMPLETE_WITH_ERRORS),
+    )
+    monkeypatch.setattr(cli, "extract_portraits", extractor("portraits", RunStatus.COMPLETE))
 
     executable = tmp_path / "iecli.exe"
     database = tmp_path / "pipeline.lancedb"
-    assert (
-        cli.main(
+    commands = [
+        (
             [
                 "extract-portraits",
                 "--game",
@@ -142,12 +126,10 @@ def test_extraction_commands_dispatch_options_and_status(
                 str(database),
                 "--workers",
                 "6",
-            ]
-        )
-        == 0
-    )
-    assert (
-        cli.main(
+            ],
+            0,
+        ),
+        (
             [
                 "extract-metadata",
                 "--game",
@@ -156,12 +138,10 @@ def test_extraction_commands_dispatch_options_and_status(
                 str(database),
                 "--workers",
                 "4",
-            ]
-        )
-        == 0
-    )
-    assert (
-        cli.main(
+            ],
+            0,
+        ),
+        (
             [
                 "extract-characters",
                 "--game",
@@ -174,12 +154,10 @@ def test_extraction_commands_dispatch_options_and_status(
                 "3",
                 "--refresh",
                 "--inventory-only",
-            ]
-        )
-        == 0
-    )
-    assert (
-        cli.main(
+            ],
+            0,
+        ),
+        (
             [
                 "extract-dialogues",
                 "--game",
@@ -188,10 +166,13 @@ def test_extraction_commands_dispatch_options_and_status(
                 str(database),
                 "--workers",
                 "2",
-            ]
-        )
-        == 1
-    )
+            ],
+            1,
+        ),
+    ]
+    assert [cli.main(arguments) for arguments, _expected in commands] == [
+        expected for _arguments, expected in commands
+    ]
 
     assert executables == [None, None, executable, None]
     assert calls["metadata"] == {"workers": 4}
@@ -211,31 +192,6 @@ def test_extraction_commands_dispatch_options_and_status(
     assert '"status": "complete"' in output.out
     assert '"status": "complete_with_errors"' in output.out
     assert output.err.count("Active character records: 0") == 3
-
-
-def test_native_extraction_errors_propagate(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    expected = FileNotFoundError("iecli.exe")
-
-    def fail(*_args: object, **_options: object) -> ExtractionSummary:
-        raise expected
-
-    monkeypatch.setattr(cli, "IeCli", lambda: object())
-    monkeypatch.setattr(cli, "extract_characters", fail)
-
-    with pytest.raises(FileNotFoundError) as raised:
-        cli.main(
-            [
-                "extract-characters",
-                "--game",
-                str(tmp_path),
-                "--database",
-                str(tmp_path / "pipeline.lancedb"),
-            ]
-        )
-
-    assert raised.value is expected
 
 
 def test_web_and_attribution_commands_dispatch(

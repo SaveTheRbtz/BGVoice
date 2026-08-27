@@ -38,10 +38,10 @@ addopts = [
     "--cov=bgvoice",
     "--cov-report=term-missing:skip-covered",
     "--import-mode=importlib",
-    "--strict-config",
-    "--strict-markers",
 ]
 filterwarnings = ["error"]
+markers = ["integration: exercises multiple application boundaries"]
+strict = true
 testpaths = ["tests"]
 xfail_strict = true
 
