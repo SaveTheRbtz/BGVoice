@@ -22,22 +22,24 @@ const voiceDefaults: VoiceQuery = {
   page: 1,
   page_size: 25,
   q: "",
-  slot_id: "",
+  voice_id: "",
+  has_dialogue: "",
   sort: "",
   direction: "desc",
 };
 
 describe("browser URL state", () => {
   it("restores the active tab and its typed pagination and filter values", () => {
-    const search = "?tab=voices&page=3&page_size=50&q=battle+cry&slot_id=9";
+    const search = "?tab=voices&page=3&page_size=50&q=warm&voice_id=aerie&has_dialogue=true";
 
     expect(browserTab(search)).toBe("voices");
     expect(browserQuery(voiceDefaults, search)).toEqual({
       ...voiceDefaults,
       page: 3,
       page_size: 50,
-      q: "battle cry",
-      slot_id: "9",
+      q: "warm",
+      voice_id: "aerie",
+      has_dialogue: "true",
     });
   });
 

@@ -37,8 +37,10 @@ from bgvoice.database import (
     SoundsetLineRecord,
     SoundSlotGroupRecord,
     SoundSlotSuffixRecord,
+    VoiceResourceRecord,
 )
 from bgvoice.models import (
+    AlignmentId,
     BanterTimingSettings,
     CampaignCalendarDefinition,
     CampaignDefinition,
@@ -413,6 +415,10 @@ def _sound_rows(path: Path) -> list[CharacterSoundRecord]:
     return _rows(path, "character_sounds", CharacterSoundRecord)
 
 
+def _voice_rows(path: Path) -> list[VoiceResourceRecord]:
+    return _rows(path, "voice_resources", VoiceResourceRecord)
+
+
 def _dialogue_rows(path: Path) -> list[DialogueRecord]:
     return _rows(path, "dialogues", DialogueRecord)
 
@@ -433,6 +439,7 @@ def test_database_creates_exact_typed_schemas_and_native_indexes(tmp_path: Path)
     assert tables == {
         "characters",
         "character_sounds",
+        "voice_resources",
         "dialogues",
         "dialogue_lines",
         "dialogue_transitions",
@@ -459,6 +466,7 @@ def test_database_creates_exact_typed_schemas_and_native_indexes(tmp_path: Path)
     models: dict[str, type[LanceModel]] = {
         "characters": CharacterRecord,
         "character_sounds": CharacterSoundRecord,
+        "voice_resources": VoiceResourceRecord,
         "dialogues": DialogueRecord,
         "dialogue_lines": DialogueLineRecord,
         "dialogue_transitions": DialogueTransitionRecord,
@@ -1281,6 +1289,204 @@ def test_attribution_includes_normalized_party_dialogue_links(tmp_path: Path) ->
         dialogue.serialized_size or 0 for dialogue in stored_dialogues
     )
     assert {dialogue.character_count for dialogue in stored_dialogues} == {1}
+
+
+def test_attribution_builds_voice_resources_from_shared_cre_variants(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "voices.lancedb"
+    database = PipelineDatabase(path)
+    metadata = make_metadata_extraction()
+    metadata_run = database.start_run(tmp_path, "iecli test", run_kind=RunKind.METADATA)
+    database.replace_metadata(metadata_run, metadata)
+
+    resources = [
+        make_resource(name)
+        for name in (
+            "OHHEX8.CRE",
+            "OHHEX9.CRE",
+            "OHHEX25.CRE",
+            "OHHEXFL.CRE",
+            "OHHEXMS.CRE",
+        )
+    ]
+    direct_dialogues = ("HEXXAT", "HEXXAT", "HEXXA25A", "FAIL", "GHOST")
+    character_run = database.start_run(tmp_path, "iecli test")
+    database.replace_inventory(character_run, resources)
+    details: list[CharacterDetail] = []
+    for index, (resource, dialog) in enumerate(zip(resources, direct_dialogues, strict=True)):
+        detail = CharacterDetail.from_dump(
+            resource,
+            make_dump(
+                resource.resource_name,
+                short_name="Hexxat",
+                long_name="Hexxat",
+                death_variable="HEXXAT" if index % 2 else "hexxat",
+                dialog=dialog,
+            ),
+        )
+        if index < 3:
+            detail = detail.model_copy(update={"kit_ids_value": KitIdsValue(0x4001)})
+        details.append(detail)
+    database.apply_detail_batch(details, [])
+
+    dialogue_resources = [
+        make_dialogue_resource("HEXXAT.DLG"),
+        make_dialogue_resource("HEXXA25A.DLG"),
+        make_dialogue_resource("FAIL.DLG"),
+    ]
+    dialogue_run = database.start_run(tmp_path, "iecli test", run_kind=RunKind.DIALOGUES)
+    database.replace_dialogue_inventory(dialogue_run, dialogue_resources)
+    database.apply_dialogue_batch(
+        [
+            DialogueExtraction.from_dump(make_dialogue_dump("HEXXAT.DLG")),
+            DialogueExtraction.from_dump(make_dialogue_dump("HEXXA25A.DLG")),
+        ],
+        [("FAIL.DLG", "broken DLG")],
+    )
+
+    database.rebuild_attributions()
+
+    assert {character.voice_id for character in _character_rows(path)} == {"dv:hexxat"}
+    voice = _voice_rows(path)[0]
+    assert voice.id == "dv:hexxat"
+    assert voice.display_name == "Hexxat"
+    assert voice.variant_resource_names == sorted(
+        [resource.resource_name for resource in resources], key=str.casefold
+    )
+    assert voice.dialogue_resrefs == ["FAIL", "HEXXA25A", "HEXXAT"]
+    assert (voice.variant_count, voice.dialogue_count, voice.npc_line_count) == (5, 3, 4)
+    assert voice.prompt == (
+        "Name: Hexxat\nGender: Female\nRace: Elf\nClass: Cleric Mage\nKit: Berserker\n"
+        "Alignment: Lawful Good"
+    )
+    assert voice.serialized_size > 0
+    voice_table = lancedb.connect(path).open_table("voice_resources")
+    assert voice_table.search("Hexxat", query_type="fts").limit(10).to_arrow().num_rows == 1
+
+    refresh_run = database.start_run(tmp_path, "iecli test")
+    database.replace_inventory(refresh_run, resources)
+    assert _voice_rows(path) == []
+
+
+def test_attribution_disambiguates_shared_script_variables_and_resolved_names(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "voice-identities.lancedb"
+    database = PipelineDatabase(path)
+    resources = [
+        make_resource(name)
+        for name in ("ALHEL.CRE", "ALHEL2.CRE", "JOLUS.CRE", "BUGABO02.CRE", "PETTIN.CRE")
+    ]
+    run_id = database.start_run(tmp_path, "iecli test")
+    database.replace_inventory(run_id, resources)
+
+    alhel = CharacterDetail.from_dump(
+        resources[0],
+        make_dump(
+            "ALHEL.CRE",
+            short_name="Alhelor",
+            long_name="Alhelor",
+            death_variable="NOBLEORDER",
+            dialog=None,
+        ),
+    ).model_copy(update={"short_name_strref": 29640})
+    alhel_variant = CharacterDetail.from_dump(
+        resources[1],
+        make_dump(
+            "ALHEL2.CRE",
+            short_name="Alhelor",
+            long_name="Alhelor",
+            death_variable="NOBLEORDER",
+            dialog=None,
+        ),
+    ).model_copy(update={"short_name_strref": 39640})
+    jolus = CharacterDetail.from_dump(
+        resources[2],
+        make_dump(
+            "JOLUS.CRE",
+            short_name="Sir Jolus",
+            long_name="Sir Jolus",
+            death_variable="NOBLEORDER",
+            dialog=None,
+        ),
+    ).model_copy(update={"short_name_strref": 29599})
+    bugabo = CharacterDetail.from_dump(
+        resources[3],
+        make_dump(
+            "BUGABO02.CRE", short_name=None, long_name=None, death_variable="PETTIN", dialog=None
+        ),
+    )
+    pettin = CharacterDetail.from_dump(
+        resources[4],
+        make_dump(
+            "PETTIN.CRE",
+            short_name="Ettin",
+            long_name="Ettin",
+            death_variable="PETTIN",
+            dialog=None,
+        ),
+    ).model_copy(update={"short_name_strref": 249431})
+    database.apply_detail_batch([alhel, alhel_variant, jolus, bugabo, pettin], [])
+
+    database.rebuild_attributions()
+
+    characters = {row.resource_name: row for row in _character_rows(path)}
+    assert characters["ALHEL.CRE"].voice_id == "dv:nobleorder:name:29640"
+    assert characters["ALHEL2.CRE"].voice_id == "dv:nobleorder:name:29640"
+    assert characters["JOLUS.CRE"].voice_id == "dv:nobleorder:name:29599"
+    assert characters["BUGABO02.CRE"].voice_id == "dv:pettin"
+    assert characters["PETTIN.CRE"].voice_id == "dv:pettin"
+    pettin_voice = next(voice for voice in _voice_rows(path) if voice.id == "dv:pettin")
+    assert pettin_voice.display_name == "Ettin"
+    assert pettin_voice.prompt.startswith("Name: Ettin\n")
+
+
+def test_voice_prompt_uses_one_actual_cre_metadata_tuple(tmp_path: Path) -> None:
+    path = tmp_path / "voice-prompt.lancedb"
+    database = PipelineDatabase(path)
+    metadata = make_metadata_extraction()
+    metadata_run = database.start_run(tmp_path, "iecli test", run_kind=RunKind.METADATA)
+    database.replace_metadata(metadata_run, metadata)
+
+    resources = [make_resource("SENDAI.CRE"), make_resource("SENDAI_.CRE")]
+    character_run = database.start_run(tmp_path, "iecli test")
+    database.replace_inventory(character_run, resources)
+    elf_cleric_mage = CharacterDetail.from_dump(
+        resources[0],
+        make_dump(
+            "SENDAI.CRE",
+            short_name="Sendai",
+            long_name="Sendai",
+            death_variable="SENDAI",
+            dialog=None,
+        ),
+    )
+    human_fighter = CharacterDetail.from_dump(
+        resources[1],
+        make_dump(
+            "SENDAI_.CRE",
+            short_name="Sendai",
+            long_name="Sendai",
+            death_variable="SENDAI",
+            dialog=None,
+        ),
+    ).model_copy(
+        update={
+            "race_id": RaceId(1),
+            "class_id": ClassId(2),
+            "alignment_id": AlignmentId(33),
+        }
+    )
+    database.apply_detail_batch([elf_cleric_mage, human_fighter], [])
+
+    database.rebuild_attributions()
+
+    voice = _voice_rows(path)[0]
+    assert voice.id == "dv:sendai"
+    assert voice.prompt == (
+        "Name: Sendai\nGender: Female\nRace: Elf\nClass: Cleric Mage\nAlignment: Lawful Good"
+    )
 
 
 def test_attribution_rejects_incomplete_stored_line_sets(tmp_path: Path) -> None:

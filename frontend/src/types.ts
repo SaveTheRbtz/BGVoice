@@ -60,6 +60,7 @@ export interface CharacterQuery extends PaginatedQuery<CharacterSort> {
 
 export interface CharacterRow {
   resource_name: string;
+  voice_id: string | null;
   display_name: string | null;
   resref: string;
   source_kind: SourceKind;
@@ -186,7 +187,6 @@ export interface FilterOptions {
   race_ids: FacetValue[];
   class_ids: FacetValue[];
   metadata_class_ids: FacetValue[];
-  sound_slot_ids: FacetValue[];
   campaigns: string[];
   identifier_kinds: SimpleIdentifierKind[];
 }
@@ -216,6 +216,7 @@ export interface PipelineStats {
   characters_missing_dialogue: number;
   characters_dialogue_failed: number;
   characters_without_dialogue: number;
+  voices_total: number;
   dialogues_total: number;
   dialogues_complete: number;
   dialogue_lines: number;
@@ -245,6 +246,7 @@ export interface PipelineStats {
 
 interface CharacterDetail {
   resource_name: string;
+  voice_id: string;
   display_name: string;
   short_name: string | null;
   short_name_strref: number;
@@ -442,24 +444,26 @@ export interface IdentifierRow {
 export type IdentifierPage = Page<IdentifierRow, IdentifierSort>;
 
 export type VoiceSort =
-  | "character_resource_name"
-  | "slot_id"
-  | "strref"
+  | "display_name"
+  | "variant_count"
+  | "dialogue_count"
+  | "npc_line_count"
   | "serialized_size";
 
 export interface VoiceQuery extends PaginatedQuery<VoiceSort> {
-  slot_id: string;
+  voice_id: string;
+  has_dialogue: BooleanFilter;
 }
 
 export interface VoiceRow {
-  key: string;
-  character_resource_name: string;
-  character_name: string | null;
-  slot_id: number;
-  slot_symbols: string[];
-  slot_groups: string[];
-  strref: number;
-  text: string | null;
+  id: string;
+  display_name: string;
+  prompt: string;
+  variant_resource_names: string[];
+  dialogue_resrefs: string[];
+  variant_count: number;
+  dialogue_count: number;
+  npc_line_count: number;
   serialized_size: number;
 }
 

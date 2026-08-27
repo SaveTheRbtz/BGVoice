@@ -1,9 +1,8 @@
 import { getTransitions, getVoices } from "./api";
-import { FacetFilter, SelectFilter, TableBrowser } from "./browser";
+import { SelectFilter, TableBrowser } from "./browser";
 import { formatBytes, formatCount, formatHex } from "./format";
 import type { Column } from "./browser";
 import type {
-  FacetValue,
   TransitionQuery,
   TransitionRow,
   TransitionSort,
@@ -18,7 +17,8 @@ const DEFAULT_VOICE_QUERY: VoiceQuery = {
   page: 1,
   page_size: 25,
   q: "",
-  slot_id: "",
+  voice_id: "",
+  has_dialogue: "",
   sort: "",
   direction: "desc",
 };
@@ -34,35 +34,38 @@ const DEFAULT_TRANSITION_QUERY: TransitionQuery = {
 
 const VOICE_COLUMNS = [
   {
-    label: "Character",
-    sort: "character_resource_name",
+    label: "Voice",
+    sort: "display_name",
     render: (row) => (
       <div className="definition-name">
-        <strong>{row.character_name ?? row.character_resource_name}</strong>
-        <span className="mono">{row.character_resource_name}</span>
+        <strong>{row.display_name}</strong>
+        <span className="mono">{row.id}</span>
       </div>
     ),
   },
   {
-    label: "Sound slot",
-    sort: "slot_id",
+    label: "Starter prompt",
+    render: (row) => <StarterPrompt value={row.prompt} />,
+  },
+  {
+    label: "CRE variants",
+    sort: "variant_count",
     render: (row) => (
-      <SoundSlot
-        slotId={row.slot_id}
-        symbols={row.slot_symbols}
-        groups={row.slot_groups}
-      />
+      <ResourceList count={row.variant_count} values={row.variant_resource_names} noun="variants" />
     ),
   },
   {
-    label: "Strref",
-    sort: "strref",
-    numeric: true,
-    render: (row) => <span className="mono">{row.strref}</span>,
+    label: "Dialogues",
+    sort: "dialogue_count",
+    render: (row) => (
+      <ResourceList count={row.dialogue_count} values={row.dialogue_resrefs} noun="dialogues" />
+    ),
   },
   {
-    label: "Resolved voice text",
-    render: (row) => <ExpandableText value={row.text} unresolved="Unresolved strref" />,
+    label: "NPC lines",
+    sort: "npc_line_count",
+    numeric: true,
+    render: (row) => formatCount(row.npc_line_count),
   },
   {
     label: "Object size",
@@ -121,10 +124,7 @@ const TRANSITION_COLUMNS = [
   },
 ] satisfies readonly Column<TransitionRow, TransitionSort>[];
 
-export function VoiceBrowser({ soundSlots, active }: {
-  soundSlots: FacetValue[];
-  active: boolean;
-}) {
+export function VoiceBrowser({ active }: { active: boolean }) {
   return (
     <TableBrowser
       tab="voices"
@@ -132,24 +132,38 @@ export function VoiceBrowser({ soundSlots, active }: {
       defaultQuery={DEFAULT_VOICE_QUERY}
       loadPage={getVoices}
       columns={VOICE_COLUMNS}
-      rowKey={(row) => row.key}
-      eyebrow="CRE SOUNDSET INVENTORY"
+      rowKey={(row) => row.id}
+      eyebrow="CANONICAL VOICE INVENTORY"
       title="Voices"
-      description="Character voice strings resolved through SNDSLOT.IDS, SPEECH.2DA, and dialog.tlk."
-      noun="voice lines"
-      searchPlaceholder="Search character names, resources, sound slots, and voice text…"
+      description="One reusable voice definition per canonical speaker, with every CRE variant and direct dialogue workload."
+      noun="voices"
+      searchPlaceholder="Search canonical names, IDs, prompts, variants, and dialogues…"
       renderFilters={({ query, update }) => (
-        <FacetFilter
-          label="Sound slot"
-          value={query.slot_id}
-          values={soundSlots}
-          onChange={(value) => update("slot_id", value)}
-        />
+        <>
+          <SelectFilter
+            label="Dialogue"
+            value={query.has_dialogue}
+            values={BOOLEAN_FILTERS}
+            labels={{ true: "Has dialogue", false: "No dialogue" }}
+            onChange={(value) => update("has_dialogue", value)}
+          />
+          <VoiceIdChip voiceId={query.voice_id} />
+        </>
       )}
-      filterValues={(query) => [query.slot_id]}
+      filterValues={(query) => [query.voice_id, query.has_dialogue]}
       className="voice-browser"
       tableClassName="voice-table"
     />
+  );
+}
+
+export function VoiceIdChip({ voiceId }: { voiceId: string }) {
+  if (voiceId === "") return null;
+  return (
+    <span className="active-filter-chip">
+      <span>Exact voice</span>
+      <strong className="mono">{voiceId}</strong>
+    </span>
   );
 }
 
@@ -183,28 +197,27 @@ export function TransitionBrowser({ active }: { active: boolean }) {
   );
 }
 
-export function SoundSlot({ slotId, symbols, groups }: {
-  slotId: number;
-  symbols: string[];
-  groups: string[];
-}) {
-  return (
-    <div className="definition-name">
-      <strong>{symbols[0]?.replaceAll("_", " ") ?? `Slot ${slotId}`}</strong>
-      <span className="mono">ID {slotId}{symbols.length > 1 ? ` · ${symbols.slice(1).join(", ")}` : ""}</span>
-      {groups.length > 0 && (
-        <span>SPEECH · {groups.map((group) => group.replaceAll("_", " ")).join(", ")}</span>
-      )}
-    </div>
-  );
-}
-
-function ExpandableText({ value, unresolved }: { value: string | null; unresolved: string }) {
-  if (value == null) return <span className="muted">{unresolved}</span>;
+export function StarterPrompt({ value }: { value: string }) {
   return (
     <details className="table-text-details">
       <summary>{value}</summary>
       <p>{value}</p>
+    </details>
+  );
+}
+
+export function ResourceList({ count, values, noun }: {
+  count: number;
+  values: string[];
+  noun: string;
+}) {
+  if (count === 0) return <span className="muted">None</span>;
+  return (
+    <details className="resource-list">
+      <summary>{formatCount(count)} {noun}</summary>
+      <div className="definition-tags">
+        {values.map((value) => <span className="mono" key={value}>{value}</span>)}
+      </div>
     </details>
   );
 }

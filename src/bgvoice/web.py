@@ -36,7 +36,6 @@ from bgvoice.database import (
     CampaignDefinitionRecord,
     CampaignResourceBindingRecord,
     CharacterRecord,
-    CharacterSoundRecord,
     ClassTextRecord,
     DialogueLineRecord,
     DialogueRecord,
@@ -46,7 +45,7 @@ from bgvoice.database import (
     IdentifierDefinitionRecord,
     KitDefinitionRecord,
     RaceTextRecord,
-    SoundSlotGroupRecord,
+    VoiceResourceRecord,
 )
 from bgvoice.models import (
     AttributionStatus,
@@ -96,7 +95,13 @@ type RaceSort = Literal["race_id", "row_name", "name", "source_resource"]
 type ClassSort = Literal["class_id", "row_name", "lower_name", "fallen"]
 type KitSort = Literal["row_id", "row_name", "lower_name", "class_id"]
 type IdentifierSort = Literal["kind", "value", "source_resource"]
-type VoiceSort = Literal["character_resource_name", "slot_id", "strref", "serialized_size"]
+type VoiceSort = Literal[
+    "display_name",
+    "variant_count",
+    "dialogue_count",
+    "npc_line_count",
+    "serialized_size",
+]
 type TransitionSort = Literal[
     "location",
     "dialogue_resource_name",
@@ -199,7 +204,8 @@ class IdentifierQuery(PageQuery):
 
 class VoiceQuery(PageQuery):
     q: str | None = Field(default=None, max_length=300)
-    slot_id: int | None = Field(default=None, ge=0, le=0xFF)
+    voice_id: str | None = Field(default=None, min_length=1, max_length=300)
+    has_dialogue: bool | None = None
     sort: VoiceSort | None = None
     direction: SortDirection = "desc"
 
@@ -214,6 +220,7 @@ class TransitionQuery(PageQuery):
 class CharacterRow(ApiModel):
     resource_name: str
     display_name: str | None
+    voice_id: str | None
     resref: str
     source_kind: SourceKind
     dialog_resref: str | None
@@ -322,14 +329,14 @@ class DialogueLinePage(ApiModel):
 
 
 class VoiceRow(ApiModel):
-    key: str
-    character_resource_name: str
-    character_name: str | None
-    slot_id: int
-    slot_symbols: list[str]
-    slot_groups: list[str]
-    strref: int
-    text: str | None
+    id: str
+    display_name: str
+    prompt: str
+    variant_resource_names: list[str]
+    dialogue_resrefs: list[str]
+    variant_count: int
+    dialogue_count: int
+    npc_line_count: int
     serialized_size: int
 
 
@@ -496,7 +503,6 @@ class FilterOptions(ApiModel):
     race_ids: list[FacetValue]
     class_ids: list[FacetValue]
     metadata_class_ids: list[FacetValue]
-    sound_slot_ids: list[FacetValue]
     campaigns: list[str]
     identifier_kinds: list[SimpleIdentifierKind]
 
@@ -531,6 +537,7 @@ class PipelineStats(ApiModel):
     dialogues_complete: int = Field(ge=0)
     dialogue_lines: int = Field(ge=0)
     line_records_total: int = Field(ge=0)
+    voices_total: int = Field(ge=0)
     character_sounds_total: int = Field(ge=0)
     soundset_lines_total: int = Field(ge=0)
     transition_edges_total: int = Field(ge=0)
@@ -556,6 +563,7 @@ class PipelineStats(ApiModel):
 class CharacterDetailPayload(ApiModel):
     resource_name: str
     display_name: str
+    voice_id: str
     short_name: str | None
     short_name_strref: int
     long_name: str | None
@@ -651,15 +659,6 @@ class _CharacterFacets(_Projection):
     class_id: int | None
 
 
-class _CharacterName(_Projection):
-    resource_name: str
-    display_name: str | None
-
-
-class _SoundSlotFacet(_Projection):
-    slot_id: int
-
-
 class _CharacterSearchResult(CharacterRecord):
     score: float = Field(alias="_score")
 
@@ -672,19 +671,7 @@ class _LineSearchResult(DialogueLineRecord):
     score: float = Field(alias="_score")
 
 
-class _VoiceSearchResult(CharacterSoundRecord):
-    score: float = Field(alias="_score")
-
-
-class _VoiceCandidate(_Projection):
-    id: str
-    character_resource_name: str
-    slot_id: int
-    strref: int
-    serialized_size: int
-
-
-class _VoiceSearchCandidate(_VoiceCandidate):
+class _VoiceSearchResult(VoiceResourceRecord):
     score: float = Field(alias="_score")
 
 
@@ -721,7 +708,6 @@ class _MetadataSnapshot:
     class_texts: list[ClassTextRecord]
     kits: list[KitDefinitionRecord]
     favored_enemies: list[FavoredEnemyRecord]
-    sound_slot_groups: list[SoundSlotGroupRecord]
 
 
 @dataclass(frozen=True, slots=True)
@@ -732,6 +718,7 @@ class PipelineReader:
     _connection: AsyncConnection
     characters_table: AsyncTable
     character_sounds_table: AsyncTable
+    voices_table: AsyncTable
     dialogues_table: AsyncTable
     lines_table: AsyncTable
     transitions_table: AsyncTable
@@ -795,6 +782,7 @@ class PipelineReader:
             connection,
             tables["characters"],
             tables["character_sounds"],
+            tables["voice_resources"],
             tables["dialogues"],
             tables["dialogue_lines"],
             tables["dialogue_transitions"],
@@ -830,7 +818,6 @@ class PipelineReader:
             self.class_texts_table.query().to_pydantic(ClassTextRecord),
             self.kits_table.query().to_pydantic(KitDefinitionRecord),
             self.favored_enemies_table.query().to_pydantic(FavoredEnemyRecord),
-            self.sound_slot_groups_table.query().to_pydantic(SoundSlotGroupRecord),
         )
         return _MetadataSnapshot(
             identifiers=cast(list[IdentifierDefinitionRecord], rows[0]),
@@ -840,7 +827,6 @@ class PipelineReader:
             class_texts=cast(list[ClassTextRecord], rows[4]),
             kits=cast(list[KitDefinitionRecord], rows[5]),
             favored_enemies=cast(list[FavoredEnemyRecord], rows[6]),
-            sound_slot_groups=cast(list[SoundSlotGroupRecord], rows[7]),
         )
 
     async def stats(self) -> PipelineStats:
@@ -870,6 +856,7 @@ class PipelineReader:
             self._metadata_snapshot(),
         )
         (
+            voices_total,
             character_sounds_total,
             soundset_lines_total,
             transition_edges_total,
@@ -881,6 +868,7 @@ class PipelineReader:
             happiness_rules_total,
             banter_timing_settings_total,
         ) = await asyncio.gather(
+            self.voices_table.count_rows(),
             self.character_sounds_table.count_rows(),
             self.soundset_lines_table.count_rows(),
             self.transitions_table.count_rows(),
@@ -937,6 +925,7 @@ class PipelineReader:
             dialogues_complete=sum(row.detail_status is DetailStatus.COMPLETE for row in dialogues),
             dialogue_lines=sum(row.dialogue_line_count or 0 for row in dialogues),
             line_records_total=line_records_total,
+            voices_total=voices_total,
             character_sounds_total=character_sounds_total,
             soundset_lines_total=soundset_lines_total,
             transition_edges_total=transition_edges_total,
@@ -969,17 +958,13 @@ class PipelineReader:
         )
 
     async def filter_options(self) -> FilterOptions:
-        character_rows, sound_rows, metadata = await asyncio.gather(
+        character_rows, metadata = await asyncio.gather(
             self.characters_table.query()
             .select(list(_CharacterFacets.model_fields))
             .to_pydantic(_CharacterFacets),
-            self.character_sounds_table.query()
-            .select(list(_SoundSlotFacet.model_fields))
-            .to_pydantic(_SoundSlotFacet),
             self._metadata_snapshot(),
         )
         characters = cast(list[_CharacterFacets], character_rows)
-        sounds = cast(list[_SoundSlotFacet], sound_rows)
         labels = _LabelResolver.from_snapshot(metadata)
         metadata_class_ids = [
             row.value for row in metadata.identifiers if row.kind is IdentifierKind.CLASS
@@ -999,10 +984,6 @@ class PipelineReader:
                 labels.class_labels,
             ),
             metadata_class_ids=_integer_facets(metadata_class_ids, labels.class_labels),
-            sound_slot_ids=_integer_facets(
-                (row.slot_id for row in sounds),
-                labels.identifier_labels(IdentifierKind.SOUND_SLOT),
-            ),
             campaigns=[
                 row.campaign_id for row in sorted(metadata.campaigns, key=lambda row: row.ordinal)
             ],
@@ -1163,67 +1144,32 @@ class PipelineReader:
         )
 
     async def voices(self, query: VoiceQuery) -> VoicePage:
-        predicate = col("slot_id") == lit(query.slot_id) if query.slot_id is not None else None
+        conditions: list[Expr] = []
+        if query.voice_id is not None:
+            conditions.append(col("id") == lit(query.voice_id))
+        if query.has_dialogue is not None:
+            conditions.append(
+                col("dialogue_count") > lit(0)
+                if query.has_dialogue
+                else col("dialogue_count") == lit(0)
+            )
+        predicate = _combine(conditions)
         tokens = _search_tokens(query.q)
-        sort = query.sort or ("relevance" if tokens else "serialized_size")
+        sort = query.sort or ("relevance" if tokens else "npc_line_count")
         direction: SortDirection = "desc" if sort == "relevance" else query.direction
-        metadata = await self._metadata_snapshot()
-        page_result = (
-            await _voice_records_page(
-                table=self.character_sounds_table,
-                identifiers_table=self.identifiers_table,
-                groups_table=self.sound_slot_groups_table,
-                predicate=predicate,
-                tokens=tokens,
-                metadata=metadata,
-                sort=sort,
-                direction=direction,
-                page=query,
-            )
-            if tokens
-            else await _records_page(
-                table=self.character_sounds_table,
-                model=CharacterSoundRecord,
-                search_model=_VoiceSearchResult,
-                stable_column="id",
-                predicate=predicate,
-                tokens=(),
-                ordering=_ordering(sort, direction, "id"),
-                page=query,
-            )
+        total, records = await _records_page(
+            table=self.voices_table,
+            model=VoiceResourceRecord,
+            search_model=_VoiceSearchResult,
+            stable_column="id",
+            predicate=predicate,
+            tokens=tokens,
+            ordering=None if sort == "relevance" else _ordering(sort, direction, "id"),
+            page=query,
         )
-        total, records = page_result
-        character_names: dict[str, str | None] = {}
-        if records:
-            names = cast(
-                list[_CharacterName],
-                await self.characters_table.query()
-                .where(
-                    col("resource_name").isin(
-                        [record.character_resource_name for record in records]
-                    )
-                )
-                .select(list(_CharacterName.model_fields))
-                .to_pydantic(_CharacterName),
-            )
-            character_names = {row.resource_name.casefold(): row.display_name for row in names}
-        symbols = _identifier_symbols(metadata.identifiers)
         return VoicePage(
             items=[
-                VoiceRow(
-                    key=record.id,
-                    character_resource_name=record.character_resource_name,
-                    character_name=character_names.get(record.character_resource_name.casefold()),
-                    slot_id=record.slot_id,
-                    slot_symbols=list(symbols.get((IdentifierKind.SOUND_SLOT, record.slot_id), ())),
-                    slot_groups=_sound_slot_group_names(
-                        metadata.sound_slot_groups,
-                        record.slot_id,
-                    ),
-                    strref=record.strref,
-                    text=record.text,
-                    serialized_size=record.serialized_size,
-                )
+                VoiceRow.model_validate(record.model_dump(include=set(VoiceRow.model_fields)))
                 for record in records
             ],
             page=query.page,
@@ -2000,19 +1946,6 @@ def _identifier_symbols(
     return {key: tuple(aliases) for key, aliases in values.items()}
 
 
-def _sound_slot_group_names(
-    groups: Sequence[SoundSlotGroupRecord],
-    slot_id: int,
-) -> list[str]:
-    return [
-        group.row_name
-        for group in sorted(groups, key=lambda group: (group.ordinal, group.key))
-        if group.offset is not None
-        and group.count is not None
-        and group.offset <= slot_id < group.offset + group.count
-    ]
-
-
 def _campaigns_by_resource(
     metadata: _MetadataSnapshot,
     kind: CampaignResourceKind,
@@ -2143,101 +2076,6 @@ def _metadata_order[Row: _Keyed](
 def _page_items[Row](rows: Sequence[Row], query: PageQuery) -> list[Row]:
     offset = _page_offset(query)
     return list(rows[offset : offset + query.page_size])
-
-
-async def _voice_records_page(
-    *,
-    table: AsyncTable,
-    identifiers_table: AsyncTable,
-    groups_table: AsyncTable,
-    predicate: Expr | None,
-    tokens: tuple[str, ...],
-    metadata: _MetadataSnapshot,
-    sort: VoiceSort | Literal["relevance"],
-    direction: SortDirection,
-    page: PageQuery,
-) -> tuple[int, list[CharacterSoundRecord]]:
-    """Merge voice-text BM25 matches with typed sound-slot metadata matches."""
-    assert tokens
-    candidate_columns = list(_VoiceCandidate.model_fields)
-    row_count = await table.count_rows()
-    sound_query = table.query().nearest_to_text(_fts_query(tokens))
-    if predicate is not None:
-        sound_query = sound_query.where(predicate)
-
-    sound_rows, identifier_scores, group_scores = await asyncio.gather(
-        sound_query.limit(max(1, row_count))
-        .select([*candidate_columns, "_score"])
-        .to_pydantic(_VoiceSearchCandidate),
-        _fts_scores(
-            table=identifiers_table,
-            tokens=tokens,
-            predicate=col("kind") == lit(IdentifierKind.SOUND_SLOT.value),
-        ),
-        _fts_scores(
-            table=groups_table,
-            tokens=tokens,
-        ),
-    )
-    sounds = cast(list[_VoiceSearchCandidate], sound_rows)
-
-    slot_scores: dict[int, float] = {}
-    for row in metadata.identifiers:
-        if row.kind is IdentifierKind.SOUND_SLOT and row.key in identifier_scores:
-            slot_scores[row.value] = max(
-                slot_scores.get(row.value, float("-inf")),
-                identifier_scores[row.key],
-            )
-    for group in metadata.sound_slot_groups:
-        if group.key not in group_scores or group.offset is None or group.count is None:
-            continue
-        for slot_id in range(group.offset, min(0x100, group.offset + group.count)):
-            slot_scores[slot_id] = max(
-                slot_scores.get(slot_id, float("-inf")),
-                group_scores[group.key],
-            )
-
-    metadata_rows: list[_VoiceCandidate] = []
-    if slot_scores:
-        metadata_predicate = col("slot_id").isin(list(slot_scores))
-        if predicate is not None:
-            metadata_predicate = metadata_predicate.and_(predicate)
-        metadata_rows = cast(
-            list[_VoiceCandidate],
-            await table.query()
-            .where(metadata_predicate)
-            .select(candidate_columns)
-            .to_pydantic(_VoiceCandidate),
-        )
-
-    candidates: dict[str, _VoiceCandidate] = {row.id: row for row in sounds}
-    scores = {row.id: row.score for row in sounds}
-    for row in metadata_rows:
-        candidates.setdefault(row.id, row)
-        scores[row.id] = max(
-            scores.get(row.id, float("-inf")),
-            slot_scores[row.slot_id],
-        )
-
-    ordered = sorted(candidates.values(), key=lambda row: row.id)
-    if sort == "relevance":
-        ordered.sort(key=lambda row: scores[row.id], reverse=True)
-    else:
-        ordered.sort(key=attrgetter(sort), reverse=direction == "desc")
-
-    page_ids = [row.id for row in _page_items(ordered, page)]
-    if not page_ids:
-        return len(ordered), []
-    unordered_records = cast(
-        list[CharacterSoundRecord],
-        await table.query()
-        .where(col("id").isin(page_ids))
-        .limit(len(page_ids))
-        .to_pydantic(CharacterSoundRecord),
-    )
-    records_by_id = {record.id: record for record in unordered_records}
-    assert records_by_id.keys() == set(page_ids)
-    return len(ordered), [records_by_id[record_id] for record_id in page_ids]
 
 
 async def _records_page[Record: LanceModel](

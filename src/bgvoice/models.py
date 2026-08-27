@@ -83,6 +83,7 @@ KitIdsValue = NewType("KitIdsValue", int)
 ClassTextKitId = NewType("ClassTextKitId", int)
 KitListRowId = NewType("KitListRowId", int)
 SoundSlotId = NewType("SoundSlotId", int)
+VoiceId = NewType("VoiceId", str)
 
 type RaceIdField = Annotated[RaceId, Field(ge=0, le=0xFF)]
 type ClassIdField = Annotated[ClassId, Field(ge=0, le=0xFF)]
@@ -107,6 +108,22 @@ _DIALOGUE_TOKEN: re.Pattern[str] = re.compile(r"<([A-Za-z][A-Za-z0-9_]*)>")
 def compose_search_text(*values: str | None) -> str:
     """Join populated searchable values into one FTS document."""
     return " ".join(value for value in values if value)
+
+
+def proposed_voice_id(
+    death_variable: str | None,
+    dialog_resref: str | None,
+    name_strref: int | None,
+    resref: str,
+) -> VoiceId:
+    """Return the first-pass speaker identity available from one CRE alone."""
+    death_variable = (death_variable or "").strip()
+    if death_variable and death_variable.casefold() != "none":
+        return VoiceId(f"dv:{death_variable.casefold()}")
+    dialog_resref = (dialog_resref or "none").strip() or "none"
+    if name_strref is not None:
+        return VoiceId(f"dlg:{dialog_resref.casefold()}:name:{name_strref}")
+    return VoiceId(f"dlg:{dialog_resref.casefold()}:cre:{resref.casefold()}")
 
 
 class StrictModel(BaseModel):
@@ -454,6 +471,20 @@ class CharacterDetail(StrictModel):
     cre_version: str
 
     @property
+    def proposed_voice_id(self) -> VoiceId:
+        """Return this CRE's speaker identity before cross-CRE disambiguation."""
+        return proposed_voice_id(
+            self.death_variable,
+            self.dialog_resref,
+            self.short_name_strref
+            if self.short_name is not None
+            else self.long_name_strref
+            if self.long_name is not None
+            else None,
+            self.resref,
+        )
+
+    @property
     def search_text(self) -> str:
         return compose_search_text(
             self.resource_name,
@@ -527,6 +558,39 @@ class CharacterDetail(StrictModel):
             ],
             cre_version=dump.version,
         )
+
+
+class VoiceResource(StrictModel):
+    """One speaker voice shared by one or more concrete CRE variants."""
+
+    id: VoiceId
+    display_name: str = Field(min_length=1)
+    prompt: str = Field(min_length=1)
+    variant_resource_names: list[Annotated[str, Field(min_length=1)]] = Field(min_length=1)
+    dialogue_resrefs: list[ResRef]
+    npc_line_count: int = Field(ge=0)
+
+    @property
+    def variant_count(self) -> int:
+        return len(self.variant_resource_names)
+
+    @property
+    def dialogue_count(self) -> int:
+        return len(self.dialogue_resrefs)
+
+    @property
+    def search_text(self) -> str:
+        return compose_search_text(
+            self.id,
+            self.display_name,
+            self.prompt,
+            *self.variant_resource_names,
+            *self.dialogue_resrefs,
+        )
+
+    @property
+    def pydantic_json_size(self) -> int:
+        return len(self.model_dump_json().encode("utf-8"))
 
 
 class IdentifierDefinition(StrictModel):

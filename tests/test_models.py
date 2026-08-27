@@ -38,6 +38,8 @@ from bgvoice.models import (
     SoundSlotSuffix,
     SourceKind,
     StringReference,
+    VoiceId,
+    VoiceResource,
     class_text_kit_id_from_kit_ids,
     clean_display_name,
     cre_kit_value_from_bytes,
@@ -53,6 +55,7 @@ def test_character_detail_projects_voice_fields() -> None:
     assert detail.short_name == "^0xFF8B7D6DAerie^-"
     assert detail.death_variable == "Aerie"
     assert detail.dialog_resref == "AERIE"
+    assert detail.proposed_voice_id == "dv:aerie"
     assert (detail.gender_id, detail.class_id) == (2, 14)
     assert (detail.animation_id, detail.racial_enemy_id) == (0x6202, 255)
     assert detail.class_levels.model_dump() == {
@@ -95,6 +98,73 @@ def test_character_detail_falls_back_to_resref() -> None:
     assert detail.short_name is None
     assert detail.long_name is None
     assert detail.dialog_resref is None
+    assert detail.proposed_voice_id == "dv:aerie"
+
+
+def test_character_voice_identity_uses_long_name_then_cre_resref() -> None:
+    long_name = CharacterDetail.from_dump(
+        make_resource("RHian.CRE"),
+        make_dump(
+            "RHian.CRE",
+            short_name=None,
+            long_name="Rhian",
+            death_variable="NONE",
+            dialog="0",
+        ),
+    )
+    unnamed = CharacterDetail.from_dump(
+        make_resource("EMPTY.CRE"),
+        make_dump(
+            "EMPTY.CRE",
+            short_name=None,
+            long_name=None,
+            death_variable="NONE",
+            dialog=None,
+        ),
+    )
+
+    assert long_name.proposed_voice_id == "dlg:0:name:101"
+    assert unnamed.proposed_voice_id == "dlg:none:cre:empty"
+
+
+@pytest.mark.parametrize(
+    ("death_variable", "dialog", "expected"),
+    [
+        ("HEXXAT", "HEXXAT", "dv:hexxat"),
+        ("heXXat", "HEXXA25A", "dv:hexxat"),
+        ("None", "HEXXAT", "dlg:hexxat:name:100"),
+        ("NONE", "0", "dlg:0:name:100"),
+        ("", None, "dlg:none:name:100"),
+    ],
+)
+def test_character_voice_identity_is_stable_for_every_complete_cre(
+    death_variable: str,
+    dialog: str | None,
+    expected: str,
+) -> None:
+    detail = CharacterDetail.from_dump(
+        make_resource(),
+        make_dump(death_variable=death_variable, dialog=dialog),
+    )
+
+    assert detail.proposed_voice_id == expected
+
+
+def test_voice_resource_owns_members_dialogues_and_derived_fields() -> None:
+    voice = VoiceResource(
+        id=VoiceId("dv:hexxat"),
+        display_name="Hexxat",
+        prompt="Name: Hexxat\nGender: Female",
+        variant_resource_names=["OHHEX8.CRE", "OHHEX25.CRE"],
+        dialogue_resrefs=["HEXXAT", "HEXXA25A"],
+        npc_line_count=202,
+    )
+
+    assert (voice.variant_count, voice.dialogue_count) == (2, 2)
+    assert voice.pydantic_json_size == len(voice.model_dump_json().encode("utf-8"))
+    assert voice.search_text == (
+        "dv:hexxat Hexxat Name: Hexxat\nGender: Female OHHEX8.CRE OHHEX25.CRE HEXXAT HEXXA25A"
+    )
 
 
 def test_clean_display_name_handles_empty_values() -> None:

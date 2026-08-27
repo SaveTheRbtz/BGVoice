@@ -47,12 +47,16 @@ from bgvoice.models import (
     RunStatus,
     SourceKind,
     TerminalRunStatus,
+    VoiceId,
+    VoiceResource,
     compose_search_text,
+    proposed_voice_id,
     utc_now,
 )
 
 _CHARACTERS = "characters"
 _CHARACTER_SOUNDS = "character_sounds"
+_VOICE_RESOURCES = "voice_resources"
 _DIALOGUES = "dialogues"
 _DIALOGUE_LINES = "dialogue_lines"
 _DIALOGUE_TRANSITIONS = "dialogue_transitions"
@@ -97,6 +101,7 @@ TABLE_NAMES = frozenset(
     {
         _CHARACTERS,
         _CHARACTER_SOUNDS,
+        _VOICE_RESOURCES,
         _DIALOGUES,
         _DIALOGUE_LINES,
         _DIALOGUE_TRANSITIONS,
@@ -127,6 +132,7 @@ class IndexSpec:
 TABLE_INDEXES: dict[str, tuple[IndexSpec, ...]] = {
     _CHARACTERS: (
         IndexSpec("resource_name", BTree(), "characters_resource_name_btree"),
+        IndexSpec("voice_id", BTree(), "characters_voice_id_btree"),
         IndexSpec("search_text", _FTS, "characters_search_fts"),
     ),
     _CHARACTER_SOUNDS: (
@@ -138,6 +144,10 @@ TABLE_INDEXES: dict[str, tuple[IndexSpec, ...]] = {
         ),
         IndexSpec("slot_id", BTree(), "character_sounds_slot_btree"),
         IndexSpec("search_text", _FTS, "character_sounds_search_fts"),
+    ),
+    _VOICE_RESOURCES: (
+        IndexSpec("id", BTree(), "voice_resources_id_btree"),
+        IndexSpec("search_text", _FTS, "voice_resources_search_fts"),
     ),
     _DIALOGUES: (
         IndexSpec("resource_name", BTree(), "dialogues_resource_name_btree"),
@@ -343,6 +353,7 @@ class CharacterRecord(_Record):
     small_portrait: str | None = None
     large_portrait: str | None = None
     cre_version: str | None = None
+    voice_id: str | None = None
 
     serialized_size: int | None = Field(default=None, ge=0)
     detail_status: DetailStatus = Field(strict=False)
@@ -402,11 +413,14 @@ class CharacterRecord(_Record):
                 self.morale_recovery_time,
                 self.reputation,
                 self.cre_version,
+                self.voice_id,
                 self.serialized_size,
             )
             assert all(value is not None for value in required), (
                 "complete character record is missing required CRE detail"
             )
+        else:
+            assert self.voice_id is None, "pending and failed characters cannot have a voice"
         assert self.has_dialog == (
             self.detail_status is DetailStatus.COMPLETE and self.dialog_resref is not None
         ), "has_dialog disagrees with the extracted CRE detail"
@@ -444,6 +458,31 @@ class CharacterSoundRecord(_Record):
     def validate_id(self) -> Self:
         expected = CharacterSound.id_for(self.character_resource_name, self.slot_id)
         assert self.id == expected, f"character sound id must be {expected!r}"
+        return self
+
+
+class VoiceResourceRecord(_Record):
+    """One persisted voice and its complete CRE/DLG membership."""
+
+    id: str = Field(min_length=1)
+    display_name: str = Field(min_length=1)
+    prompt: str = Field(min_length=1)
+    variant_resource_names: list[str]
+    dialogue_resrefs: list[str]
+    variant_count: int = Field(gt=0)
+    dialogue_count: int = Field(ge=0)
+    npc_line_count: int = Field(ge=0)
+    serialized_size: int = Field(ge=0)
+    search_text: str
+
+    @model_validator(mode="after")
+    def validate_counts(self) -> Self:
+        assert self.variant_count == len(self.variant_resource_names), (
+            "voice variant count must equal its CRE member count"
+        )
+        assert self.dialogue_count == len(self.dialogue_resrefs), (
+            "voice dialogue count must equal its direct DLG count"
+        )
         return self
 
 
@@ -832,6 +871,7 @@ class KitDefinitionRecord(_KeyedRecord):
 TABLE_MODELS: dict[str, type[LanceModel]] = {
     _CHARACTERS: CharacterRecord,
     _CHARACTER_SOUNDS: CharacterSoundRecord,
+    _VOICE_RESOURCES: VoiceResourceRecord,
     _DIALOGUES: DialogueRecord,
     _DIALOGUE_LINES: DialogueLineRecord,
     _DIALOGUE_TRANSITIONS: DialogueTransitionRecord,
@@ -1321,6 +1361,7 @@ class PipelineDatabase:
         lines = self._records(_DIALOGUE_LINES, DialogueLineRecord)
         transitions = self._records(_DIALOGUE_TRANSITIONS, DialogueTransitionRecord)
         links = self._records(_CHARACTER_RESOURCE_LINKS, CharacterResourceLinkRecord)
+        identifiers = self._records(_IDENTIFIER_DEFINITIONS, IdentifierDefinitionRecord)
         self._assert_dialogue_lines(dialogues, lines)
         self._assert_dialogue_transitions(dialogues, transitions)
         dialogues_by_resref = {dialogue.resref.casefold(): dialogue for dialogue in dialogues}
@@ -1355,13 +1396,22 @@ class PipelineDatabase:
             )
             for dialogue in dialogues
         ]
-        character_updates = [
-            _attributed_character(
-                character,
-                *character_dialogues[character.resource_name.casefold()],
-                timestamp,
+        voice_ids = _voice_ids(characters)
+        character_updates: list[CharacterRecord] = []
+        for character in characters:
+            declared, resolved = character_dialogues[character.resource_name.casefold()]
+            character_updates.append(
+                _attributed_character(
+                    character,
+                    declared,
+                    resolved,
+                    voice_ids.get(character.resource_name.casefold()),
+                    timestamp,
+                )
             )
-            for character in characters
+        voice_records = [
+            _voice_resource_record(resource)
+            for resource in _voice_resources(character_updates, dialogues, identifiers)
         ]
         line_updates = [
             DialogueLineRecord.model_validate(
@@ -1415,8 +1465,10 @@ class PipelineDatabase:
             )
         self._merge(_DIALOGUES, "resource_name", dialogue_updates)
         self._merge(_DIALOGUE_LINES, "id", line_updates)
+        self._replace(_VOICE_RESOURCES, "id", VoiceResourceRecord, voice_records)
         self._optimize(_DIALOGUES, self._table(_DIALOGUES))
         self._optimize(_DIALOGUE_LINES, self._table(_DIALOGUE_LINES))
+        self._optimize(_VOICE_RESOURCES, self._table(_VOICE_RESOURCES))
         self._merge(_CHARACTERS, "resource_name", character_updates)
         self._optimize(_CHARACTERS, self._table(_CHARACTERS))
         return summary
@@ -1583,6 +1635,7 @@ class PipelineDatabase:
                     for line in lines
                 ],
             )
+        self._replace(_VOICE_RESOURCES, "id", VoiceResourceRecord, [])
 
     def _merge[Record: LanceModel](
         self,
@@ -1811,6 +1864,7 @@ def _completed_character(
         small_portrait=detail.small_portrait,
         large_portrait=detail.large_portrait,
         cre_version=detail.cre_version,
+        voice_id=str(detail.proposed_voice_id),
         serialized_size=serialized_size,
         detail_status=DetailStatus.COMPLETE,
         detail_error=None,
@@ -2030,6 +2084,181 @@ def _character_sound_record(
     )
 
 
+def _voice_resources(
+    characters: Sequence[CharacterRecord],
+    dialogues: Sequence[DialogueRecord],
+    identifiers: Sequence[IdentifierDefinitionRecord],
+) -> list[VoiceResource]:
+    members_by_voice: dict[str, list[CharacterRecord]] = {}
+    for character in characters:
+        if character.detail_status is DetailStatus.COMPLETE:
+            assert character.voice_id is not None
+            members_by_voice.setdefault(character.voice_id, []).append(character)
+
+    dialogues_by_resref = {dialogue.resref.casefold(): dialogue for dialogue in dialogues}
+    labels = {
+        (definition.kind, definition.value): " / ".join(
+            _prettify_symbol(symbol) for symbol in definition.symbols
+        )
+        for definition in identifiers
+    }
+    resources: list[VoiceResource] = []
+    for voice_id, unsorted_members in sorted(members_by_voice.items()):
+        members = sorted(unsorted_members, key=lambda member: member.resource_name.casefold())
+        representative = _voice_representative(members)
+        assert representative.display_name is not None
+
+        direct_dialogues = {
+            dialogue.resref.casefold(): dialogue
+            for member in members
+            if member.dialog_resref is not None
+            and (dialogue := dialogues_by_resref.get(member.dialog_resref.casefold())) is not None
+        }
+        resolved_dialogues = sorted(
+            direct_dialogues.values(),
+            key=lambda dialogue: dialogue.resref.casefold(),
+        )
+        resources.append(
+            VoiceResource(
+                id=VoiceId(voice_id),
+                display_name=representative.display_name,
+                prompt=_voice_prompt(representative, labels),
+                variant_resource_names=[member.resource_name for member in members],
+                dialogue_resrefs=[dialogue.resref for dialogue in resolved_dialogues],
+                npc_line_count=sum(dialogue.npc_line_count or 0 for dialogue in resolved_dialogues),
+            )
+        )
+    return resources
+
+
+def _voice_ids(characters: Sequence[CharacterRecord]) -> dict[str, str]:
+    """Resolve false collisions where one script variable names several speakers."""
+    groups: dict[VoiceId, list[CharacterRecord]] = {}
+    for character in characters:
+        if character.detail_status is not DetailStatus.COMPLETE:
+            continue
+        voice_id = proposed_voice_id(
+            character.death_variable,
+            character.dialog_resref,
+            _character_name_strref(character),
+            character.resref,
+        )
+        groups.setdefault(voice_id, []).append(character)
+
+    resolved: dict[str, str] = {}
+    for voice_id, members in groups.items():
+        named_members: dict[str, list[CharacterRecord]] = {}
+        unnamed_members: list[CharacterRecord] = []
+        for character in members:
+            if _character_name_strref(character) is None:
+                unnamed_members.append(character)
+            else:
+                assert character.display_name is not None
+                named_members.setdefault(character.display_name.casefold(), []).append(character)
+
+        if not str(voice_id).startswith("dv:") or len(named_members) <= 1:
+            for character in members:
+                resolved[character.resource_name.casefold()] = str(voice_id)
+            continue
+
+        for same_name_members in named_members.values():
+            strrefs = Counter(
+                name_strref
+                for character in same_name_members
+                if (name_strref := _character_name_strref(character)) is not None
+            )
+            canonical_strref = min(strrefs, key=lambda value: (-strrefs[value], value))
+            for character in same_name_members:
+                resolved[character.resource_name.casefold()] = f"{voice_id}:name:{canonical_strref}"
+        for character in unnamed_members:
+            resolved[character.resource_name.casefold()] = (
+                f"{voice_id}:cre:{character.resref.casefold()}"
+            )
+    return resolved
+
+
+def _character_name_strref(character: CharacterRecord) -> int | None:
+    if character.short_name is not None:
+        return character.short_name_strref
+    if character.long_name is not None:
+        return character.long_name_strref
+    return None
+
+
+def _voice_representative(members: Sequence[CharacterRecord]) -> CharacterRecord:
+    """Choose one real CRE for both the canonical name and prompt metadata."""
+    metadata_counts = Counter(
+        (
+            character.gender_id,
+            character.race_id,
+            character.class_id,
+            character.kit_ids_value,
+            character.alignment_id,
+        )
+        for character in members
+    )
+    return min(
+        members,
+        key=lambda character: (
+            character.short_name is None and character.long_name is None,
+            -metadata_counts[
+                (
+                    character.gender_id,
+                    character.race_id,
+                    character.class_id,
+                    character.kit_ids_value,
+                    character.alignment_id,
+                )
+            ],
+            character.resource_name.casefold(),
+            character.resource_name,
+        ),
+    )
+
+
+def _voice_prompt(
+    character: CharacterRecord,
+    labels: dict[tuple[IdentifierKind, int], str],
+) -> str:
+    assert character.display_name is not None
+    assert character.gender_id is not None
+    assert character.race_id is not None
+    assert character.class_id is not None
+    assert character.alignment_id is not None
+    lines = [
+        f"Name: {character.display_name}",
+        f"Gender: {labels.get((IdentifierKind.GENDER, character.gender_id), str(character.gender_id))}",
+        f"Race: {labels.get((IdentifierKind.RACE, character.race_id), str(character.race_id))}",
+        f"Class: {labels.get((IdentifierKind.CLASS, character.class_id), str(character.class_id))}",
+    ]
+    kit_id = character.kit_ids_value
+    if kit_id not in (None, 0, 0x4000):
+        lines.append(f"Kit: {labels.get((IdentifierKind.KIT, kit_id), str(kit_id))}")
+    lines.append(
+        f"Alignment: {labels.get((IdentifierKind.ALIGNMENT, character.alignment_id), str(character.alignment_id))}"
+    )
+    return "\n".join(lines)
+
+
+def _prettify_symbol(symbol: str) -> str:
+    return " ".join(part.capitalize() for part in symbol.replace("-", "_").split("_") if part)
+
+
+def _voice_resource_record(resource: VoiceResource) -> VoiceResourceRecord:
+    return VoiceResourceRecord(
+        id=resource.id,
+        display_name=resource.display_name,
+        prompt=resource.prompt,
+        variant_resource_names=resource.variant_resource_names,
+        dialogue_resrefs=resource.dialogue_resrefs,
+        variant_count=resource.variant_count,
+        dialogue_count=resource.dialogue_count,
+        npc_line_count=resource.npc_line_count,
+        serialized_size=resource.pydantic_json_size,
+        search_text=resource.search_text,
+    )
+
+
 def _dialogue_transition_record(
     dialogue: DialogueRecord,
     edge: DialogueTransitionEdge,
@@ -2059,6 +2288,7 @@ def _attributed_character(
     character: CharacterRecord,
     declared_resrefs: tuple[str, ...],
     dialogues: tuple[DialogueRecord, ...],
+    voice_id: str | None,
     timestamp: str,
 ) -> CharacterRecord:
     status: AttributionStatus
@@ -2083,6 +2313,7 @@ def _attributed_character(
             dialogue_status = DetailStatus.COMPLETE
 
     update = {
+        "voice_id": voice_id,
         "attribution_status": status,
         "dialogue_status": dialogue_status,
         "declared_dialogue_count": len(declared_resrefs),

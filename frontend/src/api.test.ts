@@ -55,14 +55,15 @@ describe("metadata API queries", () => {
     });
   });
 
-  it("serializes sound-slot filtering without overriding relevance", () => {
+  it("serializes grouped-voice filtering without overriding relevance", () => {
     const query: VoiceQuery = {
       page: 1,
       page_size: 25,
-      q: "battle cry",
+      q: "aerie",
       sort: "",
       direction: "desc",
-      slot_id: "8",
+      voice_id: "aerie-companion",
+      has_dialogue: "true",
     };
 
     const url = new URL(withQuery("/api/voices", query), "http://bgvoice.test");
@@ -70,9 +71,10 @@ describe("metadata API queries", () => {
     expect(Object.fromEntries(url.searchParams)).toEqual({
       page: "1",
       page_size: "25",
-      q: "battle cry",
+      q: "aerie",
       direction: "desc",
-      slot_id: "8",
+      voice_id: "aerie-companion",
+      has_dialogue: "true",
     });
   });
 

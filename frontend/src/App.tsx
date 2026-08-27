@@ -14,7 +14,6 @@ import {
   FacetFilter,
   Pagination,
   RelevanceButton,
-  ResultCount,
   SearchBox,
   SelectFilter,
   SortHeader,
@@ -141,6 +140,11 @@ export default function App() {
     setDetailState(null);
     setDetailAttempt((current) => current + 1);
   }, []);
+  const openVoice = useCallback((voiceId: string) => {
+    window.history.pushState(null, "", voiceHref(voiceId));
+    window.dispatchEvent(new PopStateEvent("popstate"));
+    setSelected(null);
+  }, []);
   const attributionNote = stats == null
     ? "Loading attribution stage…"
     : stats.attribution_completed_at == null
@@ -245,7 +249,7 @@ export default function App() {
         </section>
 
         <section className="stats-grid" aria-label="Pipeline summary">
-          <Stat label="Characters" value={stats?.characters_total} note={`${formatCount(stats?.characters_complete)} complete`} />
+          <Stat label="CRE variants" value={stats?.characters_total} note={`${formatCount(stats?.characters_complete)} complete`} />
           <Stat label="Matched CREs" value={stats?.characters_matched} note={`${formatCount(stats?.characters_missing_dialogue)} missing references`} />
           <Stat label="Unavailable CREs" value={stats?.characters_unavailable} note={attributionNote} />
           <Stat label="DLG inventory" value={stats?.dialogues_total} note={`${formatCount(stats?.dialogues_complete)} fully decoded`} />
@@ -254,7 +258,7 @@ export default function App() {
         </section>
 
         <section className="support-stats" aria-label="Imported support data">
-          <SupportStat label="CRE voice slots" value={stats?.character_sounds_total} />
+          <SupportStat label="CRE sound lines" value={stats?.character_sounds_total} />
           <SupportStat label="Preset soundset lines" value={stats?.soundset_lines_total} />
           <SupportStat label="Transition edges" value={stats?.transition_edges_total} />
           <SupportStat label="Character / resource links" value={stats?.character_resource_links_total} />
@@ -267,10 +271,10 @@ export default function App() {
         </section>
 
         <nav className="view-tabs" role="tablist" aria-label="Pipeline data views">
-          <Tab active={activeTab === "characters"} count={stats?.characters_total} label="Characters" onClick={() => openTab("characters")} />
+          <Tab active={activeTab === "characters"} count={stats?.characters_total} label="CRE variants" onClick={() => openTab("characters")} />
           <Tab active={activeTab === "dialogues"} count={stats?.dialogues_total} label="Dialogues" onClick={() => openTab("dialogues")} />
           <Tab active={activeTab === "lines"} count={stats?.line_records_total} label="Lines" onClick={() => openTab("lines")} />
-          <Tab active={activeTab === "voices"} count={stats?.character_sounds_total} label="Voices" onClick={() => openTab("voices")} />
+          <Tab active={activeTab === "voices"} count={stats?.voices_total} label="Voices" onClick={() => openTab("voices")} />
           <Tab active={activeTab === "transitions"} count={stats?.transition_edges_total} label="Transitions" onClick={() => openTab("transitions")} />
           <Tab active={activeTab === "races"} count={stats?.races_total} label="Races" onClick={() => openTab("races")} />
           <Tab active={activeTab === "classes"} count={stats?.classes_total} label="Classes" onClick={() => openTab("classes")} />
@@ -283,7 +287,7 @@ export default function App() {
         )}
         {visitedTabs.has("characters") && (
           <div hidden={activeTab !== "characters"}>
-            <CharacterBrowser active={activeTab === "characters"} options={options} onSelect={openDetail} />
+            <CharacterBrowser active={activeTab === "characters"} options={options} onSelect={openDetail} onOpenVoice={openVoice} />
           </div>
         )}
         {visitedTabs.has("dialogues") && (
@@ -298,7 +302,7 @@ export default function App() {
         )}
         {visitedTabs.has("voices") && (
           <div hidden={activeTab !== "voices"}>
-            <VoiceBrowser active={activeTab === "voices"} soundSlots={options?.sound_slot_ids ?? []} />
+            <VoiceBrowser active={activeTab === "voices"} />
           </div>
         )}
         {visitedTabs.has("transitions") && (
@@ -364,6 +368,7 @@ export default function App() {
           error={detailError}
           onClose={closeDetail}
           onRetry={retryDetail}
+          onOpenVoice={openVoice}
         />
       )}
     </div>
@@ -374,10 +379,12 @@ function CharacterBrowser({
   active,
   options,
   onSelect,
+  onOpenVoice,
 }: {
   active: boolean;
   options: FilterOptions | null;
   onSelect: (resourceName: string) => void;
+  onOpenVoice: (voiceId: string) => void;
 }) {
   const browser = useBrowser(
     "characters",
@@ -399,6 +406,14 @@ function CharacterBrowser({
 
   return (
     <section className="browser-card tab-panel">
+      <BrowserHeading
+        eyebrow="EFFECTIVE CRE INVENTORY"
+        title="CRE variants"
+        description="Every effective creature resource, kept separate even when several variants share one canonical voice."
+        loading={loading}
+        count={page.total}
+        noun="CRE variants"
+      />
       {browser.error != null && <ErrorBanner message={browser.error} />}
       <div className="toolbar">
         <SearchBox
@@ -412,7 +427,6 @@ function CharacterBrowser({
           active={query.sort === ""}
           onClick={browser.sortByRelevance}
         />
-        <ResultCount loading={loading} count={page.total} noun="results" />
       </div>
 
       <div className="filters" aria-label="Character filters">
@@ -441,6 +455,7 @@ function CharacterBrowser({
           <thead>
             <tr>
               <SortHeader label="Character" sort="display_name" query={page} onSort={browser.sortBy} />
+              <th>Voice</th>
               <SortHeader label="Resource" sort="resource_name" query={page} onSort={browser.sortBy} />
               <SortHeader label="Source" sort="source_kind" query={page} onSort={browser.sortBy} />
               <th>Gender</th>
@@ -469,6 +484,9 @@ function CharacterBrowser({
                     <strong>{character.display_name ?? character.resref}</strong>
                     <span>Direct CRE DLG · {character.dialog_resref ?? "None"}</span>
                   </button>
+                </td>
+                <td>
+                  <VoiceLink voiceId={character.voice_id} onOpen={onOpenVoice} />
                 </td>
                 <td className="mono">{character.resource_name}</td>
                 <td><span className={`source source-${character.source_kind}`}>{character.source_kind}</span></td>
@@ -506,7 +524,7 @@ function CharacterBrowser({
               </tr>
             ))}
             {!loading && page.items.length === 0 && (
-              <tr><td className="empty-state" colSpan={15}>No characters match these filters.</td></tr>
+              <tr><td className="empty-state" colSpan={16}>No CRE variants match these filters.</td></tr>
             )}
           </tbody>
         </table>
@@ -767,12 +785,13 @@ function Status({ status, secondary }: { status: string; secondary: string | nul
   return <span className={`status-pill status-${combined}`}>{combined}</span>;
 }
 
-function DetailDrawer({ resourceName, detail, error, onClose, onRetry }: {
+function DetailDrawer({ resourceName, detail, error, onClose, onRetry, onOpenVoice }: {
   resourceName: string;
   detail: CharacterDetailResponse | null;
   error: string | null;
   onClose: () => void;
   onRetry: () => void;
+  onOpenVoice: (voiceId: string) => void;
 }) {
   const drawerRef = useRef<HTMLElement>(null);
 
@@ -856,6 +875,10 @@ function DetailDrawer({ resourceName, detail, error, onClose, onRetry }: {
             <section>
               <h3>Overview</h3>
               <dl>
+                <div>
+                  <dt>Canonical voice</dt>
+                  <dd><VoiceLink voiceId={detail.character.voice_id} onOpen={onOpenVoice} /></dd>
+                </div>
                 <Data label="Direct CRE DLG" value={detail.character.dialog_resref ?? "—"} />
                 <Data label="Source" value={detail.source_kind} />
                 <Data label="CRE version" value={detail.character.cre_version} />
@@ -925,6 +948,29 @@ function DetailDrawer({ resourceName, detail, error, onClose, onRetry }: {
 
 function Data({ label, value }: { label: string; value: string | number }) {
   return <div><dt>{label}</dt><dd>{value}</dd></div>;
+}
+
+function voiceHref(voiceId: string): string {
+  return `?${new URLSearchParams({ tab: "voices", voice_id: voiceId })}`;
+}
+
+export function VoiceLink({ voiceId, onOpen }: {
+  voiceId: string | null;
+  onOpen: (voiceId: string) => void;
+}) {
+  if (voiceId == null) return <span className="muted">Unassigned</span>;
+  return (
+    <a
+      className="voice-link mono"
+      href={voiceHref(voiceId)}
+      onClick={(event) => {
+        event.preventDefault();
+        onOpen(voiceId);
+      }}
+    >
+      {voiceId}
+    </a>
+  );
 }
 
 function ResolvedValue({ label, id, secondary = false }: {

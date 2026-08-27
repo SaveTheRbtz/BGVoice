@@ -43,7 +43,14 @@ uv run bgvoice attribute-dialogues
    levels, abilities, morale, reputation, racial enemy, and both raw and normalized kit values.
 4. `attribute-dialogues` combines direct CRE dialogue fields with imported party/banter links, then
    accounts for matched, dangling, and failed character references and every attributed or
-   unattributed dialogue and line.
+   unattributed dialogue and line. It also groups every successfully extracted CRE into a persisted
+   voice resource. A meaningful death variable owns the stable `dv:` identity. If one variable is
+   reused by differently named speakers, their resolved names disambiguate it without splitting
+   same-name variants that use different TLK strrefs. CREs without a useful death variable use the
+   direct dialogue resref plus the resolved short- or long-name strref, then the CRE resref when no
+   name resolves. Each voice retains its CRE variants and distinct direct DLG resources, counts each
+   DLG's NPC states once, and receives a deterministic prompt from one real representative CRE's
+   name, gender, race, class, optional non-trueclass kit, and alignment metadata.
 
 The effective EET `TOKENTXT.2DA` currently has no rows, so there is nothing useful to persist from
 it. Runtime tokens found in DLG text are retained verbatim instead; the engine and calendar tables
