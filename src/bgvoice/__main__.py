@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 from bgvoice.database import PipelineDatabase
 from bgvoice.generation import generate
 from bgvoice.iecli import IeCli
+from bgvoice.mod_export import export_mod
 from bgvoice.model_types import RunStatus
 from bgvoice.pipeline import (
     extract_characters,
@@ -22,6 +23,7 @@ from bgvoice.pipeline import (
 from bgvoice.pipeline_models import ExtractionProgress
 
 _DEFAULT_DATABASE = Path("data/bgvoice.lancedb")
+_DEFAULT_MOD_OUTPUT = Path("data/bgvoice-eet-mod")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -97,6 +99,20 @@ def build_parser() -> argparse.ArgumentParser:
         "--database", type=Path, default=_DEFAULT_DATABASE, help="LanceDB directory"
     )
 
+    export = commands.add_parser(
+        "export-mod",
+        help="build a WeiDU EET mod containing both generated-audio policies",
+    )
+    export.add_argument(
+        "--database", type=Path, default=_DEFAULT_DATABASE, help="LanceDB directory"
+    )
+    export.add_argument(
+        "--output",
+        type=Path,
+        default=_DEFAULT_MOD_OUTPUT,
+        help=f"replaceable mod directory (default: {_DEFAULT_MOD_OUTPUT})",
+    )
+
     web = commands.add_parser("web", help="serve the read-only pipeline browser")
     web.add_argument("--database", type=Path, default=_DEFAULT_DATABASE, help="LanceDB directory")
     web.add_argument("--host", default="127.0.0.1", help="listen address")
@@ -132,6 +148,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 os.environ["INWORLD_API_KEY"],
             )
         )
+        print(summary.model_dump_json(indent=2))
+        return 0
+    if args.command == "export-mod":
+        summary = asyncio.run(export_mod(args.database, args.output))
         print(summary.model_dump_json(indent=2))
         return 0
     return _extract(args)

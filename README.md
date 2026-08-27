@@ -43,6 +43,8 @@ the generated models own the service boundary shared by the Python backend and T
   source data; `record_builders.py` projects it and `attribution.py` groups voices.
 - `generation.py` owns the iterative AI stages, `generation_store.py` persists their final outputs,
   and `inworld.py` is the small typed boundary for voice design and batch synthesis.
+- `mod_export.py` groups generated recordings by exact DLG text and emits the universal WeiDU
+  content-intersection mod.
 - `reader.py` coordinates read-only queries using focused query, metadata, view, statistics, and
   response-model modules. It does not depend on the writer repository.
 - `web_service.py` implements the Connect contract; `web_query.py` owns request semantics and
@@ -104,6 +106,26 @@ maximum Vorbis quality. Published provider IDs, final voice descriptions, direct
 Ogg Vorbis bytes, and durable batch operation names are stored immediately. Prompts, preview
 artifacts, manifests, and expiring signed URLs are not persisted. Re-running the command resumes
 missing work.
+
+Export the game-ready recordings as one installable mod after generation completes:
+
+```powershell
+uv run bgvoice export-mod
+```
+
+The default output is `data/bgvoice-eet-mod`. It contains a renamed WeiDU installer and two
+mutually exclusive components: one fills only empty sound assignments, while the other replaces
+audio on every matched NPC dialogue occurrence. Ogg Vorbis bytes remain in the Enhanced Edition's
+expected `.wav` resource files.
+
+The mod is a content intersection rather than a snapshot patch. It opens every packaged DLG that
+exists in the target game once, scans its current states, and matches the exact resolved English
+text. DLG state numbers and TLK strrefs may differ; missing resources and unmatched text are simply
+skipped. Repeated `(DLG, text)` pairs share one deterministic canonical recording.
+
+Install BGVoice after all desired dialogue/content mods but before `EET_end`. On an existing EET
+installation, uninstall `EET_end`, install BGVoice, and reinstall `EET_end`. This lets EET perform
+its final dialogue merges with BGVoice's sound-bearing TLK references already attached.
 
 The effective EET `TOKENTXT.2DA` currently has no rows, so there is nothing useful to persist from
 it. Runtime tokens found in DLG text are retained verbatim instead; the engine and calendar tables
@@ -195,6 +217,9 @@ pnpm build
 - [`ie-cli`](https://github.com/emm-n-m/ie-cli), using
   [`v0.3.0-rc.1`](https://github.com/emm-n-m/ie-cli/releases/tag/v0.3.0-rc.1)
 - [IESDP file format index](https://gibberlings3.github.io/iesdp/file_formats/index.htm)
+- [WeiDU module and TP2 documentation](https://weidu.org/~thebigg/README-WeiDU.html)
+- [EET installation order](https://github.com/Gibberlings3/EET/blob/master/EET/readme-EET.html)
+- [EET modder's notes](https://github.com/Gibberlings3/EET/blob/master/EET/docs/Modder%27s%20Notes.html)
 - [CRE V1](https://gibberlings3.github.io/iesdp/file_formats/ie_formats/cre_v1.htm)
 - [DLG V1](https://gibberlings3.github.io/iesdp/file_formats/ie_formats/dlg_v1.htm)
 - [RACETEXT.2DA](https://gibberlings3.github.io/iesdp/files/2da/2da_bgee/racetext.htm)
