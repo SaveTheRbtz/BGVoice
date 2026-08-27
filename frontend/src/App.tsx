@@ -734,18 +734,30 @@ function Tab({ active, count, label, onClick }: {
 }
 
 export function LineContext({ tokens, triggerIndex, triggerText }: {
-  tokens: string[];
+  tokens: readonly string[];
   triggerIndex: number | null;
   triggerText: string | null;
 }) {
   if (tokens.length === 0 && triggerIndex == null && triggerText == null) {
     return <span className="muted">—</span>;
   }
+
+  const tokenCounts = new Map<string, number>();
+  for (const token of tokens) {
+    tokenCounts.set(token, (tokenCounts.get(token) ?? 0) + 1);
+  }
+  const context = [...tokenCounts].sort(
+    ([leftName, leftCount], [rightName, rightCount]) =>
+      rightCount - leftCount || leftName.localeCompare(rightName),
+  );
+
   return (
     <div className="line-context">
-      {tokens.length > 0 && (
+      {context.length > 0 && (
         <div className="definition-tags">
-          {tokens.map((token, index) => <span key={`${index}:${token}`}>{token}</span>)}
+          {context.map(([token, count]) => (
+            <span key={token}>{token}{count > 1 && `×${count}`}</span>
+          ))}
         </div>
       )}
       {triggerText != null && (

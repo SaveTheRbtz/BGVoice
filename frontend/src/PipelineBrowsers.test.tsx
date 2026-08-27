@@ -41,6 +41,34 @@ describe("pipeline context labels", () => {
     ).toContain("State trigger 23 · unresolved");
   });
 
+  it("groups line context by descending occurrence count", () => {
+    const html = renderToStaticMarkup(
+      <LineContext
+        tokens={[
+          "PLAYER2",
+          "CHARNAME",
+          "DAY",
+          "PLAYER1",
+          "CHARNAME",
+          "PLAYER2",
+          "CHARNAME",
+          "PLAYER1",
+        ]}
+        triggerIndex={null}
+        triggerText={null}
+      />,
+    );
+
+    expect(html.match(/CHARNAME/g)).toHaveLength(1);
+    expect(html).toContain("CHARNAME×3");
+    expect(html).toContain("PLAYER1×2");
+    expect(html).toContain("PLAYER2×2");
+    expect(html).not.toContain("DAY×1");
+    expect(html.indexOf("CHARNAME")).toBeLessThan(html.indexOf("PLAYER1"));
+    expect(html.indexOf("PLAYER1")).toBeLessThan(html.indexOf("PLAYER2"));
+    expect(html.indexOf("PLAYER2")).toBeLessThan(html.indexOf("DAY"));
+  });
+
   it("deep-links a CRE variant to its canonical voice search", () => {
     const html = renderToStaticMarkup(
       <VoiceLink voiceId="imoen" onOpen={() => undefined} />,
