@@ -48,7 +48,7 @@ from bgvoice.storage_records import (
 
 VOICE_DESIGN_MODEL = "gpt-5.6-sol"
 DIRECTION_MODEL = "gpt-5.6-luna"
-DIRECTION_BATCH_SIZE = 10
+DIRECTION_BATCH_SIZE = 100
 AUDIO_WRITE_BATCH_SIZE = 25
 NARRATOR_VOICE_ID = "narrator"
 
