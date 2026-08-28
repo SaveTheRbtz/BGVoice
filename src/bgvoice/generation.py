@@ -10,6 +10,7 @@ from lancedb.expr import col, lit
 from openai import AsyncOpenAI
 from pydantic import BaseModel, ConfigDict
 
+from bgvoice.dialogue_context import DialogueHistoryIndex, dialogue_history
 from bgvoice.game_audio import encode_game_audio
 from bgvoice.generation_ai import (
     CharacterAbilityScores,
@@ -35,7 +36,6 @@ from bgvoice.storage_records import (
     CharacterRecord,
     DialogueLineRecord,
     DialogueRecord,
-    DialogueTransitionRecord,
     DirectedLineRecord,
     GeneratedAudioRecord,
     GeneratedVoiceRecord,
@@ -48,7 +48,7 @@ from bgvoice.storage_records import (
 
 VOICE_DESIGN_MODEL = "gpt-5.6-sol"
 DIRECTION_MODEL = "gpt-5.6-luna"
-DIRECTION_BATCH_SIZE = 100
+DIRECTION_BATCH_SIZE = 10
 AUDIO_WRITE_BATCH_SIZE = 25
 VOICE_CONCURRENCY = 75
 OPENAI_CONCURRENCY = 100
@@ -83,20 +83,6 @@ class VoiceWorkload:
     lines: tuple[DialogueLineRecord, ...]
     ability_scores: CharacterAbilityScores
     portrait_png: bytes | None
-
-
-@dataclass(frozen=True, slots=True)
-class _DialogueNode:
-    run_id: str
-    resource_name: str
-    state_index: int
-
-
-@dataclass(frozen=True, slots=True)
-class _DialogueContextTurn:
-    node: _DialogueNode
-    npc_text: str
-    player_response: str | None
 
 
 def round_robin_lines(
@@ -296,6 +282,7 @@ async def generate(
     store = await GenerationStore.open(database_path)
     try:
         workloads = await load_workloads(reader, requested_voices, lines_per_voice)
+        history_index = await DialogueHistoryIndex.load(reader)
         async with (
             AsyncOpenAI(api_key=openai_api_key) as openai,
             httpx.AsyncClient(timeout=httpx.Timeout(120)) as http,
@@ -315,9 +302,9 @@ async def generate(
                 )
                 await _direct_workload(
                     openai,
-                    reader,
                     store,
                     workload,
+                    history_index,
                     openai_capacity,
                 )
 
@@ -511,9 +498,9 @@ async def _reuse_existing_voice(
 
 async def _direct_workload(
     openai: AsyncOpenAI,
-    reader: PipelineReader,
     store: GenerationStore,
     workload: VoiceWorkload,
+    history_index: DialogueHistoryIndex,
     openai_capacity: asyncio.Semaphore,
 ) -> None:
     existing = {
@@ -527,9 +514,7 @@ async def _direct_workload(
     ]
 
     async def direct(source_lines: list[DialogueLineRecord]) -> None:
-        histories = await asyncio.gather(
-            *(_dialogue_history(reader, line) for line in source_lines)
-        )
+        histories = [dialogue_history(history_index, line) for line in source_lines]
         sources = [
             DialogueDirectionSource(
                 id=DirectedLineRecord.id_for(workload.voice.voice_id, line.id),
@@ -576,126 +561,6 @@ async def _direct_workload(
         await store.upsert_directed_lines(records)
 
     await _wait_for_all([asyncio.create_task(direct(batch)) for batch in batches])
-
-
-async def _dialogue_history(
-    reader: PipelineReader,
-    line: DialogueLineRecord,
-) -> str | None:
-    """Resolve and render up to two predecessor turns without exposing graph IDs."""
-    target = _DialogueNode(line.run_id, line.dialogue_resource_name, line.state_index)
-    visited = {(target.resource_name.casefold(), target.state_index)}
-    nearest_first: list[_DialogueContextTurn] = []
-    for _hop in range(2):
-        turn = await _previous_context(reader, target, visited)
-        if turn is None:
-            break
-        nearest_first.append(turn)
-        target = turn.node
-        visited.add((target.resource_name.casefold(), target.state_index))
-
-    if not nearest_first:
-        return None
-    turns = list(reversed(nearest_first))
-    rendered = _render_dialogue_history(turns)
-    while len(rendered) > 1200 and len(turns) > 1:
-        turns.pop(0)
-        rendered = _render_dialogue_history(turns)
-    return rendered if len(rendered) <= 1200 else rendered[:1199].rstrip() + "…"
-
-
-async def _previous_context(
-    reader: PipelineReader,
-    target: _DialogueNode,
-    visited: set[tuple[str, int]],
-) -> _DialogueContextTurn | None:
-    rows = cast(
-        list[DialogueTransitionRecord],
-        await reader.transitions_table.query()
-        .where(col("next_state_index") == lit(target.state_index))
-        .to_pydantic(DialogueTransitionRecord),
-    )
-    target_name = target.resource_name.casefold()
-    target_resref = target_name.removesuffix(".dlg")
-    incoming = sorted(
-        (
-            edge
-            for edge in rows
-            if (edge.next_dialog is None and edge.dialogue_resource_name.casefold() == target_name)
-            or (edge.next_dialog is not None and edge.next_dialog.casefold() == target_resref)
-        ),
-        key=lambda edge: (
-            edge.dialogue_resource_name.casefold() != target_name,
-            edge.dialogue_resource_name.casefold(),
-            edge.state_index,
-            edge.transition_index,
-            edge.id,
-        ),
-    )
-    for edge in incoming:
-        node = _DialogueNode(edge.run_id, edge.dialogue_resource_name, edge.state_index)
-        if (node.resource_name.casefold(), node.state_index) not in visited:
-            turn = await _context_turn(reader, node, edge.transition_index)
-            if turn is not None:
-                return turn
-
-    if target.state_index == 0:
-        return None
-    fallback = _DialogueNode(target.run_id, target.resource_name, target.state_index - 1)
-    if (fallback.resource_name.casefold(), fallback.state_index) in visited:
-        return None
-    return await _context_turn(reader, fallback, None)
-
-
-async def _context_turn(
-    reader: PipelineReader,
-    node: _DialogueNode,
-    transition_index: int | None,
-) -> _DialogueContextTurn | None:
-    rows = cast(
-        list[DialogueLineRecord],
-        await reader.lines_table.query()
-        .where(
-            (col("run_id") == lit(node.run_id))
-            & (col("dialogue_resource_name") == lit(node.resource_name))
-            & (col("state_index") == lit(node.state_index))
-        )
-        .to_pydantic(DialogueLineRecord),
-    )
-    npc_text = next(
-        (
-            " ".join(row.text.split())
-            for row in sorted(rows, key=lambda row: row.id)
-            if row.line_kind is DialogueLineKind.NPC and row.text
-        ),
-        None,
-    )
-    if npc_text is None:
-        return None
-    player_response = next(
-        (
-            " ".join(row.text.split())
-            for row in sorted(rows, key=lambda row: row.id)
-            if row.line_kind is DialogueLineKind.PLAYER
-            and row.transition_index == transition_index
-            and row.text
-        ),
-        None,
-    )
-    return _DialogueContextTurn(node, npc_text, player_response)
-
-
-def _render_dialogue_history(turns: Sequence[_DialogueContextTurn]) -> str:
-    lines = ["Unspoken scene context:"]
-    for index, turn in enumerate(turns, start=1):
-        if len(turns) > 1:
-            proximity = "immediate" if index == len(turns) else "earlier"
-            lines.append(f"Context turn {index} ({proximity}):")
-        lines.append(f"Previous NPC/scene line: {turn.npc_text}")
-        lines.append(
-            "Player response: " + (turn.player_response or "none (automatic scene transition)")
-        )
-    return "\n".join(lines)
 
 
 async def _synthesize_workloads(
