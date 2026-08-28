@@ -743,8 +743,14 @@ async def _run_concurrently[Item](
     tasks = [asyncio.create_task(run(item)) for item in items]
     if tasks:
         await asyncio.wait(tasks)
+    failure: BaseException | None = None
     for task in tasks:
-        task.result()
+        try:
+            task.result()
+        except BaseException as error:
+            failure = failure or error
+    if failure is not None:
+        raise failure
 
 
 async def _resume_batches(store: GenerationStore, inworld: InworldClient) -> None:
