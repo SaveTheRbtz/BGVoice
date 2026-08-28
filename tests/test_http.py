@@ -226,6 +226,7 @@ def test_generated_work_is_browsable_filterable_and_playable(
         summary["dialogueDirectionFailures"],
         summary["audioGenerationFailures"],
     ) == ("1", "1", "1")
+    assert voice["voiceId"] == "aerie"
     assert voice["generatedVoice"]["inworldVoiceId"] == "voice-aerie"
     assert (voice["directedLineCount"], voice["generatedAudioCount"]) == ("1", "1")
     direction_json = lines[0]["directions"][0]

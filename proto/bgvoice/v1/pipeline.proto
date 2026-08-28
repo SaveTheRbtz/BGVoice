@@ -213,6 +213,7 @@ message Voice {
   optional GeneratedVoice generated_voice = 10;
   uint64 directed_line_count = 11;
   uint64 generated_audio_count = 12;
+  string voice_id = 13;
 }
 
 message CharacterDialogueSummary {

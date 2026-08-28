@@ -273,7 +273,7 @@ class DirectedLine(_message.Message):
     def __init__(self, id: _Optional[str] = ..., voice: _Optional[str] = ..., voice_display_name: _Optional[str] = ..., character: _Optional[_Union[CharacterDirection, _Mapping]] = ..., narrator: _Optional[_Union[NarratorDirection, _Mapping]] = ..., audio_url: _Optional[str] = ...) -> None: ...
 
 class Voice(_message.Message):
-    __slots__ = ("name", "display_name", "prompt", "characters", "dialogues", "portrait", "npc_line_count", "serialized_size", "biography", "generated_voice", "directed_line_count", "generated_audio_count")
+    __slots__ = ("name", "display_name", "prompt", "characters", "dialogues", "portrait", "npc_line_count", "serialized_size", "biography", "generated_voice", "directed_line_count", "generated_audio_count", "voice_id")
     NAME_FIELD_NUMBER: _ClassVar[int]
     DISPLAY_NAME_FIELD_NUMBER: _ClassVar[int]
     PROMPT_FIELD_NUMBER: _ClassVar[int]
@@ -286,6 +286,7 @@ class Voice(_message.Message):
     GENERATED_VOICE_FIELD_NUMBER: _ClassVar[int]
     DIRECTED_LINE_COUNT_FIELD_NUMBER: _ClassVar[int]
     GENERATED_AUDIO_COUNT_FIELD_NUMBER: _ClassVar[int]
+    VOICE_ID_FIELD_NUMBER: _ClassVar[int]
     name: str
     display_name: str
     prompt: str
@@ -298,7 +299,8 @@ class Voice(_message.Message):
     generated_voice: GeneratedVoice
     directed_line_count: int
     generated_audio_count: int
-    def __init__(self, name: _Optional[str] = ..., display_name: _Optional[str] = ..., prompt: _Optional[str] = ..., characters: _Optional[_Iterable[_Union[CharacterReference, _Mapping]]] = ..., dialogues: _Optional[_Iterable[_Union[DialogueReference, _Mapping]]] = ..., portrait: _Optional[str] = ..., npc_line_count: _Optional[int] = ..., serialized_size: _Optional[int] = ..., biography: _Optional[str] = ..., generated_voice: _Optional[_Union[GeneratedVoice, _Mapping]] = ..., directed_line_count: _Optional[int] = ..., generated_audio_count: _Optional[int] = ...) -> None: ...
+    voice_id: str
+    def __init__(self, name: _Optional[str] = ..., display_name: _Optional[str] = ..., prompt: _Optional[str] = ..., characters: _Optional[_Iterable[_Union[CharacterReference, _Mapping]]] = ..., dialogues: _Optional[_Iterable[_Union[DialogueReference, _Mapping]]] = ..., portrait: _Optional[str] = ..., npc_line_count: _Optional[int] = ..., serialized_size: _Optional[int] = ..., biography: _Optional[str] = ..., generated_voice: _Optional[_Union[GeneratedVoice, _Mapping]] = ..., directed_line_count: _Optional[int] = ..., generated_audio_count: _Optional[int] = ..., voice_id: _Optional[str] = ...) -> None: ...
 
 class CharacterDialogueSummary(_message.Message):
     __slots__ = ("declared_dialogue_count", "resolved_dialogue_count", "dialogue_line_count", "npc_line_count", "player_line_count", "journal_line_count", "state_count", "transition_count", "serialized_size")

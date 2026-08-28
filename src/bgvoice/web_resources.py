@@ -155,6 +155,7 @@ def voice(
     }
     message = pb.Voice(
         name=resource_name(Collection.VOICES, row.id),
+        voice_id=row.id,
         display_name=row.display_name,
         prompt=row.prompt,
         npc_line_count=row.npc_line_count,

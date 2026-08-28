@@ -56,6 +56,7 @@ const installation = create(InstallationSchema, {
 
 const voice = create(VoiceSchema, {
   name: "installations/bg2ee-eet/voices/imoen",
+  voiceId: "imoen",
   displayName: "Imoen",
   prompt: "Warm, quick-witted and mischievous. Keep an easy Amnian cadence.",
   characters: [
@@ -148,6 +149,29 @@ describe("application jobs", () => {
     await waitFor(() => expect(window.location.pathname).toBe("/characters/imoen-cre-3768424f"));
     expect(await screen.findByRole("heading", { name: "Imoen", level: 1 })).toBeTruthy();
     expect(api.getCharacter).toHaveBeenCalledWith(character.name, expect.any(AbortSignal));
+  });
+
+  it("filters dialogue lines by canonical voice identity", async () => {
+    const armoredFigure = create(VoiceSchema, {
+      name: "installations/bg2ee-eet/voices/armored-figure-befd8070",
+      voiceId: "armored figure",
+      displayName: "Armored Figure",
+      prompt: "A guarded voice resonating from inside a heavy helm.",
+    });
+    api.getVoice.mockResolvedValue(armoredFigure);
+    window.history.replaceState(
+      null,
+      "",
+      "/voices/armored-figure-befd8070?filter=search(%22armored+figure%22)",
+    );
+    render(<App />);
+
+    const href = (await screen.findByRole("link", { name: "All source lines" })).getAttribute("href");
+    const url = new URL(href ?? "", window.location.origin);
+    expect(url.pathname).toBe("/dialogue-lines");
+    expect(url.searchParams.get("filter")).toBe(
+      'voice_id = "armored figure" AND line_kind = "npc"',
+    );
   });
 
   it("browses dialogue text with condensed, ordered context", async () => {

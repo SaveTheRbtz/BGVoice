@@ -287,8 +287,7 @@ function VoiceGeneration({ voice }: { voice: Voice }) {
 }
 
 function VoiceLineLinks({ voice }: { voice: Voice }) {
-  const voiceId = resourceId(voice.name);
-  const common = { voice_id: voiceId, line_kind: "npc" };
+  const common = { voice_id: voice.voiceId, line_kind: "npc" };
   const links = [
     ["All source lines", dialogueLinesPath(common)],
     ["Directed", dialogueLinesPath({ ...common, directed: true })],
