@@ -241,7 +241,9 @@ async def test_bounded_scheduler_settles_every_task_before_propagating_failure()
         await release.wait()
         active -= 1
 
-    running = asyncio.create_task(generation_module._run_concurrently(list(range(5)), process, 4))
+    running = asyncio.create_task(
+        generation_module._run_concurrently(list(range(5)), process, asyncio.Semaphore(4))
+    )
     await asyncio.wait_for(saturated.wait(), timeout=1)
     assert active == peak == 4
     release.set()
@@ -259,7 +261,7 @@ async def test_bounded_scheduler_settles_every_task_before_propagating_failure()
         settled = True
 
     with pytest.raises(RuntimeError, match="provider failed"):
-        await generation_module._run_concurrently([0, 1], fail_or_settle, 2)
+        await generation_module._run_concurrently([0, 1], fail_or_settle, asyncio.Semaphore(2))
     assert settled
 
 

@@ -51,6 +51,7 @@ DIRECTION_MODEL = "gpt-5.6-luna"
 DIRECTION_BATCH_SIZE = 100
 AUDIO_WRITE_BATCH_SIZE = 25
 VOICE_CONCURRENCY = 75
+OPENAI_CONCURRENCY = 100
 NARRATOR_VOICE_ID = "narrator"
 
 _NARRATOR_DISPLAY_NAME = "Narrator"
@@ -300,6 +301,7 @@ async def generate(
             httpx.AsyncClient(timeout=httpx.Timeout(120)) as http,
         ):
             inworld = InworldClient(http, inworld_api_key)
+            openai_capacity = asyncio.Semaphore(OPENAI_CONCURRENCY)
             await _resume_batches(store, inworld)
 
             async def prepare(workload: VoiceWorkload) -> None:
@@ -308,11 +310,16 @@ async def generate(
                     inworld,
                     store,
                     workload,
+                    openai_capacity,
                     recreate=recreate_voices,
                 )
-                await _direct_workload(openai, reader, store, workload)
+                await _direct_workload(openai, reader, store, workload, openai_capacity)
 
-            await _run_concurrently(workloads, prepare, VOICE_CONCURRENCY)
+            await _run_concurrently(
+                workloads,
+                prepare,
+                asyncio.Semaphore(VOICE_CONCURRENCY),
+            )
             if any(
                 line.narrator is not None
                 for line in await store.directed_lines(
@@ -346,6 +353,7 @@ async def _ensure_character_voice(
     inworld: InworldClient,
     store: GenerationStore,
     workload: VoiceWorkload,
+    openai_capacity: asyncio.Semaphore,
     *,
     recreate: bool,
 ) -> GeneratedVoiceRecord:
@@ -378,17 +386,18 @@ async def _ensure_character_voice(
             return reused
 
     metadata, biography = _metadata_and_biography(workload.voice.prompt)
-    plan = await create_voice_design_plan(
-        openai,
-        VoiceDesignSource(
-            display_name=workload.voice.display_name,
-            metadata=metadata,
-            biography=biography,
-            ability_scores=workload.ability_scores,
-            portrait_png=workload.portrait_png,
-        ),
-        model=VOICE_DESIGN_MODEL,
-    )
+    async with openai_capacity:
+        plan = await create_voice_design_plan(
+            openai,
+            VoiceDesignSource(
+                display_name=workload.voice.display_name,
+                metadata=metadata,
+                biography=biography,
+                ability_scores=workload.ability_scores,
+                portrait_png=workload.portrait_png,
+            ),
+            model=VOICE_DESIGN_MODEL,
+        )
     return await _publish_voice(
         inworld,
         store,
@@ -499,14 +508,19 @@ async def _direct_workload(
     reader: PipelineReader,
     store: GenerationStore,
     workload: VoiceWorkload,
+    openai_capacity: asyncio.Semaphore,
 ) -> None:
     existing = {
         line.dialogue_line_id for line in await store.directed_lines([workload.voice.voice_id])
     }
     missing = [line for line in workload.lines if line.id not in existing]
     metadata, _biography = _metadata_and_biography(workload.voice.prompt)
-    for start in range(0, len(missing), DIRECTION_BATCH_SIZE):
-        source_lines = missing[start : start + DIRECTION_BATCH_SIZE]
+    batches = [
+        missing[start : start + DIRECTION_BATCH_SIZE]
+        for start in range(0, len(missing), DIRECTION_BATCH_SIZE)
+    ]
+
+    async def direct(source_lines: list[DialogueLineRecord]) -> None:
         histories = await asyncio.gather(
             *(_dialogue_history(reader, line) for line in source_lines)
         )
@@ -553,6 +567,8 @@ async def _direct_workload(
             )
         await store.delete_audio([record.id for record in records])
         await store.upsert_directed_lines(records)
+
+    await _run_concurrently(batches, direct, openai_capacity)
 
 
 async def _dialogue_history(
@@ -726,18 +742,20 @@ async def _synthesize_workloads(
             await store.upsert_batches([record])
         await _complete_batch(store, inworld, record, directions, voices, write_lock)
 
-    await _run_concurrently(batches, synthesize, INWORLD_BATCH_CONCURRENCY)
+    await _run_concurrently(
+        batches,
+        synthesize,
+        asyncio.Semaphore(INWORLD_BATCH_CONCURRENCY),
+    )
 
 
 async def _run_concurrently[Item](
     items: Sequence[Item],
     process: Callable[[Item], Awaitable[None]],
-    concurrency: int,
+    capacity: asyncio.Semaphore,
 ) -> None:
-    semaphore = asyncio.Semaphore(concurrency)
-
     async def run(item: Item) -> None:
-        async with semaphore:
+        async with capacity:
             await process(item)
 
     tasks = [asyncio.create_task(run(item)) for item in items]
@@ -764,7 +782,11 @@ async def _resume_batches(store: GenerationStore, inworld: InworldClient) -> Non
     async def resume(batch: TtsBatchRecord) -> None:
         await _complete_batch(store, inworld, batch, directions, voices, write_lock)
 
-    await _run_concurrently(batches, resume, INWORLD_BATCH_CONCURRENCY)
+    await _run_concurrently(
+        batches,
+        resume,
+        asyncio.Semaphore(INWORLD_BATCH_CONCURRENCY),
+    )
 
 
 async def _complete_batch(
