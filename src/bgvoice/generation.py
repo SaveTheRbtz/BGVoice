@@ -313,7 +313,13 @@ async def generate(
                     openai_capacity,
                     recreate=recreate_voices,
                 )
-                await _direct_workload(openai, reader, store, workload, openai_capacity)
+                await _direct_workload(
+                    openai,
+                    reader,
+                    store,
+                    workload,
+                    openai_capacity,
+                )
 
             await _run_concurrently(
                 workloads,
@@ -532,15 +538,16 @@ async def _direct_workload(
             )
             for line, history in zip(source_lines, histories, strict=True)
         ]
-        plan = await create_direction_batch(
-            openai,
-            DirectionBatchSource(
-                display_name=workload.voice.display_name,
-                metadata=metadata,
-                lines=sources,
-            ),
-            model=DIRECTION_MODEL,
-        )
+        async with openai_capacity:
+            plan = await create_direction_batch(
+                openai,
+                DirectionBatchSource(
+                    display_name=workload.voice.display_name,
+                    metadata=metadata,
+                    lines=sources,
+                ),
+                model=DIRECTION_MODEL,
+            )
         expected = {source.id: line.id for source, line in zip(sources, source_lines, strict=True)}
         records: list[DirectedLineRecord] = []
         for item in plan.items:
@@ -568,7 +575,7 @@ async def _direct_workload(
         await store.delete_audio([record.id for record in records])
         await store.upsert_directed_lines(records)
 
-    await _run_concurrently(batches, direct, openai_capacity)
+    await _wait_for_all([asyncio.create_task(direct(batch)) for batch in batches])
 
 
 async def _dialogue_history(
@@ -758,7 +765,10 @@ async def _run_concurrently[Item](
         async with capacity:
             await process(item)
 
-    tasks = [asyncio.create_task(run(item)) for item in items]
+    await _wait_for_all([asyncio.create_task(run(item)) for item in items])
+
+
+async def _wait_for_all(tasks: Sequence[asyncio.Task[None]]) -> None:
     if tasks:
         await asyncio.wait(tasks)
     failure: BaseException | None = None
