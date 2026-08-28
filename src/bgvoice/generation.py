@@ -1,7 +1,7 @@
 """Iterative voice design, dialogue direction, and batch speech synthesis."""
 
 import asyncio
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
@@ -21,7 +21,7 @@ from bgvoice.generation_ai import (
 )
 from bgvoice.generation_store import GenerationStore
 from bgvoice.inworld import (
-    BatchResult,
+    INWORLD_BATCH_CONCURRENCY,
     BatchSynthesisItem,
     InworldClient,
     VoiceDesignRequest,
@@ -49,6 +49,7 @@ from bgvoice.storage_records import (
 VOICE_DESIGN_MODEL = "gpt-5.6-sol"
 DIRECTION_MODEL = "gpt-5.6-luna"
 DIRECTION_BATCH_SIZE = 10
+AUDIO_WRITE_BATCH_SIZE = 25
 NARRATOR_VOICE_ID = "narrator"
 
 _NARRATOR_DISPLAY_NAME = "Narrator"
@@ -313,8 +314,7 @@ async def generate(
                 )
             ):
                 await _ensure_narrator_voice(inworld, store)
-            for workload in workloads:
-                await _synthesize_workload(store, inworld, workload)
+            await _synthesize_workloads(store, inworld, workloads)
 
         voice_ids = [workload.voice.voice_id for workload in workloads]
         directions = await store.directed_lines(voice_ids)
@@ -669,97 +669,123 @@ def _render_dialogue_history(turns: Sequence[_DialogueContextTurn]) -> str:
     return "\n".join(lines)
 
 
-async def _synthesize_workload(
+async def _synthesize_workloads(
     store: GenerationStore,
     inworld: InworldClient,
-    workload: VoiceWorkload,
+    workloads: Sequence[VoiceWorkload],
 ) -> None:
-    by_source_line = {
-        line.dialogue_line_id: line
-        for line in await store.directed_lines([workload.voice.voice_id])
-    }
-    directions = [by_source_line[line.id] for line in workload.lines if line.id in by_source_line]
-    existing = {audio.id for audio in await store.generated_audio([workload.voice.voice_id])}
     voices = await store.generated_voices()
-    groups = (
-        (
-            [line for line in directions if line.character is not None and line.id not in existing],
-            voices[workload.voice.voice_id],
-        ),
-        (
-            [line for line in directions if line.narrator is not None and line.id not in existing],
-            voices.get(NARRATOR_VOICE_ID),
-        ),
+    items_by_provider_voice: dict[str, list[BatchSynthesisItem]] = {}
+    for workload in workloads:
+        directions = {
+            line.dialogue_line_id: line
+            for line in await store.directed_lines([workload.voice.voice_id])
+        }
+        existing = {audio.id for audio in await store.generated_audio([workload.voice.voice_id])}
+        for source_line in workload.lines:
+            direction = directions[source_line.id]
+            if direction.id in existing:
+                continue
+            generated_voice = voices[
+                workload.voice.voice_id if direction.character is not None else NARRATOR_VOICE_ID
+            ]
+            text = (
+                direction.character.directed_dialogue
+                if direction.character is not None
+                else cast(NarratorDirection, direction.narrator).directed_dialogue
+            )
+            items_by_provider_voice.setdefault(generated_voice.inworld_voice_id, []).append(
+                BatchSynthesisItem(
+                    custom_id=direction.id,
+                    text=text,
+                    voice_id=generated_voice.inworld_voice_id,
+                    language_code=generated_voice.description.language_code,
+                )
+            )
+
+    batches = pack_synthesis_items(
+        [item for items in items_by_provider_voice.values() for item in items]
     )
-    for pending, generated_voice in groups:
-        if not pending:
-            continue
-        assert generated_voice is not None, "narrated lines require the shared narrator voice"
-        items = [
-            BatchSynthesisItem(
-                custom_id=line.id,
-                text=(
-                    line.character.directed_dialogue
-                    if line.character is not None
-                    else cast(NarratorDirection, line.narrator).directed_dialogue
-                ),
-                voice_id=generated_voice.inworld_voice_id,
-                language_code=generated_voice.description.language_code,
-            )
-            for line in pending
-        ]
-        for batch in pack_synthesis_items(items):
-            operation = await inworld.submit_batch(batch)
-            record = TtsBatchRecord(
-                operation_name=operation.name,
-                status=RunStatus.RUNNING,
-                started_at=utc_now().isoformat(),
-            )
+    directions = {line.id: line for line in await store.directed_lines()}
+    write_lock = asyncio.Lock()
+
+    async def synthesize(batch: list[BatchSynthesisItem]) -> None:
+        operation = await inworld.submit_batch(batch)
+        record = TtsBatchRecord(
+            operation_name=operation.name,
+            status=RunStatus.RUNNING,
+            started_at=utc_now().isoformat(),
+        )
+        async with write_lock:
             await store.upsert_batches([record])
-            await _complete_batch(store, inworld, record)
+        await _complete_batch(store, inworld, record, directions, voices, write_lock)
+
+    await _run_batches(batches, synthesize)
+
+
+async def _run_batches[Batch](
+    batches: Sequence[Batch],
+    process: Callable[[Batch], Awaitable[None]],
+) -> None:
+    semaphore = asyncio.Semaphore(INWORLD_BATCH_CONCURRENCY)
+
+    async def run(batch: Batch) -> None:
+        async with semaphore:
+            await process(batch)
+
+    tasks = [asyncio.create_task(run(batch)) for batch in batches]
+    if tasks:
+        await asyncio.wait(tasks)
+    for task in tasks:
+        task.result()
 
 
 async def _resume_batches(store: GenerationStore, inworld: InworldClient) -> None:
-    for batch in await store.running_batches():
-        await _complete_batch(store, inworld, batch)
+    batches = await store.running_batches()
+    if not batches:
+        return
+    directions = {line.id: line for line in await store.directed_lines()}
+    voices = await store.generated_voices()
+    write_lock = asyncio.Lock()
+
+    async def resume(batch: TtsBatchRecord) -> None:
+        await _complete_batch(store, inworld, batch, directions, voices, write_lock)
+
+    await _run_batches(batches, resume)
 
 
 async def _complete_batch(
     store: GenerationStore,
     inworld: InworldClient,
     batch: TtsBatchRecord,
+    directions: Mapping[str, DirectedLineRecord],
+    voices: Mapping[str, GeneratedVoiceRecord],
+    write_lock: asyncio.Lock,
 ) -> int:
     operation = await inworld.poll_operation(batch.operation_name)
     if operation.error is not None:
-        await store.upsert_batches(
-            [
-                batch.model_copy(
-                    update={
-                        "status": RunStatus.FAILED,
-                        "completed_at": utc_now().isoformat(),
-                        "error": operation.error.message,
-                    }
-                )
-            ]
-        )
+        async with write_lock:
+            await store.upsert_batches(
+                [
+                    batch.model_copy(
+                        update={
+                            "status": RunStatus.FAILED,
+                            "completed_at": utc_now().isoformat(),
+                            "error": operation.error.message,
+                        }
+                    )
+                ]
+            )
         return 0
     assert operation.response is not None, "completed Inworld batch has no result manifest"
     results = await inworld.download_results(operation.response.results_uri)
-    directions = {line.id: line for line in await store.directed_lines()}
-    voices = await store.generated_voices()
 
-    async def download(result: BatchResult) -> tuple[BatchResult, bytes] | None:
-        if result.audio_uri is None:
-            return None
-        return result, await inworld.download_audio(result.audio_uri)
-
-    downloads = [
-        item
-        for item in await asyncio.gather(*(download(result) for result in results.results))
-        if item is not None
-    ]
+    generated = 0
     records: list[GeneratedAudioRecord] = []
-    for result, source in downloads:
+    for result in results.results:
+        if result.audio_uri is None:
+            continue
+        source = await inworld.download_audio(result.audio_uri)
         direction = directions[result.custom_id]
         generated_voice = voices[
             direction.voice_id if direction.character is not None else NARRATOR_VOICE_ID
@@ -775,9 +801,15 @@ async def _complete_batch(
                 created_at=utc_now().isoformat(),
             )
         )
-    await store.upsert_generated_audio(records)
+        if len(records) == AUDIO_WRITE_BATCH_SIZE:
+            async with write_lock:
+                await store.upsert_generated_audio(records)
+            generated += len(records)
+            records.clear()
     status = RunStatus.COMPLETE_WITH_ERRORS if results.failed_items else RunStatus.COMPLETE
-    await store.upsert_batches(
-        [batch.model_copy(update={"status": status, "completed_at": utc_now().isoformat()})]
-    )
-    return len(records)
+    async with write_lock:
+        await store.upsert_generated_audio(records)
+        await store.upsert_batches(
+            [batch.model_copy(update={"status": status, "completed_at": utc_now().isoformat()})]
+        )
+    return generated + len(records)

@@ -14,7 +14,8 @@ from bgvoice.model_types import StrictModel
 INWORLD_TTS_MODEL = "inworld-tts-2"
 INWORLD_AUDIO_ENCODING = "WAV"
 INWORLD_SAMPLE_RATE_HERTZ = 22_050
-INWORLD_BATCH_CHARACTER_LIMIT = 10_000
+INWORLD_BATCH_CONCURRENCY = 75
+INWORLD_BATCH_CHARACTER_LIMIT = 200_000
 INWORLD_BATCH_ITEM_LIMIT = 10_000
 
 _API_ROOT = "https://api.inworld.ai"
@@ -116,16 +117,13 @@ class BatchResults(_ProviderResponse):
 def pack_synthesis_items(
     items: Sequence[BatchSynthesisItem],
 ) -> list[list[BatchSynthesisItem]]:
-    """Pack ordered items into On-Demand-compatible batches of at most 10k characters."""
+    """Pack ordered items into large jobs within half the Developer plan's capacity."""
     batches: list[list[BatchSynthesisItem]] = []
     batch: list[BatchSynthesisItem] = []
     characters = 0
 
     for item in items:
         item_characters = len(item.text)
-        assert item_characters <= INWORLD_BATCH_CHARACTER_LIMIT, (
-            f"batch item {item.custom_id!r} exceeds the 10,000-character batch limit"
-        )
         if batch and (
             characters + item_characters > INWORLD_BATCH_CHARACTER_LIMIT
             or len(batch) == INWORLD_BATCH_ITEM_LIMIT
@@ -217,7 +215,7 @@ class InworldClient:
         assert items, "a synthesis batch cannot be empty"
         assert len(items) <= INWORLD_BATCH_ITEM_LIMIT, "a synthesis batch has too many items"
         assert sum(len(item.text) for item in items) <= INWORLD_BATCH_CHARACTER_LIMIT, (
-            "a synthesis batch exceeds 10,000 characters"
+            "a synthesis batch exceeds BGVoice's 200,000-character target"
         )
         assert len({item.custom_id for item in items}) == len(items), (
             "custom IDs must be unique within a synthesis batch"

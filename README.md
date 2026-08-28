@@ -103,8 +103,9 @@ For each voice, dialogue resources are sorted once and their lowest remaining st
 round-robin order. Voice design combines extracted metadata, ability scores, biography, and portrait
 with required web research under an annotated 12-part voice profile. Dialogue direction has no web
 access and returns an explicit character-or-narrator result for every line. Direction is submitted
-in small homogeneous batches with a stable prompt prefix; speech is packed into Inworld's
-asynchronous batch API under its 10,000-character On-Demand limit.
+in small homogeneous batches with a stable prompt prefix. Speech is ordered by provider voice,
+packed into 200,000-character asynchronous Inworld jobs, and scheduled globally with at most 75
+jobs and 15 million characters in flight: half of the Developer plan's published limits.
 Inworld returns each batch line as one or more concatenated WAV segments. PyAV joins and normalizes
 them into mono 22.05 kHz Ogg Vorbis at 90 kb/s. Published provider IDs, final voice descriptions,
 directed text, game-ready audio bytes, and durable batch operation names are stored immediately.

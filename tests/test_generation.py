@@ -1,5 +1,6 @@
 """Deterministic generation workload and critical speech-input behavior."""
 
+import asyncio
 import json
 import re
 import wave
@@ -215,6 +216,46 @@ class _FailedBatchProvider:
 
 
 @pytest.mark.anyio
+async def test_batch_scheduler_uses_half_the_developer_job_limit() -> None:
+    active = 0
+    peak = 0
+    seen: set[int] = set()
+    saturated = asyncio.Event()
+    release = asyncio.Event()
+
+    async def process(batch: int) -> None:
+        nonlocal active, peak
+        active += 1
+        peak = max(peak, active)
+        seen.add(batch)
+        if active == 75:
+            saturated.set()
+        await release.wait()
+        active -= 1
+
+    running = asyncio.create_task(generation_module._run_batches(list(range(76)), process))
+    await asyncio.wait_for(saturated.wait(), timeout=1)
+    assert active == peak == 75
+    release.set()
+    await running
+
+    assert seen == set(range(76))
+
+    settled = False
+
+    async def fail_or_settle(batch: int) -> None:
+        nonlocal settled
+        if batch == 0:
+            raise RuntimeError("provider failed")
+        await asyncio.sleep(0)
+        settled = True
+
+    with pytest.raises(RuntimeError, match="provider failed"):
+        await generation_module._run_batches([0, 1], fail_or_settle)
+    assert settled
+
+
+@pytest.mark.anyio
 async def test_provider_voice_is_reused_when_local_generation_is_missing(
     scenario_database: Path,
 ) -> None:
@@ -248,18 +289,18 @@ async def test_failed_provider_batch_is_persisted_without_audio(
     store = await GenerationStore.open(scenario_database)
     try:
         await store.upsert_batches([batch])
-        generated = await generation_module._complete_batch(
+        await generation_module._resume_batches(
             store,
             cast(InworldClient, _FailedBatchProvider()),
-            batch,
         )
         persisted = {record.operation_name: record for record in await store.batches()}[
             batch.operation_name
         ]
+        audio = await store.generated_audio()
     finally:
         store.close()
 
-    assert generated == 0
+    assert audio == []
     assert persisted.status is RunStatus.FAILED
     assert persisted.error == "provider synthesis failed"
     assert persisted.completed_at is not None
@@ -371,6 +412,7 @@ async def test_generation_runs_from_voice_design_through_game_audio(
     transport = httpx.MockTransport(handler)
     client_type = httpx.AsyncClient
     monkeypatch.setattr(generation_module, "AsyncOpenAI", _FakeOpenAI)
+    monkeypatch.setattr(generation_module, "AUDIO_WRITE_BATCH_SIZE", 1)
     monkeypatch.setattr(
         httpx,
         "AsyncClient",
@@ -433,7 +475,7 @@ async def test_generation_runs_from_voice_design_through_game_audio(
         record.batch_operation_name for record in recordings
     )
     assert all(batch.status.value == "complete" for batch in batches)
-    assert len(batches) == 4
+    assert len(batches) == 2
 
     first_character_voice_id = first_voices["aerie"].inworld_voice_id
     narrator_voice_id = first_voices["narrator"].inworld_voice_id

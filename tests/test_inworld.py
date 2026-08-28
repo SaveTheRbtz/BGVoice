@@ -24,17 +24,28 @@ def _item(custom_id: str, characters: int) -> BatchSynthesisItem:
     )
 
 
-def test_batch_packing_preserves_order_and_respects_the_on_demand_limit() -> None:
-    items = [_item("a", 6_000), _item("b", 4_000), _item("c", 1)]
+@pytest.mark.parametrize(
+    ("sizes", "expected_batch_sizes"),
+    [
+        ([], []),
+        ([100_000, 100_000, 1], [2, 1]),
+        ([1] * 10_001, [10_000, 1]),
+    ],
+)
+def test_batch_packing_preserves_order_within_developer_limits(
+    sizes: list[int],
+    expected_batch_sizes: list[int],
+) -> None:
+    items = [_item(str(index), size) for index, size in enumerate(sizes)]
+    batches = pack_synthesis_items(items)
 
-    assert [[item.custom_id for item in batch] for batch in pack_synthesis_items(items)] == [
-        ["a", "b"],
-        ["c"],
+    assert [len(batch) for batch in batches] == expected_batch_sizes
+    assert [item.custom_id for batch in batches for item in batch] == [
+        item.custom_id for item in items
     ]
-    assert pack_synthesis_items([]) == []
 
-    with pytest.raises(AssertionError, match="exceeds"):
-        pack_synthesis_items([_item("large", 10_001)])
+    with pytest.raises(ValidationError):
+        _item("too-large", 100_001)
 
 
 @pytest.mark.parametrize("length", [29, 1_001])
@@ -188,6 +199,7 @@ async def test_voice_design_publish_and_batch_download_flow_is_typed() -> None:
                 voice_id=voice.voice_id,
                 language_code="en-GB",
             ),
+            _item("large-line", 10_000),
         ]
         submitted = await client.submit_batch(items)
         completed = await client.poll_operation(submitted.name, interval_seconds=0)
