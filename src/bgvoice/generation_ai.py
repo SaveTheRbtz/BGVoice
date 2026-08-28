@@ -88,7 +88,7 @@ _FICTIONAL_DIALECT_TERMS = (
 )
 
 
-def _log_usage(
+def log_openai_usage(
     usage: ResponseUsage | None,
     *,
     operation: str,
@@ -429,7 +429,7 @@ async def create_voice_design_plan(
                 ),
                 text_format=VoiceDesignPlan,
             )
-            _log_usage(
+            log_openai_usage(
                 response.usage,
                 operation="voice_design",
                 model=model,
@@ -734,7 +734,7 @@ async def create_direction(
                 ),
                 text_format=DirectionPlan,
             )
-            _log_usage(
+            log_openai_usage(
                 response.usage,
                 operation="dialogue_direction",
                 model=model,

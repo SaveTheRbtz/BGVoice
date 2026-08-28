@@ -11,6 +11,10 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from bgvoice.database import PipelineDatabase
+from bgvoice.direction_audit import (
+    DEFAULT_SIMILARITY_THRESHOLD,
+    audit_directions,
+)
 from bgvoice.generation import generate
 from bgvoice.iecli import IeCli
 from bgvoice.mod_export import export_mod
@@ -24,6 +28,7 @@ from bgvoice.pipeline import (
 from bgvoice.pipeline_models import ExtractionProgress
 
 _DEFAULT_DATABASE = Path("data/bgvoice.lancedb")
+_DEFAULT_DIRECTION_AUDIT = Path("data/direction-mismatches.json")
 _DEFAULT_MOD_OUTPUT = Path("data/bgvoice-eet-mod")
 
 
@@ -105,6 +110,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="delete and recreate every selected character voice, direction, and audio",
     )
 
+    audit = commands.add_parser(
+        "audit-directions",
+        help="find directed dialogue that no longer matches its extracted source text",
+    )
+    audit.add_argument("--database", type=Path, default=_DEFAULT_DATABASE, help="LanceDB directory")
+    audit.add_argument(
+        "--output",
+        type=Path,
+        default=_DEFAULT_DIRECTION_AUDIT,
+        help=f"JSON mismatch report (default: {_DEFAULT_DIRECTION_AUDIT})",
+    )
+    audit.add_argument(
+        "--similarity-threshold",
+        type=_percentage,
+        default=DEFAULT_SIMILARITY_THRESHOLD,
+        help="send pairs below this RapidFuzz score to Luna (default: 25)",
+    )
+
     export = commands.add_parser(
         "export-mod",
         help="build a WeiDU EET mod containing both generated-audio policies",
@@ -155,6 +178,19 @@ def main(argv: Sequence[str] | None = None) -> int:
                 os.environ["OPENAI_API_KEY"],
                 os.environ["INWORLD_API_KEY"],
                 recreate_voices=args.recreate_voices,
+            )
+        )
+        print(summary.model_dump_json(indent=2))
+        return 0
+    if args.command == "audit-directions":
+        logging.basicConfig(level=logging.WARNING, format="%(asctime)s %(message)s")
+        logging.getLogger("bgvoice.generation_ai").setLevel(logging.INFO)
+        summary = asyncio.run(
+            audit_directions(
+                args.database,
+                args.output,
+                os.environ["OPENAI_API_KEY"],
+                similarity_threshold=args.similarity_threshold,
             )
         )
         print(summary.model_dump_json(indent=2))
@@ -231,6 +267,13 @@ def _port(value: str) -> int:
     parsed = int(value)
     if not 1 <= parsed <= 65535:
         raise argparse.ArgumentTypeError("must be between 1 and 65535")
+    return parsed
+
+
+def _percentage(value: str) -> float:
+    parsed = float(value)
+    if not 0 <= parsed <= 100:
+        raise argparse.ArgumentTypeError("must be between 0 and 100")
     return parsed
 
 

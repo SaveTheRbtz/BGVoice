@@ -7,6 +7,7 @@ import pytest
 
 import bgvoice.__main__ as cli
 from bgvoice.database import PipelineDatabase
+from bgvoice.direction_audit import DirectionAuditSummary
 from bgvoice.model_types import (
     RunKind,
     RunStatus,
@@ -60,6 +61,10 @@ def test_parser_uses_available_cpu_count(monkeypatch: pytest.MonkeyPatch) -> Non
     assert generation.voice == ["Imoen"]
     assert generation.lines_per_voice is None
     assert generation.recreate_voices is True
+    audit = cli.build_parser().parse_args(["audit-directions"])
+    assert audit.database == Path("data/bgvoice.lancedb")
+    assert audit.output == Path("data/direction-mismatches.json")
+    assert audit.similarity_threshold == 25
 
 
 @pytest.mark.parametrize(
@@ -67,6 +72,7 @@ def test_parser_uses_available_cpu_count(monkeypatch: pytest.MonkeyPatch) -> Non
     [
         ["extract-dialogues", "--game", "C:/game", "--workers", "0"],
         ["web", "--port", "65536"],
+        ["audit-directions", "--similarity-threshold", "101"],
     ],
 )
 def test_parser_rejects_out_of_range_numbers(arguments: list[str]) -> None:
@@ -248,3 +254,49 @@ def test_attribution_rejects_a_missing_database(tmp_path: Path) -> None:
     with pytest.raises(AssertionError, match="pipeline database does not exist"):
         cli.main(["attribute-dialogues", "--database", str(path)])
     assert not path.exists()
+
+
+def test_direction_audit_command_dispatches_typed_options(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    calls: list[tuple[Path, Path, str, float]] = []
+
+    async def audit(
+        database: Path,
+        output: Path,
+        api_key: str,
+        *,
+        similarity_threshold: float,
+    ) -> DirectionAuditSummary:
+        calls.append((database, output, api_key, similarity_threshold))
+        return DirectionAuditSummary(
+            directed_lines=100,
+            rapidfuzz_candidates=4,
+            model_batches=1,
+            mismatches=2,
+            output=str(output),
+        )
+
+    monkeypatch.setattr(cli, "audit_directions", audit)
+    monkeypatch.setenv("OPENAI_API_KEY", "test-openai-key")
+    database = tmp_path / "pipeline.lancedb"
+    output = tmp_path / "mismatches.json"
+
+    assert (
+        cli.main(
+            [
+                "audit-directions",
+                "--database",
+                str(database),
+                "--output",
+                str(output),
+                "--similarity-threshold",
+                "30",
+            ]
+        )
+        == 0
+    )
+    assert calls == [(database, output, "test-openai-key", 30)]
+    assert '"mismatches": 2' in capsys.readouterr().out

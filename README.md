@@ -44,6 +44,8 @@ the generated models own the service boundary shared by the Python backend and T
 - `generation.py` orchestrates the iterative AI stages, `generation_ai.py` owns their tuned prompts
   and structured results, `generation_store.py` persists final outputs, and `inworld.py` is the
   small typed boundary for voice design and batch synthesis.
+- `direction_audit.py` cheaply prefilters divergent direction/source pairs with RapidFuzz, then
+  asks Luna for a structured semantic-equivalence decision without changing pipeline state.
 - `mod_export.py` groups generated recordings by exact DLG text and emits the universal WeiDU
   content-intersection mod.
 - `reader.py` coordinates read-only queries using focused query, metadata, view, statistics, and
@@ -132,6 +134,17 @@ uv run bgvoice generate --voice Imoen --voice Gorion --lines-per-voice 100 --rec
 
 The command removes their corresponding tagged Inworld voices and regenerates the workload. The
 shared narrator is reused; only the requested character voices are recreated.
+
+Audit every stored direction against its extracted source text without modifying the database:
+
+```powershell
+uv run bgvoice audit-directions
+```
+
+The command removes engine templates and TTS hints only for comparison, sends pairs scoring below
+25 (plus mechanically corrupted output) to Luna in ID-tagged batches, and writes confirmed
+mismatches with their original and directed text to `data/direction-mismatches.json`. Use
+`--similarity-threshold` or `--output` to override those defaults.
 
 Export the game-ready recordings as one installable mod after generation completes:
 
