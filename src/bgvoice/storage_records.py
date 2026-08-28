@@ -337,6 +337,14 @@ class GeneratedAudioRecord(_Record):
         return self
 
 
+class GeneratedAudioIdentity(_Record):
+    """Blob-free projection used for joins and existence checks."""
+
+    id: str
+    voice_id: str
+    dialogue_line_id: str
+
+
 class TtsBatchRecord(_Record):
     """Durable handle for one asynchronous Inworld synthesis operation."""
 

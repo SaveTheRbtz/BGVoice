@@ -13,7 +13,7 @@ from bgvoice.model_types import RunStatus
 from bgvoice.reader_models import DirectedLineRow, GeneratedVoiceRow
 from bgvoice.storage_records import (
     DirectedLineRecord,
-    GeneratedAudioRecord,
+    GeneratedAudioIdentity,
     GeneratedVoiceRecord,
     TtsBatchRecord,
     VoiceResourceRecord,
@@ -26,11 +26,11 @@ class GenerationSnapshot:
 
     voices: dict[str, GeneratedVoiceRecord]
     directions: list[DirectedLineRecord]
-    audio: list[GeneratedAudioRecord]
+    audio: list[GeneratedAudioIdentity]
     batches: list[TtsBatchRecord]
     voice_names: dict[str, str]
     directions_by_line: dict[str, list[DirectedLineRecord]]
-    audio_by_id: dict[str, GeneratedAudioRecord]
+    audio_by_id: dict[str, GeneratedAudioIdentity]
     direction_count_by_voice: Counter[str]
     audio_count_by_voice: Counter[str]
     audio_voices_by_line: dict[str, set[str]]
@@ -47,11 +47,13 @@ class GenerationSnapshot:
         voice_rows, direction_rows, audio_rows, batch_rows = await asyncio.gather(
             generated_voices_table.query().to_pydantic(GeneratedVoiceRecord),
             directed_lines_table.query().to_pydantic(DirectedLineRecord),
-            generated_audio_table.query().to_pydantic(GeneratedAudioRecord),
+            generated_audio_table.query()
+            .select(list(GeneratedAudioIdentity.model_fields))
+            .to_pydantic(GeneratedAudioIdentity),
             tts_batches_table.query().to_pydantic(TtsBatchRecord),
         )
         directions = cast(list[DirectedLineRecord], direction_rows)
-        audio = cast(list[GeneratedAudioRecord], audio_rows)
+        audio = cast(list[GeneratedAudioIdentity], audio_rows)
         directions_by_line: dict[str, list[DirectedLineRecord]] = defaultdict(list)
         for row in directions:
             directions_by_line[row.dialogue_line_id].append(row)

@@ -16,6 +16,7 @@ from lancedb.table import AsyncTable
 from bgvoice.model_types import RunStatus
 from bgvoice.storage_records import (
     DirectedLineRecord,
+    GeneratedAudioIdentity,
     GeneratedAudioRecord,
     GeneratedVoiceRecord,
     TtsBatchRecord,
@@ -27,14 +28,6 @@ from bgvoice.storage_schema import (
     _TTS_BATCHES,
     TABLE_NAMES,
 )
-
-
-class GeneratedAudioIdentity(LanceModel):
-    """Blob-free identity projection for generated-audio existence checks."""
-
-    id: str
-    voice_id: str
-    dialogue_line_id: str
 
 
 @dataclass(slots=True)
