@@ -163,7 +163,7 @@ async def test_audit_writes_typed_json_without_modifying_directions(
 
 
 @pytest.mark.anyio
-async def test_model_may_only_return_requested_pair_ids() -> None:
+async def test_model_ignores_unrequested_pair_ids(caplog: pytest.LogCaptureFixture) -> None:
     direction = _direction("imoen", "IMOEN.DLG:npc:0:-", "Unrelated text.")
     pair = suspicious_pairs(
         [direction],
@@ -172,8 +172,11 @@ async def test_model_may_only_return_requested_pair_ids() -> None:
     )[0]
     client = _Client("invented-id")
 
-    with pytest.raises(AssertionError, match="unknown mismatch IDs"):
-        await audit_module.find_mismatches(cast(AsyncOpenAI, client), [pair])
+    mismatches, batch_count = await audit_module.find_mismatches(cast(AsyncOpenAI, client), [pair])
+
+    assert mismatches == set()
+    assert batch_count == 1
+    assert "returned unknown mismatch IDs" in caplog.text
 
 
 @pytest.mark.anyio

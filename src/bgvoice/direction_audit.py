@@ -2,6 +2,7 @@
 
 import asyncio
 import html
+import logging
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,6 +23,8 @@ AUDIT_MODEL = "gpt-5.6-luna"
 AUDIT_BATCH_SIZE = 25
 AUDIT_CONCURRENCY = 100
 DEFAULT_SIMILARITY_THRESHOLD = 80.0
+
+_LOGGER = logging.getLogger(__name__)
 
 _TEMPLATE = re.compile(r"<[^<>\r\n]+>")
 _TTS_HINT = re.compile(r"\[[^\]\r\n]+]")
@@ -265,10 +268,9 @@ async def find_mismatches(
         assert result is not None, f"{model} returned no parsed mismatch result"
         requested_ids = {pair.id for pair in batch}
         returned_ids = set(result.mismatched_ids)
-        assert returned_ids <= requested_ids, (
-            f"{model} returned unknown mismatch IDs: {sorted(returned_ids - requested_ids)}"
-        )
-        return returned_ids
+        if unknown_ids := returned_ids - requested_ids:
+            _LOGGER.warning("%s returned unknown mismatch IDs: %s", model, sorted(unknown_ids))
+        return returned_ids & requested_ids
 
     results = await asyncio.gather(*(classify(batch) for batch in batches))
     return {mismatch_id for result in results for mismatch_id in result}, len(batches)
