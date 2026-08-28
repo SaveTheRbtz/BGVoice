@@ -58,6 +58,7 @@ _PROFILE_FIELDS = (
     "texture",
 )
 _INSTRUCTION_TAG = re.compile(r"\[[^\]\r\n]+\]")
+_NONVERBAL_TAGS = ("[laugh]", "[sigh]", "[clear throat]", "[breathe]", "[cough]", "[yawn]")
 _AUDIO_QUALITY_SUFFIX = "Perfect broadcast quality audio."
 _AUDIO_QUALITY_TAIL = re.compile(
     r"\s*perfect broadcast quality audio\.?\s*$",
@@ -650,6 +651,15 @@ def _history_evidence(history: str | None) -> list[str]:
         for prefix in prefixes
         if line.startswith(prefix) and line.removeprefix(prefix).strip()
     ]
+
+
+def tts_speakable_text(text: str) -> str:
+    """Render silent delivery-only results as a neutral supported non-verbal."""
+    folded = text.casefold()
+    if any(tag in folded for tag in _NONVERBAL_TAGS):
+        return text
+    without_instructions = _INSTRUCTION_TAG.sub("", text)
+    return text if any(character.isalnum() for character in without_instructions) else "[breathe]"
 
 
 async def create_direction_batch(

@@ -19,6 +19,7 @@ from bgvoice.generation_ai import (
     VoiceDesignSource,
     create_direction_batch,
     create_voice_design_plan,
+    tts_speakable_text,
 )
 from bgvoice.generation_store import GenerationStore
 from bgvoice.inworld import (
@@ -625,7 +626,7 @@ async def _synthesize_workload(
         items_by_provider_voice.setdefault(generated_voice.inworld_voice_id, []).append(
             BatchSynthesisItem(
                 custom_id=direction.id,
-                text=text,
+                text=tts_speakable_text(text),
                 voice_id=generated_voice.inworld_voice_id,
                 language_code=generated_voice.description.language_code,
             )

@@ -23,6 +23,7 @@ from bgvoice.generation_ai import (
     build_voice_design_prompt,
     create_direction_batch,
     create_voice_design_plan,
+    tts_speakable_text,
     validate_directed_dialogue,
 )
 
@@ -223,6 +224,22 @@ def test_direction_contract_is_discriminated_and_keeps_tuned_rules() -> None:
     assert "Requested ID: d-character" in prompt
     assert "Previous NPC/scene line: The walls are no longer safe" in prompt
     assert "Requested ID: d-narrator" in prompt
+
+
+@pytest.mark.parametrize(
+    ("directed", "speakable"),
+    [
+        ("[say warmly] Welcome home.", "[say warmly] Welcome home."),
+        ("[sigh]", "[sigh]"),
+        ("[speak softly with hesitation]", "[breathe]"),
+        ("[say with a sleepy pause] ...", "[breathe]"),
+    ],
+)
+def test_tts_speakable_text_normalizes_only_silent_delivery_instructions(
+    directed: str,
+    speakable: str,
+) -> None:
+    assert tts_speakable_text(directed) == speakable
 
 
 @pytest.mark.anyio
