@@ -154,18 +154,21 @@ uv run python scripts/package_mod.py data/bgvoice-v1.0.0 data/BGVoice-v1.0.0.zip
 
 The script exports the mod, parse-checks every generated WeiDU source, creates a root-clean Zip64
 archive, verifies its CRCs, and prints its SHA-256. Release directories and archives are immutable:
-choose new paths for each version. The mod contains two mutually exclusive components: one fills
-only empty sound assignments, while the other replaces audio on every matched NPC dialogue
-occurrence. Ogg Vorbis bytes remain in the Enhanced Edition's expected `.wav` resource files.
+choose new paths for each version. The default component replaces audio on every matched NPC
+dialogue occurrence; the alternative fills only empty sound assignments. Ogg Vorbis bytes remain
+in the Enhanced Edition's expected `.wav` resource files.
 
-The mod is a content intersection rather than a snapshot patch. It opens every packaged DLG that
-exists in the target game once, scans its current states, and matches the exact resolved English
+The mod is a content intersection rather than a snapshot patch. It opens every packaged DLG family
+that exists in the target game, scans its current states, and matches the exact resolved English
 text. DLG state numbers and TLK strrefs may differ; missing resources and unmatched text are simply
 skipped. Repeated `(DLG, text)` pairs share one deterministic canonical recording.
 
-Install BGVoice after all desired dialogue/content mods but before `EET_end`. On an existing EET
-installation, uninstall `EET_end`, install BGVoice, and reinstall `EET_end`. This lets EET perform
-its final dialogue merges with BGVoice's sound-bearing TLK references already attached.
+Install BGVoice after all desired dialogue/content mods and preferably before `EET_end`. The
+exporter reads EET's actual generated merge files and makes each final-dialogue catalog scan its
+source JOIN dialogues too, so `EET_end` carries their sound-bearing TLK references into the merged
+dialogue. The same mod can be installed directly on an already-finalized EET installation. If you
+later change earlier mods, uninstall later components in reverse order and reinstall them in their
+original order. Export while `EET_end` is installed so its generated dialogue-family map is present.
 
 The effective EET `TOKENTXT.2DA` currently has no rows, so there is nothing useful to persist from
 it. Runtime tokens found in DLG text are retained verbatim instead; the engine and calendar tables

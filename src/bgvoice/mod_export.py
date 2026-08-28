@@ -216,6 +216,7 @@ async def _write_mod(
     grouped: dict[str, list[_ContentAsset]] = defaultdict(list)
     for asset in assets:
         grouped[asset.dialogue_resource_name].append(asset)
+    aliases = _dialogue_aliases(source_game)
 
     with tempfile.TemporaryDirectory(
         dir=destination.parent,
@@ -236,7 +237,11 @@ async def _write_mod(
             sorted(grouped.items(), key=lambda item: item[0].casefold())
         ):
             (dialogues / f"{index:06d}.tpa").write_text(
-                _dialogue_patch(resource_name, rows, f"bgv_catalog_{index:06d}"),
+                _dialogue_patch(
+                    (resource_name, *aliases.get(resource_name.casefold(), ())),
+                    rows,
+                    f"bgv_catalog_{index:06d}",
+                ),
                 encoding="utf-8",
                 newline="\n",
             )
@@ -313,8 +318,22 @@ def _publish_mod(root: Path, destination: Path) -> None:
     root.replace(destination)
 
 
+def _dialogue_aliases(source_game: Path) -> dict[str, tuple[str, ...]]:
+    """Read the source DLGs that EET_end merged into each final DLG."""
+    aliases: dict[str, set[str]] = {}
+    for source in sorted((source_game / "EET" / "temp" / "append" / "dlg").glob("*.d")):
+        with source.open(encoding="utf-8") as dialogue:
+            declaration = dialogue.readline().strip()
+        assert declaration.startswith("APPEND ~") and declaration.endswith("~"), (
+            f"unexpected EET dialogue merge declaration: {source}"
+        )
+        target = f"{declaration.removeprefix('APPEND ~').removesuffix('~')}.DLG"
+        aliases.setdefault(target.casefold(), set()).add(f"{source.stem}.DLG")
+    return {target: tuple(sorted(sources, key=str.casefold)) for target, sources in aliases.items()}
+
+
 def _dialogue_patch(
-    resource_name: str,
+    resource_names: tuple[str, ...],
     assets: list[_ContentAsset],
     catalog: str,
 ) -> str:
@@ -323,24 +342,27 @@ def _dialogue_patch(
         f'OUTER_SPRINT ${catalog}("%bgv_key%") ~{asset.sound_resref}~'
         for asset in assets
     )
+    dialogues = " ".join(f"~{resource_name}~" for resource_name in resource_names)
     return f"""{entries}
 
-COPY_EXISTING ~{resource_name}~ ~override~
-  READ_LONG 0x08 bgv_state_count
-  READ_LONG 0x0c bgv_state_table
-  FOR (bgv_state = 0; bgv_state < bgv_state_count; ++bgv_state) BEGIN
-    SET bgv_text_offset = bgv_state_table + bgv_state * 0x10
-    READ_STRREF bgv_text_offset bgv_text
-    PATCH_IF (VARIABLE_IS_SET ${catalog}(~%bgv_text%~)) BEGIN
-      TEXT_SPRINT bgv_sound ${catalog}(~%bgv_text%~)
-      LPF BGVOICE_INSTALL_LINE
-        INT_VAR text_offset = bgv_text_offset
-        STR_VAR sound = EVAL ~%bgv_sound%~
+ACTION_FOR_EACH bgv_dialogue IN {dialogues} BEGIN
+  COPY_EXISTING ~%bgv_dialogue%~ ~override~
+    READ_LONG 0x08 bgv_state_count
+    READ_LONG 0x0c bgv_state_table
+    FOR (bgv_state = 0; bgv_state < bgv_state_count; ++bgv_state) BEGIN
+      SET bgv_text_offset = bgv_state_table + bgv_state * 0x10
+      READ_STRREF bgv_text_offset bgv_text
+      PATCH_IF (VARIABLE_IS_SET ${catalog}(~%bgv_text%~)) BEGIN
+        TEXT_SPRINT bgv_sound ${catalog}(~%bgv_text%~)
+        LPF BGVOICE_INSTALL_LINE
+          INT_VAR text_offset = bgv_text_offset
+          STR_VAR sound = EVAL ~%bgv_sound%~
+        END
       END
     END
-  END
-BUT_ONLY_IF_IT_CHANGES
-IF_EXISTS
+  BUT_ONLY_IF_IT_CHANGES
+  IF_EXISTS
+END
 """
 
 
@@ -367,20 +389,23 @@ This export contains {len(assets):,} canonical recordings covering
 ## Install
 
 1. Install every dialogue/content mod you want.
-2. If `EET_end` is installed, uninstall it.
-3. Copy this export's entire contents into the EET game directory.
-4. Run `setup-bgvoice.exe` and choose exactly one audio policy.
-5. Install or reinstall `EET_end`.
+2. Copy this export's entire contents into the EET game directory.
+3. Run `setup-bgvoice.exe` and choose exactly one audio policy.
+4. Install `EET_end` if the EET installation has not yet been finalized.
 
-The **fill missing audio** policy patches only lines whose male and female sound
-assignments are both empty. The **replace all exported audio** policy uses generated
-audio on every matched dialogue occurrence.
+The default **replace all exported audio** policy uses generated audio on every
+matched dialogue occurrence. The alternative **fill missing audio** policy patches
+only lines whose male and female sound assignments are both empty.
 
 The installer matches the current game by DLG resource name and exact resolved
 English text. State numbering and TLK string references may differ from the source
 installation. Missing DLG resources and unmatched or changed text are skipped.
 Repeated identical text within one DLG shares one canonical recording. WeiDU
-manages backups and uninstallation.
+manages backups and uninstallation. Installing before `EET_end` is preferred: the
+export also scans every source DLG that the source installation's `EET_end` merged.
+An already-finalized EET installation can instead install BGVoice directly. If you
+later change earlier mods, uninstall later components in reverse order and reinstall
+them in their original order.
 """
 
 
@@ -390,22 +415,22 @@ SUPPORT ~BGVoice project~
 VERSION ~{version}~
 README ~bgvoice/README.md~
 
-BEGIN ~Fill only dialogue occurrences without assigned audio~
-SUBCOMPONENT ~BGVoice EET dialogue audio policy~
-DESIGNATED 0
-LABEL ~fill-missing-audio~
-REQUIRE_PREDICATE GAME_IS ~eet~ ~BGVoice requires an EET installation.~
-REQUIRE_PREDICATE (~%EE_LANGUAGE%~ STRING_EQUAL_CASE ~en_US~) ~This BGVoice export requires the en_US game language.~
-OUTER_SET bgv_replace = 0
-INCLUDE ~bgvoice/lib/install.tpa~
-
 BEGIN ~Replace audio on every exported dialogue occurrence~
 SUBCOMPONENT ~BGVoice EET dialogue audio policy~
-DESIGNATED 1
+DESIGNATED 0
 LABEL ~replace-exported-audio~
 REQUIRE_PREDICATE GAME_IS ~eet~ ~BGVoice requires an EET installation.~
 REQUIRE_PREDICATE (~%EE_LANGUAGE%~ STRING_EQUAL_CASE ~en_US~) ~This BGVoice export requires the en_US game language.~
 OUTER_SET bgv_replace = 1
+INCLUDE ~bgvoice/lib/install.tpa~
+
+BEGIN ~Fill only dialogue occurrences without assigned audio~
+SUBCOMPONENT ~BGVoice EET dialogue audio policy~
+DESIGNATED 1
+LABEL ~fill-missing-audio~
+REQUIRE_PREDICATE GAME_IS ~eet~ ~BGVoice requires an EET installation.~
+REQUIRE_PREDICATE (~%EE_LANGUAGE%~ STRING_EQUAL_CASE ~en_US~) ~This BGVoice export requires the en_US game language.~
+OUTER_SET bgv_replace = 0
 INCLUDE ~bgvoice/lib/install.tpa~
 """
 

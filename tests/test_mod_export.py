@@ -69,6 +69,9 @@ async def test_export_builds_a_replaceable_weidu_mod_from_generated_audio(
     game_root.mkdir(parents=True, exist_ok=True)
     weidu = game_root / "setup-eet.exe"
     weidu.write_bytes(b"fake WeiDU executable")
+    merge = game_root / "EET" / "temp" / "append" / "dlg" / "AERIE25J.d"
+    merge.parent.mkdir(parents=True)
+    merge.write_text("APPEND ~AERIE~\n", encoding="utf-8")
 
     output = tmp_path / "bgvoice-mod"
     (output / "setup-bgvoice.exe").parent.mkdir(parents=True)
@@ -116,13 +119,20 @@ async def test_export_builds_a_replaceable_weidu_mod_from_generated_audio(
     assert "READ_STRREF bgv_text_offset bgv_text" in dialogue_patch
     assert "VARIABLE_IS_SET" in dialogue_patch
     assert "VARIABLE_IS_IN_ARRAY" not in dialogue_patch
+    assert "ACTION_FOR_EACH bgv_dialogue IN ~AERIE.DLG~ ~AERIE25J.DLG~" in dialogue_patch
+    assert "COPY_EXISTING ~%bgv_dialogue%~" in dialogue_patch
     assert "IF_EXISTS" in dialogue_patch
 
     setup = (output / "setup-bgvoice.tp2").read_text(encoding="utf-8").casefold()
     assert "version ~0.9.0~" in setup
     assert setup.count("subcomponent") == 2
-    assert "missing" in setup
-    assert "replace" in setup
+    replace, fill = setup.split("begin ~")[1:]
+    assert "replace" in replace
+    assert "designated 0" in replace
+    assert "bgv_replace = 1" in replace
+    assert "missing" in fill
+    assert "designated 1" in fill
+    assert "bgv_replace = 0" in fill
 
     output = tmp_path / "not-an-export"
     output.mkdir()
