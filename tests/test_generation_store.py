@@ -102,14 +102,21 @@ async def test_generated_assets_round_trip_upsert_filter_and_delete(
         assert await store.directed_lines([]) == []
         assert (await store.audio(imoen_audio.id)) == imoen_audio
         assert (await store.generated_audio(["imoen"]))[0].audio == imoen_audio.audio
-
-        await store.delete_audio([imoen_audio.id])
-        await store.delete_audio([])
+        identities = await store.generated_audio_identities(["imoen"])
+        assert [identity.model_dump() for identity in identities] == [
+            {
+                "id": imoen_audio.id,
+                "voice_id": "imoen",
+                "dialogue_line_id": line_id,
+            }
+        ]
+        assert await store.generated_audio_identities([]) == []
         await store.upsert_directed_lines([])
-        assert await store.audio(imoen_audio.id) is None
-        assert {audio.id for audio in await store.generated_audio()} == {gorion_audio.id}
+        assert {audio.id for audio in await store.generated_audio()} == {
+            imoen_audio.id,
+            gorion_audio.id,
+        }
 
-        await store.upsert_generated_audio([imoen_audio])
         await store.delete_voice_generation("imoen")
         assert set(await store.generated_voices()) == {"gorion"}
         assert {line.voice_id for line in await store.directed_lines()} == {"gorion"}

@@ -266,14 +266,49 @@ async def test_bounded_scheduler_settles_every_task_before_propagating_failure()
 
 
 @pytest.mark.anyio
+async def test_workload_pipeline_overlaps_tts_and_settles_it_before_direction_failure() -> None:
+    synthesis_started = asyncio.Event()
+    release_synthesis = asyncio.Event()
+    synthesis_settled = False
+
+    async def prepare(workload: int) -> None:
+        if workload == 0:
+            return
+        await synthesis_started.wait()
+        release_synthesis.set()
+        raise RuntimeError("direction failed")
+
+    async def synthesize(workload: int) -> None:
+        nonlocal synthesis_settled
+        assert workload == 0
+        synthesis_started.set()
+        await release_synthesis.wait()
+        synthesis_settled = True
+
+    with pytest.raises(RuntimeError, match="direction failed"):
+        await asyncio.wait_for(
+            generation_module._run_workload_pipeline(
+                [0, 1],
+                prepare,
+                synthesize,
+                asyncio.Semaphore(2),
+            ),
+            timeout=1,
+        )
+
+    assert synthesis_settled
+
+
+@pytest.mark.anyio
 async def test_provider_voice_is_reused_when_local_generation_is_missing(
     scenario_database: Path,
 ) -> None:
     store = await GenerationStore.open(scenario_database)
     try:
+        provider = _ReusableVoiceProvider()
         record = await generation_module._reuse_existing_voice(
-            cast(InworldClient, _ReusableVoiceProvider()),
             store,
+            generation_module._provider_voice_catalog(await provider.list_voices()),
             "aerie",
             "Aerie",
         )
@@ -285,6 +320,26 @@ async def test_provider_voice_is_reused_when_local_generation_is_missing(
     assert record is not None
     assert record.inworld_voice_id == "aerie-existing"
     assert record.description.language_code == "en-GB"
+
+
+def test_provider_voice_catalog_rejects_case_insensitive_name_duplicates() -> None:
+    existing = PublishedVoice(
+        name="workspaces/test/voices/aerie-existing",
+        voiceId="aerie-existing",
+        displayName="Aerie",
+        description="An existing carefully designed voice.",
+        langCode="EN_GB",
+    )
+    duplicate = existing.model_copy(
+        update={
+            "name": "workspaces/test/voices/aerie-copy",
+            "voice_id": "aerie-copy",
+            "display_name": "aERIE",
+        }
+    )
+
+    with pytest.raises(AssertionError, match="multiple reusable Inworld voices"):
+        generation_module._provider_voice_catalog([existing, duplicate])
 
 
 @pytest.mark.anyio
@@ -302,6 +357,7 @@ async def test_failed_provider_batch_is_persisted_without_audio(
         await generation_module._resume_batches(
             store,
             cast(InworldClient, _FailedBatchProvider()),
+            asyncio.Semaphore(75),
         )
         persisted = {record.operation_name: record for record in await store.batches()}[
             batch.operation_name
@@ -428,6 +484,12 @@ async def test_generation_runs_from_voice_design_through_game_audio(
         "AsyncClient",
         lambda **_: client_type(transport=transport),
     )
+    read_generated_audio = GenerationStore.generated_audio
+
+    async def reject_blob_scan(*_: object, **__: object) -> None:
+        raise AssertionError("generation must use blob-free audio identities")
+
+    monkeypatch.setattr(GenerationStore, "generated_audio", reject_blob_scan)
     _FakeResponses.calls.clear()
 
     first_summary = await generate(
@@ -437,10 +499,11 @@ async def test_generation_runs_from_voice_design_through_game_audio(
         "openai-test",
         "inworld-test",
     )
+    assert voice_list_requests == 1
     store = await GenerationStore.open(scenario_database)
     try:
         first_voices = await store.generated_voices()
-        first_recordings = await store.generated_audio(["aerie"])
+        first_recordings = await read_generated_audio(store, ["aerie"])
     finally:
         store.close()
 
@@ -451,6 +514,7 @@ async def test_generation_runs_from_voice_design_through_game_audio(
         "openai-test",
         "inworld-test",
     )
+    assert voice_list_requests == 2
     second_summary = await generate(
         scenario_database,
         ["Aerie"],
@@ -459,11 +523,12 @@ async def test_generation_runs_from_voice_design_through_game_audio(
         "inworld-test",
         recreate_voices=True,
     )
+    assert voice_list_requests == 3
     store = await GenerationStore.open(scenario_database)
     try:
         voices = await store.generated_voices()
         directions = await store.directed_lines(["aerie"])
-        recordings = await store.generated_audio(["aerie"])
+        recordings = await read_generated_audio(store, ["aerie"])
         batches = await store.batches()
     finally:
         store.close()

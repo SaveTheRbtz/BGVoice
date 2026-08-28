@@ -29,6 +29,14 @@ from bgvoice.storage_schema import (
 )
 
 
+class GeneratedAudioIdentity(LanceModel):
+    """Blob-free identity projection for generated-audio existence checks."""
+
+    id: str
+    voice_id: str
+    dialogue_line_id: str
+
+
 @dataclass(slots=True)
 class GenerationStore:
     """Typed, strongly consistent access to generation-owned Lance tables."""
@@ -90,6 +98,16 @@ class GenerationStore:
     ) -> list[GeneratedAudioRecord]:
         return await _records(self._generated_audio, GeneratedAudioRecord, voice_ids)
 
+    async def generated_audio_identities(
+        self,
+        voice_ids: Sequence[str] | None = None,
+    ) -> list[GeneratedAudioIdentity]:
+        return await _projected_records(
+            self._generated_audio,
+            GeneratedAudioIdentity,
+            voice_ids,
+        )
+
     async def audio(self, audio_id: str) -> GeneratedAudioRecord | None:
         return await _record(self._generated_audio, GeneratedAudioRecord, "id", audio_id)
 
@@ -120,11 +138,6 @@ class GenerationStore:
         async with self._write_lock:
             await _upsert(self._tts_batches, "operation_name", records)
 
-    async def delete_audio(self, audio_ids: Sequence[str]) -> None:
-        if audio_ids:
-            async with self._write_lock:
-                await self._generated_audio.delete(col("id").isin(audio_ids))
-
     async def delete_voice_generation(self, voice_id: str) -> None:
         """Remove every regenerable artifact owned by one canonical character voice."""
         predicate = col("voice_id") == lit(voice_id)
@@ -145,6 +158,22 @@ async def _records[Record: LanceModel](
     if voice_ids is not None:
         query = query.where(col("voice_id").isin(voice_ids))
     return cast(list[Record], await query.to_pydantic(model))
+
+
+async def _projected_records[Record: LanceModel](
+    table: AsyncTable,
+    model: type[Record],
+    voice_ids: Sequence[str] | None = None,
+) -> list[Record]:
+    if voice_ids is not None and not voice_ids:
+        return []
+    query = table.query()
+    if voice_ids is not None:
+        query = query.where(col("voice_id").isin(voice_ids))
+    return cast(
+        list[Record],
+        await query.select(list(model.model_fields)).to_pydantic(model),
+    )
 
 
 async def _record[Record: LanceModel](

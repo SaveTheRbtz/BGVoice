@@ -120,7 +120,8 @@ external services.
 
 Up to 75 voices are designed and directed concurrently. Line selection remains deterministic,
 up to 100 OpenAI requests may run concurrently across direction batches, and generation state is
-serialized at the database boundary.
+serialized at the database boundary. As soon as one voice's direction is complete, its missing
+speech is scheduled under the shared Inworld limits while the other voices continue.
 
 To deliberately replace selected character voices and all of their derived directions and audio,
 use the recreation flag:
