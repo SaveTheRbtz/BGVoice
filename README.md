@@ -117,6 +117,9 @@ lines. Use `--lines-per-voice all` to exhaust every non-empty NPC line attribute
 voice. Existing voices, directions, and recordings are reused; only missing work is sent to the
 external services.
 
+Up to 75 voices are designed and directed concurrently. Ordering remains deterministic within
+each voice, while generation state is serialized at the database boundary.
+
 To deliberately replace selected character voices and all of their derived directions and audio,
 use the recreation flag:
 

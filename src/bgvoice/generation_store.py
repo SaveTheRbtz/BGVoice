@@ -2,7 +2,7 @@
 
 import asyncio
 from collections.abc import Awaitable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import timedelta
 from pathlib import Path
 from typing import cast
@@ -39,6 +39,7 @@ class GenerationStore:
     _directed_lines: AsyncTable
     _generated_audio: AsyncTable
     _tts_batches: AsyncTable
+    _write_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     @classmethod
     async def open(cls, path: Path) -> GenerationStore:
@@ -104,27 +105,33 @@ class GenerationStore:
         )
 
     async def upsert_generated_voices(self, records: Sequence[GeneratedVoiceRecord]) -> None:
-        await _upsert(self._generated_voices, "voice_id", records)
+        async with self._write_lock:
+            await _upsert(self._generated_voices, "voice_id", records)
 
     async def upsert_directed_lines(self, records: Sequence[DirectedLineRecord]) -> None:
-        await _upsert(self._directed_lines, "id", records)
+        async with self._write_lock:
+            await _upsert(self._directed_lines, "id", records)
 
     async def upsert_generated_audio(self, records: Sequence[GeneratedAudioRecord]) -> None:
-        await _upsert(self._generated_audio, "id", records)
+        async with self._write_lock:
+            await _upsert(self._generated_audio, "id", records)
 
     async def upsert_batches(self, records: Sequence[TtsBatchRecord]) -> None:
-        await _upsert(self._tts_batches, "operation_name", records)
+        async with self._write_lock:
+            await _upsert(self._tts_batches, "operation_name", records)
 
     async def delete_audio(self, audio_ids: Sequence[str]) -> None:
         if audio_ids:
-            await self._generated_audio.delete(col("id").isin(audio_ids))
+            async with self._write_lock:
+                await self._generated_audio.delete(col("id").isin(audio_ids))
 
     async def delete_voice_generation(self, voice_id: str) -> None:
         """Remove every regenerable artifact owned by one canonical character voice."""
         predicate = col("voice_id") == lit(voice_id)
-        await self._generated_audio.delete(predicate)
-        await self._directed_lines.delete(predicate)
-        await self._generated_voices.delete(predicate)
+        async with self._write_lock:
+            await self._generated_audio.delete(predicate)
+            await self._directed_lines.delete(predicate)
+            await self._generated_voices.delete(predicate)
 
 
 async def _records[Record: LanceModel](

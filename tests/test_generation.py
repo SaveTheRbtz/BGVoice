@@ -84,10 +84,12 @@ async def test_current_voice_workload_uses_attributed_nonempty_npc_lines(
     try:
         workload = (await load_workloads(reader, ["Aerie"], 3))[0]
         complete_workload = (await load_workloads(reader, ["Aerie"], None))[0]
+        deduplicated = await load_workloads(reader, ["Aerie", "aerie"], None)
     finally:
         reader.close()
 
     assert complete_workload.lines == workload.lines
+    assert deduplicated == [complete_workload]
     assert workload.voice.voice_id == "aerie"
     assert len(workload.lines) == 2
     assert all(line.line_kind is DialogueLineKind.NPC and line.text for line in workload.lines)
@@ -222,7 +224,7 @@ class _FailedBatchProvider:
 
 
 @pytest.mark.anyio
-async def test_batch_scheduler_uses_half_the_developer_job_limit() -> None:
+async def test_bounded_scheduler_settles_every_task_before_propagating_failure() -> None:
     active = 0
     peak = 0
     seen: set[int] = set()
@@ -234,18 +236,18 @@ async def test_batch_scheduler_uses_half_the_developer_job_limit() -> None:
         active += 1
         peak = max(peak, active)
         seen.add(batch)
-        if active == 75:
+        if active == 4:
             saturated.set()
         await release.wait()
         active -= 1
 
-    running = asyncio.create_task(generation_module._run_batches(list(range(76)), process))
+    running = asyncio.create_task(generation_module._run_concurrently(list(range(5)), process, 4))
     await asyncio.wait_for(saturated.wait(), timeout=1)
-    assert active == peak == 75
+    assert active == peak == 4
     release.set()
     await running
 
-    assert seen == set(range(76))
+    assert seen == set(range(5))
 
     settled = False
 
@@ -257,7 +259,7 @@ async def test_batch_scheduler_uses_half_the_developer_job_limit() -> None:
         settled = True
 
     with pytest.raises(RuntimeError, match="provider failed"):
-        await generation_module._run_batches([0, 1], fail_or_settle)
+        await generation_module._run_concurrently([0, 1], fail_or_settle, 2)
     assert settled
 
 

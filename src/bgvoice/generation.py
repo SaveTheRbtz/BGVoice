@@ -50,6 +50,7 @@ VOICE_DESIGN_MODEL = "gpt-5.6-sol"
 DIRECTION_MODEL = "gpt-5.6-luna"
 DIRECTION_BATCH_SIZE = 100
 AUDIO_WRITE_BATCH_SIZE = 25
+VOICE_CONCURRENCY = 75
 NARRATOR_VOICE_ID = "narrator"
 
 _NARRATOR_DISPLAY_NAME = "Narrator"
@@ -133,6 +134,7 @@ async def load_workloads(
     dialogues_by_resref = {row.resref.casefold(): row for row in dialogue_rows}
     dialogues_by_name = {row.resource_name.casefold(): row for row in dialogue_rows}
     workloads: list[VoiceWorkload] = []
+    selected_voice_ids: set[str] = set()
 
     for requested in requested_voices:
         folded = requested.casefold()
@@ -143,6 +145,9 @@ async def load_workloads(
         ]
         assert len(matches) == 1, f"voice {requested!r} resolved to {len(matches)} resources"
         voice = matches[0]
+        if voice.voice_id in selected_voice_ids:
+            continue
+        selected_voice_ids.add(voice.voice_id)
         dialogue_names = sorted(
             {
                 dialogues_by_resref[resref.casefold()].resource_name
@@ -165,6 +170,7 @@ async def load_workloads(
             for name in dialogue_names
         }
         lines = tuple(round_robin_lines(groups, lines_per_voice))
+        assert lines, f"voice {voice.display_name!r} has no non-empty NPC lines"
         ability_scores, portrait_png = await _voice_evidence(
             reader,
             voice,
@@ -295,7 +301,8 @@ async def generate(
         ):
             inworld = InworldClient(http, inworld_api_key)
             await _resume_batches(store, inworld)
-            for workload in workloads:
+
+            async def prepare(workload: VoiceWorkload) -> None:
                 await _ensure_character_voice(
                     openai,
                     inworld,
@@ -304,6 +311,8 @@ async def generate(
                     recreate=recreate_voices,
                 )
                 await _direct_workload(openai, reader, store, workload)
+
+            await _run_concurrently(workloads, prepare, VOICE_CONCURRENCY)
             if any(
                 line.narrator is not None
                 for line in await store.directed_lines(
@@ -717,20 +726,21 @@ async def _synthesize_workloads(
             await store.upsert_batches([record])
         await _complete_batch(store, inworld, record, directions, voices, write_lock)
 
-    await _run_batches(batches, synthesize)
+    await _run_concurrently(batches, synthesize, INWORLD_BATCH_CONCURRENCY)
 
 
-async def _run_batches[Batch](
-    batches: Sequence[Batch],
-    process: Callable[[Batch], Awaitable[None]],
+async def _run_concurrently[Item](
+    items: Sequence[Item],
+    process: Callable[[Item], Awaitable[None]],
+    concurrency: int,
 ) -> None:
-    semaphore = asyncio.Semaphore(INWORLD_BATCH_CONCURRENCY)
+    semaphore = asyncio.Semaphore(concurrency)
 
-    async def run(batch: Batch) -> None:
+    async def run(item: Item) -> None:
         async with semaphore:
-            await process(batch)
+            await process(item)
 
-    tasks = [asyncio.create_task(run(batch)) for batch in batches]
+    tasks = [asyncio.create_task(run(item)) for item in items]
     if tasks:
         await asyncio.wait(tasks)
     for task in tasks:
@@ -748,7 +758,7 @@ async def _resume_batches(store: GenerationStore, inworld: InworldClient) -> Non
     async def resume(batch: TtsBatchRecord) -> None:
         await _complete_batch(store, inworld, batch, directions, voices, write_lock)
 
-    await _run_batches(batches, resume)
+    await _run_concurrently(batches, resume, INWORLD_BATCH_CONCURRENCY)
 
 
 async def _complete_batch(

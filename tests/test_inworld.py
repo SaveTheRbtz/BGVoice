@@ -8,11 +8,20 @@ import pytest
 from pydantic import ValidationError
 
 from bgvoice.inworld import (
+    INWORLD_BATCH_CHARACTER_LIMIT,
+    INWORLD_BATCH_CONCURRENCY,
+    INWORLD_QUEUED_CHARACTER_LIMIT,
     BatchSynthesisItem,
     InworldClient,
     VoiceDesignRequest,
     pack_synthesis_items,
 )
+
+
+def test_batch_size_is_one_concurrency_share_of_the_queue_limit() -> None:
+    assert INWORLD_BATCH_CHARACTER_LIMIT * INWORLD_BATCH_CONCURRENCY == (
+        INWORLD_QUEUED_CHARACTER_LIMIT
+    )
 
 
 def _item(custom_id: str, characters: int) -> BatchSynthesisItem:
