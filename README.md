@@ -146,16 +146,17 @@ The command removes engine templates and TTS hints only for comparison, sends pa
 mismatches with their original and directed text to `data/direction-mismatches.json`. Use
 `--similarity-threshold` or `--output` to override those defaults.
 
-Export the game-ready recordings as one installable mod after generation completes:
+Package the game-ready recordings as one installable mod after generation completes:
 
 ```powershell
-uv run bgvoice export-mod
+uv run python scripts/package_mod.py data/bgvoice-v1.0.0 data/BGVoice-v1.0.0.zip --version 1.0.0
 ```
 
-The default output is `data/bgvoice-eet-mod`. It contains a renamed WeiDU installer and two
-mutually exclusive components: one fills only empty sound assignments, while the other replaces
-audio on every matched NPC dialogue occurrence. Ogg Vorbis bytes remain in the Enhanced Edition's
-expected `.wav` resource files.
+The script exports the mod, parse-checks every generated WeiDU source, creates a root-clean Zip64
+archive, verifies its CRCs, and prints its SHA-256. Release directories and archives are immutable:
+choose new paths for each version. The mod contains two mutually exclusive components: one fills
+only empty sound assignments, while the other replaces audio on every matched NPC dialogue
+occurrence. Ogg Vorbis bytes remain in the Enhanced Edition's expected `.wav` resource files.
 
 The mod is a content intersection rather than a snapshot patch. It opens every packaged DLG that
 exists in the target game once, scans its current states, and matches the exact resolved English

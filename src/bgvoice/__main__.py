@@ -29,7 +29,7 @@ from bgvoice.pipeline_models import ExtractionProgress
 
 _DEFAULT_DATABASE = Path("data/bgvoice.lancedb")
 _DEFAULT_DIRECTION_AUDIT = Path("data/direction-mismatches.json")
-_DEFAULT_MOD_OUTPUT = Path("data/bgvoice-eet-mod")
+_DEFAULT_MOD_OUTPUT = Path("data/bgvoice-mod")
 
 
 def build_parser() -> argparse.ArgumentParser:

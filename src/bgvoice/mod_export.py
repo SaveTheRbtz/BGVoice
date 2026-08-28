@@ -7,6 +7,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
+from zipfile import ZIP_STORED, ZipFile
 
 from lancedb.pydantic import LanceModel
 from lancedb.table import AsyncTable
@@ -16,9 +17,9 @@ from bgvoice.model_types import DialogueLineKind
 from bgvoice.reader import PipelineReader
 from bgvoice.storage_records import ExtractionRunRecord
 
-_MOD_FOLDER = "bgvoice-eet"
-_SETUP_EXE = "setup-bgvoice-eet.exe"
-_SETUP_TP2 = "setup-bgvoice-eet.tp2"
+_MOD_FOLDER = "bgvoice"
+_SETUP_EXE = "setup-bgvoice.exe"
+_SETUP_TP2 = "setup-bgvoice.tp2"
 _RESOURCE_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 _RESOURCE_CAPACITY = len(_RESOURCE_ALPHABET) ** 5
 
@@ -78,8 +79,30 @@ def sound_resref(index: int) -> str:
     return f"BGV{encoded}"
 
 
-async def export_mod(database: Path, output: Path) -> ModExportSummary:
+def create_archive(output: Path, archive: Path) -> int:
+    """Create and CRC-check a root-layout, Zip64 release archive."""
+    assert not archive.exists(), f"archive already exists: {archive}"
+    assert not archive.resolve().is_relative_to(output.resolve()), (
+        "archive cannot be created inside the exported mod"
+    )
+    files = sorted(path for path in output.rglob("*") if path.is_file())
+    archive.parent.mkdir(parents=True, exist_ok=True)
+    with ZipFile(archive, "x", compression=ZIP_STORED, allowZip64=True) as package:
+        for path in files:
+            package.write(path, path.relative_to(output).as_posix())
+    with ZipFile(archive) as package:
+        assert package.testzip() is None, "release archive failed its CRC check"
+    return len(files)
+
+
+async def export_mod(
+    database: Path,
+    output: Path,
+    *,
+    version: str = "1.0.0",
+) -> ModExportSummary:
     """Build an installable, content-matched EET mod from generated audio."""
+    assert version and "~" not in version, "mod version cannot be empty or contain '~'"
     reader = await PipelineReader.open(database)
     try:
         recordings, lines, runs = await asyncio.gather(
@@ -111,6 +134,7 @@ async def export_mod(database: Path, output: Path) -> ModExportSummary:
             source_game,
             assets,
             len(recordings),
+            version,
         )
     finally:
         reader.close()
@@ -181,6 +205,7 @@ async def _write_mod(
     source_game: Path,
     assets: list[_ContentAsset],
     generated_lines: int,
+    version: str,
 ) -> ModExportSummary:
     destination = output.expanduser().absolute()
     _validate_destination(destination)
@@ -205,7 +230,7 @@ async def _write_mod(
         library.mkdir()
 
         shutil.copy2(installer, root / _SETUP_EXE)
-        (root / _SETUP_TP2).write_text(_TP2, encoding="utf-8", newline="\n")
+        (root / _SETUP_TP2).write_text(_tp2(version), encoding="utf-8", newline="\n")
         (library / "install.tpa").write_text(_INSTALL_TPA, encoding="utf-8", newline="\n")
         for index, (resource_name, rows) in enumerate(
             sorted(grouped.items(), key=lambda item: item[0].casefold())
@@ -218,7 +243,7 @@ async def _write_mod(
 
         audio_bytes = await _write_audio(audio_table, audio, assets)
         (root / _MOD_FOLDER / "README.md").write_text(
-            _readme(assets, generated_lines, len(grouped), audio_bytes),
+            _readme(assets, generated_lines, len(grouped), audio_bytes, version),
             encoding="utf-8",
             newline="\n",
         )
@@ -329,8 +354,11 @@ def _readme(
     generated_lines: int,
     dialogue_count: int,
     audio_bytes: int,
+    version: str,
 ) -> str:
     return f"""# BGVoice EET dialogue audio
+
+Version {version}.
 
 This export contains {len(assets):,} canonical recordings covering
 {generated_lines:,} generated NPC lines across {dialogue_count:,} DLG resources
@@ -341,12 +369,12 @@ This export contains {len(assets):,} canonical recordings covering
 1. Install every dialogue/content mod you want.
 2. If `EET_end` is installed, uninstall it.
 3. Copy this export's entire contents into the EET game directory.
-4. Run `setup-bgvoice-eet.exe` and choose exactly one audio policy.
+4. Run `setup-bgvoice.exe` and choose exactly one audio policy.
 5. Install or reinstall `EET_end`.
 
-The **fill missing audio** policy preserves each currently assigned male or female
-sound and fills only empty assignments. The **replace all exported audio** policy
-uses generated audio on every matched dialogue occurrence.
+The **fill missing audio** policy patches only lines whose male and female sound
+assignments are both empty. The **replace all exported audio** policy uses generated
+audio on every matched dialogue occurrence.
 
 The installer matches the current game by DLG resource name and exact resolved
 English text. State numbering and TLK string references may differ from the source
@@ -356,10 +384,11 @@ manages backups and uninstallation.
 """
 
 
-_TP2 = """BACKUP ~bgvoice-eet/backup~
+def _tp2(version: str) -> str:
+    return f"""BACKUP ~bgvoice/backup~
 SUPPORT ~BGVoice project~
-VERSION ~0.1.0~
-README ~bgvoice-eet/README.md~
+VERSION ~{version}~
+README ~bgvoice/README.md~
 
 BEGIN ~Fill only dialogue occurrences without assigned audio~
 SUBCOMPONENT ~BGVoice EET dialogue audio policy~
@@ -368,7 +397,7 @@ LABEL ~fill-missing-audio~
 REQUIRE_PREDICATE GAME_IS ~eet~ ~BGVoice requires an EET installation.~
 REQUIRE_PREDICATE (~%EE_LANGUAGE%~ STRING_EQUAL_CASE ~en_US~) ~This BGVoice export requires the en_US game language.~
 OUTER_SET bgv_replace = 0
-INCLUDE ~bgvoice-eet/lib/install.tpa~
+INCLUDE ~bgvoice/lib/install.tpa~
 
 BEGIN ~Replace audio on every exported dialogue occurrence~
 SUBCOMPONENT ~BGVoice EET dialogue audio policy~
@@ -377,7 +406,7 @@ LABEL ~replace-exported-audio~
 REQUIRE_PREDICATE GAME_IS ~eet~ ~BGVoice requires an EET installation.~
 REQUIRE_PREDICATE (~%EE_LANGUAGE%~ STRING_EQUAL_CASE ~en_US~) ~This BGVoice export requires the en_US game language.~
 OUTER_SET bgv_replace = 1
-INCLUDE ~bgvoice-eet/lib/install.tpa~
+INCLUDE ~bgvoice/lib/install.tpa~
 """
 
 
@@ -399,12 +428,12 @@ BEGIN
   PATCH_IF bgv_install BEGIN
     SAY text_offset ~%bgv_male_text%~ [%sound%] ~%bgv_female_text%~ [%sound%]
     INNER_ACTION BEGIN
-      COPY ~bgvoice-eet/audio/%sound%.wav~ ~override/%sound%.wav~
+      COPY ~bgvoice/audio/%sound%.wav~ ~override/%sound%.wav~
     END
   END
 END
 
-ACTION_BASH_FOR ~bgvoice-eet/dialogue~ ~.*\.tpa$~ BEGIN
+ACTION_BASH_FOR ~bgvoice/dialogue~ ~.*\.tpa$~ BEGIN
   ACTION_INCLUDE ~%BASH_FOR_FILESPEC%~
 END
 """

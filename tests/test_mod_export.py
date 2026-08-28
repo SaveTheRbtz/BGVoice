@@ -2,11 +2,12 @@
 
 import re
 from pathlib import Path
+from zipfile import ZipFile
 
 import pytest
 
 from bgvoice.generation_store import GenerationStore
-from bgvoice.mod_export import export_mod, sound_resref
+from bgvoice.mod_export import create_archive, export_mod, sound_resref
 from bgvoice.storage_records import (
     DirectedLineRecord,
     ExtractionRunRecord,
@@ -70,14 +71,14 @@ async def test_export_builds_a_replaceable_weidu_mod_from_generated_audio(
     weidu.write_bytes(b"fake WeiDU executable")
 
     output = tmp_path / "bgvoice-mod"
-    (output / "setup-bgvoice-eet.exe").parent.mkdir(parents=True)
-    (output / "setup-bgvoice-eet.exe").write_bytes(b"old WeiDU")
-    (output / "setup-bgvoice-eet.tp2").write_text("old export", encoding="utf-8")
-    stale = output / "bgvoice-eet" / "audio" / "stale.wav"
+    (output / "setup-bgvoice.exe").parent.mkdir(parents=True)
+    (output / "setup-bgvoice.exe").write_bytes(b"old WeiDU")
+    (output / "setup-bgvoice.tp2").write_text("old export", encoding="utf-8")
+    stale = output / "bgvoice" / "audio" / "stale.wav"
     stale.parent.mkdir(parents=True)
     stale.write_bytes(b"obsolete")
 
-    summary = await export_mod(scenario_database, output)
+    summary = await export_mod(scenario_database, output, version="0.9.0")
 
     assert Path(summary.output) == output.resolve()
     assert Path(summary.source_game) == game_root.resolve()
@@ -86,20 +87,21 @@ async def test_export_builds_a_replaceable_weidu_mod_from_generated_audio(
     assert summary.dialogue_files == 1
     assert summary.audio_bytes == sum(map(len, source_audio))
     assert not stale.exists()
-    assert (output / "setup-bgvoice-eet.exe").read_bytes() == weidu.read_bytes()
-    assert (output / "setup-bgvoice-eet.tp2").is_file()
-    installer_library = (output / "bgvoice-eet" / "lib" / "install.tpa").read_text(encoding="utf-8")
+    assert (output / "setup-bgvoice.exe").read_bytes() == weidu.read_bytes()
+    assert (output / "setup-bgvoice.tp2").is_file()
+    installer_library = (output / "bgvoice" / "lib" / "install.tpa").read_text(encoding="utf-8")
     assert "[%sound%]" in installer_library
     assert '["%sound%"]' not in installer_library
-    assert (output / "bgvoice-eet" / "README.md").is_file()
+    readme = (output / "bgvoice" / "README.md").read_text(encoding="utf-8")
+    assert "Version 0.9.0." in readme
 
-    dialogue_scripts = list((output / "bgvoice-eet" / "dialogue").glob("*.tpa"))
+    dialogue_scripts = list((output / "bgvoice" / "dialogue").glob("*.tpa"))
     assert [script.name for script in dialogue_scripts] == ["000000.tpa"]
     dialogue_patch = dialogue_scripts[0].read_text(encoding="utf-8")
     assert "AERIE.DLG" in dialogue_patch
     assert "state_index" not in dialogue_patch
     assert "source_strref" not in dialogue_patch
-    audio_directory = output / "bgvoice-eet" / "audio"
+    audio_directory = output / "bgvoice" / "audio"
     for text, audio in (
         ("Hello.", source_audio[0]),
         ("A quest for <DAYANDMONTH>.", source_audio[1]),
@@ -116,7 +118,8 @@ async def test_export_builds_a_replaceable_weidu_mod_from_generated_audio(
     assert "VARIABLE_IS_IN_ARRAY" not in dialogue_patch
     assert "IF_EXISTS" in dialogue_patch
 
-    setup = (output / "setup-bgvoice-eet.tp2").read_text(encoding="utf-8").casefold()
+    setup = (output / "setup-bgvoice.tp2").read_text(encoding="utf-8").casefold()
+    assert "version ~0.9.0~" in setup
     assert setup.count("subcomponent") == 2
     assert "missing" in setup
     assert "replace" in setup
@@ -130,3 +133,16 @@ async def test_export_builds_a_replaceable_weidu_mod_from_generated_audio(
         await export_mod(scenario_database, output)
 
     assert important.read_text(encoding="utf-8") == "keep me"
+
+
+def test_archive_contains_files_directly_at_its_root(tmp_path: Path) -> None:
+    output = tmp_path / "mod"
+    (output / "bgvoice").mkdir(parents=True)
+    (output / "setup-bgvoice.tp2").write_text("VERSION ~1.0.0~", encoding="utf-8")
+    (output / "bgvoice" / "README.md").write_text("BGVoice", encoding="utf-8")
+    archive = tmp_path / "BGVoice-v1.0.0.zip"
+
+    assert create_archive(output, archive) == 2
+
+    with ZipFile(archive) as package:
+        assert package.namelist() == ["bgvoice/README.md", "setup-bgvoice.tp2"]
