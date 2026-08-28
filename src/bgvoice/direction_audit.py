@@ -21,7 +21,7 @@ from bgvoice.storage_records import DirectedLineRecord
 AUDIT_MODEL = "gpt-5.6-luna"
 AUDIT_BATCH_SIZE = 25
 AUDIT_CONCURRENCY = 100
-DEFAULT_SIMILARITY_THRESHOLD = 25.0
+DEFAULT_SIMILARITY_THRESHOLD = 80.0
 
 _TEMPLATE = re.compile(r"<[^<>\r\n]+>")
 _TTS_HINT = re.compile(r"\[[^\]\r\n]+]")

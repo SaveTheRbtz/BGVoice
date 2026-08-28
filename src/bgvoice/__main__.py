@@ -125,7 +125,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--similarity-threshold",
         type=_percentage,
         default=DEFAULT_SIMILARITY_THRESHOLD,
-        help="send pairs below this RapidFuzz score to Luna (default: 25)",
+        help="send pairs below this RapidFuzz score to Luna (default: 80)",
     )
 
     export = commands.add_parser(

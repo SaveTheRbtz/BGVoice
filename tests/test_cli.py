@@ -64,7 +64,7 @@ def test_parser_uses_available_cpu_count(monkeypatch: pytest.MonkeyPatch) -> Non
     audit = cli.build_parser().parse_args(["audit-directions"])
     assert audit.database == Path("data/bgvoice.lancedb")
     assert audit.output == Path("data/direction-mismatches.json")
-    assert audit.similarity_threshold == 25
+    assert audit.similarity_threshold == 80
 
 
 @pytest.mark.parametrize(

@@ -142,7 +142,7 @@ uv run bgvoice audit-directions
 ```
 
 The command removes engine templates and TTS hints only for comparison, sends pairs scoring below
-25 (plus mechanically corrupted output) to Luna in ID-tagged batches, and writes confirmed
+80 (plus mechanically corrupted output) to Luna in ID-tagged batches, and writes confirmed
 mismatches with their original and directed text to `data/direction-mismatches.json`. Use
 `--similarity-threshold` or `--output` to override those defaults.
 
