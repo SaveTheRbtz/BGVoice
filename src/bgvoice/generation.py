@@ -517,11 +517,14 @@ async def _direct_workload(
         histories = [dialogue_history(history_index, line) for line in source_lines]
         sources = [
             DialogueDirectionSource(
-                id=DirectedLineRecord.id_for(workload.voice.voice_id, line.id),
+                id=str(index),
                 text=cast(str, line.text),
                 dialogue_history=history,
             )
-            for line, history in zip(source_lines, histories, strict=True)
+            for index, (line, history) in enumerate(
+                zip(source_lines, histories, strict=True),
+                start=1,
+            )
         ]
         async with openai_capacity:
             plan = await create_direction_batch(
@@ -549,7 +552,10 @@ async def _direct_workload(
             )
             records.append(
                 DirectedLineRecord(
-                    id=item.id,
+                    id=DirectedLineRecord.id_for(
+                        workload.voice.voice_id,
+                        expected[item.id],
+                    ),
                     voice_id=workload.voice.voice_id,
                     dialogue_line_id=expected[item.id],
                     character=character,

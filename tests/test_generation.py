@@ -516,6 +516,10 @@ async def test_generation_runs_from_voice_design_through_game_audio(
         for call in direction_calls
     ]
     assert all(
+        re.findall(r"^Requested ID: (.+)$", prompt, re.MULTILINE) == ["1", "2"]
+        for prompt in direction_prompts
+    )
+    assert all(
         "Previous NPC/scene line: Hello." in prompt and "Player response: Hi." in prompt
         for prompt in direction_prompts
     )
