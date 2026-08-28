@@ -70,6 +70,10 @@ def test_round_robin_takes_each_dialogues_lowest_remaining_state() -> None:
     assert [
         (line.dialogue_resource_name, line.state_index) for line in round_robin_lines(dialogues, 6)
     ] == expected
+    assert [
+        (line.dialogue_resource_name, line.state_index)
+        for line in round_robin_lines(dialogues, None)
+    ] == expected
 
 
 @pytest.mark.anyio
@@ -78,10 +82,12 @@ async def test_current_voice_workload_uses_attributed_nonempty_npc_lines(
 ) -> None:
     reader = await PipelineReader.open(shared_scenario_database)
     try:
-        workload = (await load_workloads(reader, ["Aerie"], 2))[0]
+        workload = (await load_workloads(reader, ["Aerie"], 3))[0]
+        complete_workload = (await load_workloads(reader, ["Aerie"], None))[0]
     finally:
         reader.close()
 
+    assert complete_workload.lines == workload.lines
     assert workload.voice.voice_id == "aerie"
     assert len(workload.lines) == 2
     assert all(line.line_kind is DialogueLineKind.NPC and line.text for line in workload.lines)

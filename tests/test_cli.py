@@ -48,9 +48,17 @@ def test_parser_uses_available_cpu_count(monkeypatch: pytest.MonkeyPatch) -> Non
     portraits = cli.build_parser().parse_args(["extract-portraits", "--game", "C:/game"])
     assert portraits.workers == 12
     generation = cli.build_parser().parse_args(
-        ["generate", "--voice", "Imoen", "--recreate-voices"]
+        [
+            "generate",
+            "--voice",
+            "Imoen",
+            "--lines-per-voice",
+            "all",
+            "--recreate-voices",
+        ]
     )
     assert generation.voice == ["Imoen"]
+    assert generation.lines_per_voice is None
     assert generation.recreate_voices is True
 
 

@@ -112,6 +112,11 @@ directed text, game-ready audio bytes, and durable batch operation names are sto
 Prompts, preview artifacts, manifests, and expiring signed URLs are not persisted. Re-running the
 command resumes missing work.
 
+The numeric `--lines-per-voice` value is a maximum, so shorter voices simply exhaust their available
+lines. Use `--lines-per-voice all` to exhaust every non-empty NPC line attributed to each selected
+voice. Existing voices, directions, and recordings are reused; only missing work is sent to the
+external services.
+
 To deliberately replace selected character voices and all of their derived directions and audio,
 use the recreation flag:
 

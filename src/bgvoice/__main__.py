@@ -91,9 +91,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     generation.add_argument(
         "--lines-per-voice",
-        type=_positive_int,
+        type=_line_limit,
         default=100,
-        help="deterministic round-robin line target per voice (default: 100)",
+        help="maximum round-robin lines per voice, or 'all' (default: 100)",
     )
     generation.add_argument(
         "--database", type=Path, default=_DEFAULT_DATABASE, help="LanceDB directory"
@@ -218,6 +218,10 @@ def _positive_int(value: str) -> int:
     if parsed < 1:
         raise argparse.ArgumentTypeError("must be at least 1")
     return parsed
+
+
+def _line_limit(value: str) -> int | None:
+    return None if value.casefold() == "all" else _positive_int(value)
 
 
 def _port(value: str) -> int:

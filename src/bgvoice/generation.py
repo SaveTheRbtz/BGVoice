@@ -99,10 +99,10 @@ class _DialogueContextTurn:
 
 def round_robin_lines(
     dialogues: Mapping[str, Sequence[DialogueLineRecord]],
-    limit: int,
+    limit: int | None,
 ) -> list[DialogueLineRecord]:
     """Take each DLG's lowest remaining state in deterministic rounds."""
-    assert limit > 0, "line limit must be positive"
+    assert limit is None or limit > 0, "line limit must be positive"
     groups = [
         sorted(dialogues[name], key=lambda line: (line.state_index, line.id))
         for name in sorted(dialogues)
@@ -113,7 +113,7 @@ def round_robin_lines(
         for group in groups:
             if index < len(group):
                 selected.append(group[index])
-                if len(selected) == limit:
+                if limit is not None and len(selected) == limit:
                     return selected
     return selected
 
@@ -121,7 +121,7 @@ def round_robin_lines(
 async def load_workloads(
     reader: PipelineReader,
     requested_voices: Sequence[str],
-    lines_per_voice: int,
+    lines_per_voice: int | None,
 ) -> list[VoiceWorkload]:
     """Resolve requested current voices and their deterministic NPC workloads."""
     attribution = await reader.attribution_snapshot()
@@ -165,9 +165,6 @@ async def load_workloads(
             for name in dialogue_names
         }
         lines = tuple(round_robin_lines(groups, lines_per_voice))
-        assert len(lines) == lines_per_voice, (
-            f"voice {voice.display_name!r} has only {len(lines)} non-empty NPC lines"
-        )
         ability_scores, portrait_png = await _voice_evidence(
             reader,
             voice,
@@ -279,7 +276,7 @@ def _representative_priority(
 async def generate(
     database_path: Path,
     requested_voices: Sequence[str],
-    lines_per_voice: int,
+    lines_per_voice: int | None,
     openai_api_key: str,
     inworld_api_key: str,
     *,
