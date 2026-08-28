@@ -53,6 +53,9 @@ class StatsTableCounts:
     generated_audios: int
     running_tts_batches: int
     failed_tts_batches: int
+    voice_creation_failures: int
+    dialogue_direction_failures: int
+    audio_generation_failures: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -144,6 +147,9 @@ def pipeline_stats(
         generated_audios=tables.generated_audios,
         running_tts_batches=tables.running_tts_batches,
         failed_tts_batches=tables.failed_tts_batches,
+        voice_creation_failures=tables.voice_creation_failures,
+        dialogue_direction_failures=tables.dialogue_direction_failures,
+        audio_generation_failures=tables.audio_generation_failures,
     )
 
 

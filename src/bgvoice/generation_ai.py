@@ -1,6 +1,7 @@
 """Typed OpenAI boundary for voice research and dialogue direction."""
 
 import base64
+import logging
 import re
 from typing import Annotated, Literal, Self, cast
 from urllib.parse import urlsplit
@@ -8,7 +9,10 @@ from urllib.parse import urlsplit
 from openai import AsyncOpenAI
 from openai.types.responses import ResponseInputParam
 from openai.types.responses.parsed_response import ParsedResponse
+from openai.types.responses.response_usage import ResponseUsage
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
+
+logger = logging.getLogger(__name__)
 
 TTS2_PROMPTING_INSTRUCTIONS = """Your responses will be spoken aloud using inworld-tts-2, which supports
 instruction tags — natural language directions in square brackets placed before
@@ -82,6 +86,38 @@ _FICTIONAL_DIALECT_TERMS = (
     "sword coast",
     "underdark",
 )
+
+
+def _log_usage(
+    usage: ResponseUsage | None,
+    *,
+    operation: str,
+    model: str,
+    response_id: str,
+    attempt: int,
+    items: int,
+) -> None:
+    if usage is None:
+        return
+    reasoning = usage.output_tokens_details.reasoning_tokens
+    logger.info(
+        "openai_usage operation=%s model=%s response_id=%s attempt=%d items=%d "
+        "input_tokens=%d cached_input_tokens=%d cache_write_tokens=%d output_tokens=%d "
+        "reasoning_tokens=%d visible_output_tokens=%d total_tokens=%d",
+        operation,
+        model,
+        response_id,
+        attempt,
+        items,
+        usage.input_tokens,
+        usage.input_tokens_details.cached_tokens,
+        usage.input_tokens_details.cache_write_tokens,
+        usage.output_tokens,
+        reasoning,
+        usage.output_tokens - reasoning,
+        usage.total_tokens,
+    )
+
 
 ShortVoiceAttribute = Annotated[
     str,
@@ -357,7 +393,7 @@ async def create_voice_design_plan(
     """Ask the research model for a web-grounded, provider-ready voice profile."""
     prompt = build_voice_design_prompt(context)
     errors: list[str] = []
-    for _attempt in range(3):
+    for attempt in range(1, 4):
         retry_note = ""
         if errors:
             retry_note = (
@@ -392,6 +428,14 @@ async def create_voice_design_plan(
                     ],
                 ),
                 text_format=VoiceDesignPlan,
+            )
+            _log_usage(
+                response.usage,
+                operation="voice_design",
+                model=model,
+                response_id=response.id,
+                attempt=attempt,
+                items=1,
             )
             plan = response.output_parsed
             if plan is None:
@@ -471,38 +515,24 @@ DirectedDialogue = Annotated[
 ]
 
 
-class DirectedLinePlan(_StructuredOutput):
-    """One source identity paired with its strongly discriminated result."""
+class DirectionPlan(_StructuredOutput):
+    """One strongly discriminated dialogue direction."""
 
-    id: Annotated[str, Field(min_length=1, max_length=63)]
     result: DirectedDialogue
 
 
-class DirectionBatchPlan(_StructuredOutput):
-    """A batch of independently routed dialogue lines."""
+class DirectionSource(_StructuredOutput):
+    """One source line with its speaker evidence and unspoken context."""
 
-    items: Annotated[list[DirectedLinePlan], Field(min_length=1)]
-
-
-class DialogueDirectionSource(_StructuredOutput):
-    """One source line plus optional pre-rendered, unspoken scene context."""
-
-    id: Annotated[str, Field(min_length=1, max_length=63)]
+    display_name: str = Field(min_length=1)
+    metadata: str = Field(min_length=1)
     text: Annotated[str, Field(min_length=1, max_length=2000)]
     dialogue_history: Annotated[str | None, Field(max_length=1200)] = None
 
 
-class DirectionBatchSource(_StructuredOutput):
-    """Character evidence shared by one direction batch."""
-
-    display_name: str = Field(min_length=1)
-    metadata: str = Field(min_length=1)
-    lines: Annotated[list[DialogueDirectionSource], Field(min_length=1)]
-
-
-def build_direction_prompt(source: DirectionBatchSource) -> str:
-    """Create the tuned direction prompt with batch-local source identities."""
-    requested_lines = "\n\n".join(_direction_source_prompt(line) for line in source.lines)
+def build_direction_prompt(source: DirectionSource) -> str:
+    """Create the tuned prompt for one dialogue line."""
+    history = source.dialogue_history or ""
     return f"""Route and direct the following attributed {source.display_name} dialogue from
 Baldur's Gate. Each stored NPC line may be either actual character speech or authorial scene
 narration that should use a separate narrator voice.
@@ -581,34 +611,29 @@ Output: [emphasize “I”] Oh, I know that!
 After rewriting the source text, use the TTS-2 instruction-tag guide above to direct its delivery.
 Do not add spoken content, markdown, emojis, or enclosing quotation marks inside directed_dialogue.
 Use character metadata only to inform character delivery; never turn it into spoken content or use
-it to invent runtime-dependent details. Return one structured item for every requested ID, with
-that ID unchanged and exactly one speaker-routed, rewritten, TTS-directed result.
+it to invent runtime-dependent details. Return exactly one speaker-routed, rewritten,
+TTS-directed result.
 
 Character metadata:
 {source.metadata}
 
-Requested dialogue lines:
-{requested_lines}
-"""
+Read <context_not_for_tts> only to understand delivery and meaning. Rewrite and direct only
+<tts_source>. directed_dialogue must remain semantically equivalent to <tts_source>, except for
+placeholder replacement and removal or conversion of embedded stage directions.
 
+<requested_item>
+<context_not_for_tts>
+{history}
+</context_not_for_tts>
 
-def _direction_source_prompt(source: DialogueDirectionSource) -> str:
-    history = ""
-    if source.dialogue_history:
-        history = f"""The following scene context is unspoken evidence for interpreting
-the target dialogue's meaning, emotion, and delivery only. Do not quote, paraphrase, mention, or
-otherwise include any of this context in the output. Direct only the target dialogue.
-
-{source.dialogue_history}
-
-"""
-    return f"""Requested ID: {source.id}
-{history}Target dialogue to direct:
-{source.text}"""
+<tts_source>
+{source.text}
+</tts_source>
+</requested_item>"""
 
 
 def validate_directed_dialogue(
-    source: DialogueDirectionSource,
+    source: DirectionSource,
     result: NarratorDirectedDialogue | CharacterDirectedDialogue,
 ) -> None:
     """Reject results that retained source-only syntax or copied scene context."""
@@ -662,17 +687,16 @@ def tts_speakable_text(text: str) -> str:
     return text if any(character.isalnum() for character in without_instructions) else "[breathe]"
 
 
-async def create_direction_batch(
+async def create_direction(
     client: AsyncOpenAI,
-    source: DirectionBatchSource,
+    source: DirectionSource,
     *,
     model: str,
-) -> DirectionBatchPlan:
-    """Route and direct a batch without granting the dialogue model any tools."""
+) -> DirectionPlan:
+    """Route and direct one line without granting the dialogue model any tools."""
     prompt = build_direction_prompt(source)
-    expected = {line.id: line for line in source.lines}
     errors: list[str] = []
-    for _attempt in range(3):
+    for attempt in range(1, 4):
         retry_note = ""
         if errors:
             retry_note = (
@@ -696,25 +720,33 @@ async def create_direction_batch(
                             "content": (
                                 "You direct expressive game dialogue for Inworld TTS-2. "
                                 "Choose the intended narrator or character speaker, then obey the "
-                                "placeholder and stage-direction rewriting rules exactly. Return "
-                                "only the supplied Structured Output."
+                                "placeholder and stage-direction rewriting rules exactly. Only "
+                                "the text inside <tts_source> may be transformed "
+                                "or spoken. <context_not_for_tts> is read-only evidence. Never quote, "
+                                "paraphrase, summarize, continue, or otherwise include it in "
+                                "directed_dialogue. Do not replace the target with a line that seems "
+                                "more contextually appropriate. Return only the supplied Structured "
+                                "Output."
                             ),
                         },
                         {"role": "user", "content": prompt + retry_note},
                     ],
                 ),
-                text_format=DirectionBatchPlan,
+                text_format=DirectionPlan,
+            )
+            _log_usage(
+                response.usage,
+                operation="dialogue_direction",
+                model=model,
+                response_id=response.id,
+                attempt=attempt,
+                items=1,
             )
             plan = response.output_parsed
             if plan is None:
-                raise RuntimeError(f"{model} returned no parsed direction batch")
-            if len(plan.items) != len(expected) or {item.id for item in plan.items} != set(
-                expected
-            ):
-                raise ValueError("direction batch returned unexpected source IDs")
-            for item in plan.items:
-                validate_directed_dialogue(expected[item.id], item.result)
+                raise RuntimeError(f"{model} returned no parsed direction")
+            validate_directed_dialogue(source, plan.result)
             return plan
         except (ValidationError, ValueError, RuntimeError) as error:
             errors.append(str(error)[:500])
-    raise RuntimeError(f"{model} could not route and direct the requested lines: {errors[-1]}")
+    raise RuntimeError(f"{model} could not route and direct the requested line: {errors[-1]}")

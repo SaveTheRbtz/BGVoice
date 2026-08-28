@@ -1,5 +1,6 @@
 """The typed HTTP boundary for Inworld voice design and batch synthesis."""
 
+import asyncio
 import json
 from collections.abc import Sequence
 
@@ -7,6 +8,7 @@ import httpx
 import pytest
 from pydantic import ValidationError
 
+from bgvoice import inworld as inworld_module
 from bgvoice.inworld import (
     INWORLD_BATCH_CHARACTER_LIMIT,
     INWORLD_BATCH_CONCURRENCY,
@@ -65,6 +67,41 @@ def test_voice_design_rejects_provider_invalid_prompt_lengths(length: int) -> No
             design_prompt="x" * length,
             preview_text="Hello there.",
         )
+
+
+@pytest.mark.anyio
+async def test_voice_design_requests_are_paced(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    delays: list[float] = []
+
+    async def sleep(delay: float) -> None:
+        delays.append(delay)
+
+    monkeypatch.setattr(inworld_module.asyncio, "sleep", sleep)
+    request = VoiceDesignRequest(
+        language_code="en-GB",
+        design_prompt="A bright, warm, playful young adventurer voice.",
+        preview_text="Ready when you are.",
+    )
+    response = {
+        "langCode": "EN_GB",
+        "previewVoices": [
+            {
+                "voiceId": "workspace__draft",
+                "previewText": "Ready when you are.",
+                "previewAudio": "UklGRg==",
+            }
+        ],
+    }
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda _: httpx.Response(200, json=response))
+    ) as http:
+        client = InworldClient(http, "secret")
+        await asyncio.gather(client.design_voice(request), client.design_voice(request))
+
+    assert len(delays) == 1
+    assert delays[0] >= 6
 
 
 @pytest.mark.anyio
@@ -140,6 +177,8 @@ async def test_voice_design_publish_and_batch_download_flow_is_typed() -> None:
         if path.startswith("/lro/v1alpha/workspaces/"):
             operation_reads += 1
             if operation_reads == 1:
+                return httpx.Response(429, json={"message": "slow down"})
+            if operation_reads == 2:
                 return httpx.Response(
                     200,
                     json={

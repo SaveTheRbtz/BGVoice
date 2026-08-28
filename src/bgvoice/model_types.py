@@ -54,6 +54,14 @@ class RunStatus(StrEnum):
     FAILED = "failed"
 
 
+class GenerationFailureStage(StrEnum):
+    """Generation unit that most recently failed to produce its durable output."""
+
+    VOICE_CREATION = "voice_creation"
+    DIALOGUE_DIRECTION = "dialogue_direction"
+    AUDIO_GENERATION = "audio_generation"
+
+
 type TerminalRunStatus = Literal[
     RunStatus.COMPLETE,
     RunStatus.COMPLETE_WITH_ERRORS,

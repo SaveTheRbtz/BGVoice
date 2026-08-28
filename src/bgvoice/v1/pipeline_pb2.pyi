@@ -145,7 +145,7 @@ class ExtractionState(_message.Message):
     def __init__(self, status: _Optional[_Union[DetailStatus, str]] = ..., error: _Optional[str] = ..., updated_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., extraction_run: _Optional[str] = ...) -> None: ...
 
 class PipelineSummary(_message.Message):
-    __slots__ = ("voices", "characters", "dialogues", "dialogue_lines", "character_sounds", "dialogue_transitions", "races", "character_classes", "kits", "identifier_definitions", "matched_characters", "partially_matched_characters", "missing_dialogue_characters", "unattributed_dialogues", "unattributed_dialogue_lines", "generated_voices", "directed_lines", "generated_audios", "running_tts_batches", "failed_tts_batches")
+    __slots__ = ("voices", "characters", "dialogues", "dialogue_lines", "character_sounds", "dialogue_transitions", "races", "character_classes", "kits", "identifier_definitions", "matched_characters", "partially_matched_characters", "missing_dialogue_characters", "unattributed_dialogues", "unattributed_dialogue_lines", "generated_voices", "directed_lines", "generated_audios", "running_tts_batches", "failed_tts_batches", "voice_creation_failures", "dialogue_direction_failures", "audio_generation_failures")
     VOICES_FIELD_NUMBER: _ClassVar[int]
     CHARACTERS_FIELD_NUMBER: _ClassVar[int]
     DIALOGUES_FIELD_NUMBER: _ClassVar[int]
@@ -166,6 +166,9 @@ class PipelineSummary(_message.Message):
     GENERATED_AUDIOS_FIELD_NUMBER: _ClassVar[int]
     RUNNING_TTS_BATCHES_FIELD_NUMBER: _ClassVar[int]
     FAILED_TTS_BATCHES_FIELD_NUMBER: _ClassVar[int]
+    VOICE_CREATION_FAILURES_FIELD_NUMBER: _ClassVar[int]
+    DIALOGUE_DIRECTION_FAILURES_FIELD_NUMBER: _ClassVar[int]
+    AUDIO_GENERATION_FAILURES_FIELD_NUMBER: _ClassVar[int]
     voices: int
     characters: int
     dialogues: int
@@ -186,7 +189,10 @@ class PipelineSummary(_message.Message):
     generated_audios: int
     running_tts_batches: int
     failed_tts_batches: int
-    def __init__(self, voices: _Optional[int] = ..., characters: _Optional[int] = ..., dialogues: _Optional[int] = ..., dialogue_lines: _Optional[int] = ..., character_sounds: _Optional[int] = ..., dialogue_transitions: _Optional[int] = ..., races: _Optional[int] = ..., character_classes: _Optional[int] = ..., kits: _Optional[int] = ..., identifier_definitions: _Optional[int] = ..., matched_characters: _Optional[int] = ..., partially_matched_characters: _Optional[int] = ..., missing_dialogue_characters: _Optional[int] = ..., unattributed_dialogues: _Optional[int] = ..., unattributed_dialogue_lines: _Optional[int] = ..., generated_voices: _Optional[int] = ..., directed_lines: _Optional[int] = ..., generated_audios: _Optional[int] = ..., running_tts_batches: _Optional[int] = ..., failed_tts_batches: _Optional[int] = ...) -> None: ...
+    voice_creation_failures: int
+    dialogue_direction_failures: int
+    audio_generation_failures: int
+    def __init__(self, voices: _Optional[int] = ..., characters: _Optional[int] = ..., dialogues: _Optional[int] = ..., dialogue_lines: _Optional[int] = ..., character_sounds: _Optional[int] = ..., dialogue_transitions: _Optional[int] = ..., races: _Optional[int] = ..., character_classes: _Optional[int] = ..., kits: _Optional[int] = ..., identifier_definitions: _Optional[int] = ..., matched_characters: _Optional[int] = ..., partially_matched_characters: _Optional[int] = ..., missing_dialogue_characters: _Optional[int] = ..., unattributed_dialogues: _Optional[int] = ..., unattributed_dialogue_lines: _Optional[int] = ..., generated_voices: _Optional[int] = ..., directed_lines: _Optional[int] = ..., generated_audios: _Optional[int] = ..., running_tts_batches: _Optional[int] = ..., failed_tts_batches: _Optional[int] = ..., voice_creation_failures: _Optional[int] = ..., dialogue_direction_failures: _Optional[int] = ..., audio_generation_failures: _Optional[int] = ...) -> None: ...
 
 class Installation(_message.Message):
     __slots__ = ("name", "display_name", "database_path", "database_size", "attribution_publication", "attribution_completed_at", "summary")

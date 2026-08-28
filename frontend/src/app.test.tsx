@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { create } from "@bufbuild/protobuf";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -11,6 +11,7 @@ import {
   CharacterSchema,
   type DialogueLine,
   DialogueLineSchema,
+  type ExtractionRun,
   type Installation,
   InstallationSchema,
   type Voice,
@@ -27,6 +28,9 @@ const api = vi.hoisted(() => ({
   listDialogueLines: vi.fn<
     (query: ListQuery, signal?: AbortSignal) => Promise<ListResult<DialogueLine>>
   >(),
+  listExtractionRuns: vi.fn<
+    (query: ListQuery, signal?: AbortSignal) => Promise<ListResult<ExtractionRun>>
+  >(),
 }));
 
 vi.mock(import("./api"), async (importOriginal) => ({
@@ -36,12 +40,18 @@ vi.mock(import("./api"), async (importOriginal) => ({
   getCharacter: api.getCharacter,
   listVoices: api.listVoices,
   listDialogueLines: api.listDialogueLines,
+  listExtractionRuns: api.listExtractionRuns,
 }));
 
 import App from "./App";
 
 const installation = create(InstallationSchema, {
   name: "installations/bg2ee-eet",
+  summary: {
+    voiceCreationFailures: 1n,
+    dialogueDirectionFailures: 3n,
+    audioGenerationFailures: 6n,
+  },
 });
 
 const voice = create(VoiceSchema, {
@@ -108,6 +118,7 @@ beforeEach(() => {
   api.getVoice.mockResolvedValue(voice);
   api.getCharacter.mockResolvedValue(character);
   api.listDialogueLines.mockResolvedValue({ items: [line], nextPageToken: "", totalSize: 1n });
+  api.listExtractionRuns.mockResolvedValue({ items: [], nextPageToken: "", totalSize: 0n });
 });
 
 afterEach(() => {
@@ -164,5 +175,18 @@ describe("application jobs", () => {
       expect.objectContaining({ filter: "", orderBy: "", pageSize: 25 }),
       expect.any(AbortSignal),
     );
+  });
+
+  it("summarizes unresolved generation failures by stage", async () => {
+    window.history.replaceState(null, "", "/pipeline");
+    render(<App />);
+
+    const failures = within(await screen.findByRole("group", { name: "Generation failures" }));
+    expect(failures.getByText("Voice creation")).toBeTruthy();
+    expect(failures.getByText("1")).toBeTruthy();
+    expect(failures.getByText("Dialogue direction")).toBeTruthy();
+    expect(failures.getByText("3")).toBeTruthy();
+    expect(failures.getByText("Audio generation")).toBeTruthy();
+    expect(failures.getByText("6")).toBeTruthy();
   });
 });

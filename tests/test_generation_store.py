@@ -3,14 +3,16 @@
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from bgvoice.generation_store import GenerationStore
-from bgvoice.model_types import RunStatus
+from bgvoice.model_types import GenerationFailureStage, RunStatus
 from bgvoice.storage_records import (
     CharacterDirection,
     DirectedLineRecord,
     GeneratedAudioRecord,
     GeneratedVoiceRecord,
+    GenerationFailureRecord,
     NarratorDirection,
     TtsBatchRecord,
     VoiceDescription,
@@ -86,6 +88,39 @@ async def test_generated_assets_round_trip_upsert_filter_and_delete(
         await store.upsert_generated_audio([imoen_audio, gorion_audio])
         await store.upsert_generated_audio([imoen_audio])
 
+        imoen_failure = GenerationFailureRecord(
+            id=GenerationFailureRecord.id_for(
+                GenerationFailureStage.DIALOGUE_DIRECTION,
+                "imoen",
+                line_id,
+            ),
+            stage=GenerationFailureStage.DIALOGUE_DIRECTION,
+            voice_id="imoen",
+            dialogue_line_id=line_id,
+            error_type="DirectionError",
+            error_code=None,
+            error="invalid structured output",
+            failed_at="2026-08-27T10:03:00+00:00",
+        )
+        gorion_failure = GenerationFailureRecord(
+            id=GenerationFailureRecord.id_for(
+                GenerationFailureStage.VOICE_CREATION,
+                "gorion",
+            ),
+            stage=GenerationFailureStage.VOICE_CREATION,
+            voice_id="gorion",
+            dialogue_line_id=None,
+            error_type="HTTPStatusError",
+            error_code="429",
+            error="provider rate limit",
+            failed_at="2026-08-27T10:03:00+00:00",
+        )
+        updated_imoen_failure = imoen_failure.model_copy(
+            update={"error": "source wrappers remained in the directed line"}
+        )
+        await store.upsert_failures([imoen_failure, gorion_failure])
+        await store.upsert_failures([updated_imoen_failure])
+
         voices = await store.generated_voices()
         assert voices["imoen"].description.language_code == "en-GB"
         assert voices["imoen"].inworld_voice_id == "voice-imoen-v2"
@@ -116,11 +151,17 @@ async def test_generated_assets_round_trip_upsert_filter_and_delete(
             imoen_audio.id,
             gorion_audio.id,
         }
+        assert await store.failures(["imoen"]) == [updated_imoen_failure]
+        assert await store.failures([]) == []
+        await store.delete_failures([gorion_failure.id])
+        assert await store.failures() == [updated_imoen_failure]
+        await store.upsert_failures([gorion_failure])
 
         await store.delete_voice_generation("imoen")
         assert set(await store.generated_voices()) == {"gorion"}
         assert {line.voice_id for line in await store.directed_lines()} == {"gorion"}
         assert {audio.voice_id for audio in await store.generated_audio()} == {"gorion"}
+        assert await store.failures() == [gorion_failure]
     finally:
         store.close()
 
@@ -131,6 +172,7 @@ async def test_batch_upsert_advances_the_durable_lifecycle(scenario_database: Pa
     try:
         running = TtsBatchRecord(
             operation_name="operations/batch-1",
+            custom_ids=["d-first", "d-second"],
             status=RunStatus.RUNNING,
             started_at="2026-08-27T10:00:00+00:00",
         )
@@ -139,6 +181,7 @@ async def test_batch_upsert_advances_the_durable_lifecycle(scenario_database: Pa
 
         complete = TtsBatchRecord(
             operation_name=running.operation_name,
+            custom_ids=running.custom_ids,
             status=RunStatus.COMPLETE,
             started_at=running.started_at,
             completed_at="2026-08-27T10:03:00+00:00",
@@ -148,3 +191,52 @@ async def test_batch_upsert_advances_the_durable_lifecycle(scenario_database: Pa
         assert await store.batches() == [complete]
     finally:
         store.close()
+
+
+@pytest.mark.parametrize(
+    ("stage", "dialogue_line_id"),
+    [
+        (GenerationFailureStage.VOICE_CREATION, "AERIE.DLG:npc:0:-"),
+        (GenerationFailureStage.DIALOGUE_DIRECTION, None),
+    ],
+)
+def test_generation_failures_enforce_stage_scope(
+    stage: GenerationFailureStage,
+    dialogue_line_id: str | None,
+) -> None:
+    with pytest.raises(ValidationError, match="direction and audio failures"):
+        GenerationFailureRecord(
+            id=GenerationFailureRecord.id_for(stage, "aerie", dialogue_line_id),
+            stage=stage,
+            voice_id="aerie",
+            dialogue_line_id=dialogue_line_id,
+            error_type="RuntimeError",
+            error_code=None,
+            error="failed",
+            failed_at="2026-08-27T10:03:00+00:00",
+        )
+
+
+def test_generation_failures_enforce_deterministic_id() -> None:
+    with pytest.raises(ValidationError, match="generation failure id"):
+        GenerationFailureRecord(
+            id="wrong",
+            stage=GenerationFailureStage.VOICE_CREATION,
+            voice_id="aerie",
+            dialogue_line_id=None,
+            error_type="RuntimeError",
+            error_code=None,
+            error="failed",
+            failed_at="2026-08-27T10:03:00+00:00",
+        )
+
+
+@pytest.mark.parametrize("custom_ids", [[""], ["duplicate", "duplicate"]])
+def test_tts_batches_reject_invalid_custom_ids(custom_ids: list[str]) -> None:
+    with pytest.raises(ValidationError, match="TTS batch custom IDs"):
+        TtsBatchRecord(
+            operation_name="operations/batch-1",
+            custom_ids=custom_ids,
+            status=RunStatus.RUNNING,
+            started_at="2026-08-27T10:00:00+00:00",
+        )

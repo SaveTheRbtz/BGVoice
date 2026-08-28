@@ -10,10 +10,8 @@ from pydantic import ValidationError
 from bgvoice.generation_ai import (
     CharacterAbilityScores,
     CharacterDirectedDialogue,
-    DialogueDirectionSource,
-    DirectedLinePlan,
-    DirectionBatchPlan,
-    DirectionBatchSource,
+    DirectionPlan,
+    DirectionSource,
     NarratorDirectedDialogue,
     VoiceDesignPlan,
     VoiceDesignSource,
@@ -21,7 +19,7 @@ from bgvoice.generation_ai import (
     build_direction_prompt,
     build_voice_design_content,
     build_voice_design_prompt,
-    create_direction_batch,
+    create_direction,
     create_voice_design_plan,
     tts_speakable_text,
     validate_directed_dialogue,
@@ -145,7 +143,16 @@ class _QueuedResponses:
 
     async def parse(self, **arguments: object) -> object:
         self.calls.append(arguments)
-        return self.responses.pop(0)
+        response = cast(SimpleNamespace, self.responses.pop(0))
+        response.id = f"response-{len(self.calls)}"
+        response.usage = SimpleNamespace(
+            input_tokens=120,
+            input_tokens_details=SimpleNamespace(cached_tokens=80, cache_write_tokens=0),
+            output_tokens=40,
+            output_tokens_details=SimpleNamespace(reasoning_tokens=30),
+            total_tokens=160,
+        )
+        return response
 
 
 def _client(responses: _QueuedResponses) -> AsyncOpenAI:
@@ -183,31 +190,22 @@ async def test_voice_design_requires_and_verifies_web_search_with_retry() -> Non
     )
 
 
-def _direction_source() -> DirectionBatchSource:
-    return DirectionBatchSource(
+def _direction_source() -> DirectionSource:
+    return DirectionSource(
         display_name="Gorion",
         metadata="Name: Gorion\nGender: Male\nRace: Human\nClass: Mage",
-        lines=[
-            DialogueDirectionSource(
-                id="d-character",
-                text="*whispering* We must leave, <CHARNAME>.",
-                dialogue_history=(
-                    "Unspoken scene context:\n"
-                    "Previous NPC/scene line: The walls are no longer safe after nightfall.\n"
-                    "Player response: What should we do now?"
-                ),
-            ),
-            DialogueDirectionSource(
-                id="d-narrator",
-                text="(The old mage turns toward the road as dawn breaks.)",
-            ),
-        ],
+        text="*whispering* We must leave, <CHARNAME>.",
+        dialogue_history=(
+            "Unspoken scene context:\n"
+            "Previous NPC/scene line: The walls are no longer safe after nightfall.\n"
+            "Player response: What should we do now?"
+        ),
     )
 
 
 def test_direction_contract_is_discriminated_and_keeps_tuned_rules() -> None:
-    schema = DirectionBatchPlan.model_json_schema()
-    result_schema = schema["$defs"]["DirectedLinePlan"]["properties"]["result"]
+    schema = DirectionPlan.model_json_schema()
+    result_schema = schema["properties"]["result"]
     prompt = build_direction_prompt(_direction_source())
 
     branch_names = [branch["$ref"].rsplit("/", 1)[1] for branch in result_schema["anyOf"]]
@@ -221,9 +219,10 @@ def test_direction_contract_is_discriminated_and_keeps_tuned_rules() -> None:
     assert "Fully enclosing asterisks or parentheses are strong evidence" in prompt
     assert "A brief stage direction such as *sighs* or *whispering*" in prompt
     assert "Do not infer additional emotion from a visual action." in prompt
-    assert "Requested ID: d-character" in prompt
+    assert prompt.count("<requested_item>") == 1
+    assert "<context_not_for_tts>" in prompt
     assert "Previous NPC/scene line: The walls are no longer safe" in prompt
-    assert "Requested ID: d-narrator" in prompt
+    assert "<tts_source>\n*whispering* We must leave, <CHARNAME>.\n</tts_source>" in prompt
 
 
 @pytest.mark.parametrize(
@@ -243,39 +242,23 @@ def test_tts_speakable_text_normalizes_only_silent_delivery_instructions(
 
 
 @pytest.mark.anyio
-async def test_direction_has_no_tools_and_retries_invalid_structured_results() -> None:
+async def test_direction_has_no_tools_and_retries_invalid_structured_results(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level("INFO", logger="bgvoice.generation_ai")
     source = _direction_source()
-    invalid = DirectionBatchPlan(
-        items=[
-            DirectedLinePlan(
-                id="d-character",
-                result=CharacterDirectedDialogue(
-                    speaker="character",
-                    directed_dialogue="[speak quietly] We must leave, <CHARNAME>.",
-                ),
-            ),
-            DirectedLinePlan(
-                id="d-narrator",
-                result=NarratorDirectedDialogue(
-                    speaker="narrator",
-                    directed_dialogue="[narrate calmly] The old mage turns toward the road.",
-                ),
-            ),
-        ]
+    invalid = DirectionPlan(
+        result=CharacterDirectedDialogue(
+            speaker="character",
+            directed_dialogue="[speak quietly] We must leave, <CHARNAME>.",
+        )
     )
     valid = invalid.model_copy(
         update={
-            "items": [
-                invalid.items[0].model_copy(
-                    update={
-                        "result": CharacterDirectedDialogue(
-                            speaker="character",
-                            directed_dialogue="[speak quietly] We must leave.",
-                        )
-                    }
-                ),
-                invalid.items[1],
-            ]
+            "result": CharacterDirectedDialogue(
+                speaker="character",
+                directed_dialogue="[speak quietly] We must leave.",
+            )
         }
     )
     responses = _QueuedResponses(
@@ -285,18 +268,28 @@ async def test_direction_has_no_tools_and_retries_invalid_structured_results() -
         ]
     )
 
-    assert await create_direction_batch(_client(responses), source, model="gpt-5.6-luna") == valid
+    assert await create_direction(_client(responses), source, model="gpt-5.6-luna") == valid
     assert len(responses.calls) == 2
     for call in responses.calls:
+        assert call["reasoning"] == {"effort": "medium"}
         assert call["tools"] == []
         assert call["tool_choice"] == "none"
-        assert call["text_format"] is DirectionBatchPlan
-    second_input = cast(list[dict[str, str]], responses.calls[1]["input"])
-    assert "previous result failed validation" in second_input[1]["content"]
+        assert "max_output_tokens" not in call
+        assert call["text_format"] is DirectionPlan
+    retry_input = cast(list[dict[str, str]], responses.calls[1]["input"])
+    developer_instruction = retry_input[0]["content"]
+    assert "Only the text inside <tts_source> may be transformed" in developer_instruction
+    assert (
+        "Do not replace the target with a line that seems more contextually appropriate."
+        in developer_instruction
+    )
+    assert "previous result failed validation" in retry_input[1]["content"]
+    assert "angle-bracket placeholder" in retry_input[1]["content"]
+    assert "reasoning_tokens=30 visible_output_tokens=10" in caplog.text
 
 
 def test_direction_validation_rejects_narrator_wrappers_and_copied_context() -> None:
-    source = _direction_source().lines[0]
+    source = _direction_source()
 
     with pytest.raises(ValueError, match="enclosing parentheses"):
         validate_directed_dialogue(

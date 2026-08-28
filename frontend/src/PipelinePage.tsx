@@ -58,6 +58,9 @@ export function PipelinePage({ installation }: { installation: Installation | nu
     generatedAudios,
     runningTtsBatches,
     failedTtsBatches,
+    voiceCreationFailures,
+    dialogueDirectionFailures,
+    audioGenerationFailures,
   } = installation?.summary ?? {};
   return (
     <section className="pipeline-page">
@@ -93,6 +96,11 @@ export function PipelinePage({ installation }: { installation: Installation | nu
         <div className="generation-batches">
           <SupportStat label="TTS batches running" value={runningTtsBatches} />
           <SupportStat label="TTS batches failed" value={failedTtsBatches} />
+        </div>
+        <div className="generation-failures" role="group" aria-label="Generation failures">
+          <SupportStat label="Voice creation" value={voiceCreationFailures} />
+          <SupportStat label="Dialogue direction" value={dialogueDirectionFailures} />
+          <SupportStat label="Audio generation" value={audioGenerationFailures} />
         </div>
       </section>
       <div className="support-stats">

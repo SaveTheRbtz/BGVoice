@@ -16,6 +16,7 @@ from bgvoice.model_types import (
     DetailStatus,
     DialogueLineKind,
     ExtractionState,
+    GenerationFailureStage,
     HappinessAlignment,
     IdentifierKind,
     InteractionKind,
@@ -345,10 +346,46 @@ class GeneratedAudioIdentity(_Record):
     dialogue_line_id: str
 
 
+class GenerationFailureRecord(_Record):
+    """Latest unresolved failure for one voice or dialogue-line generation stage."""
+
+    id: str = Field(min_length=1, max_length=63)
+    stage: GenerationFailureStage = Field(strict=False)
+    voice_id: str = Field(min_length=1)
+    dialogue_line_id: str | None = Field(default=None, min_length=1)
+    error_type: str = Field(min_length=1, max_length=200)
+    error_code: str | None = Field(default=None, min_length=1, max_length=200)
+    error: str = Field(min_length=1, max_length=2000)
+    failed_at: str = Field(min_length=1)
+
+    @staticmethod
+    def id_for(
+        stage: GenerationFailureStage,
+        voice_id: str,
+        dialogue_line_id: str | None = None,
+    ) -> str:
+        identity = f"{stage.value}\0{voice_id}\0{dialogue_line_id or ''}".encode()
+        return f"f-{hashlib.blake2s(identity, digest_size=16).hexdigest()}"
+
+    @model_validator(mode="after")
+    def validate_identity(self) -> Self:
+        line_failure = self.stage in (
+            GenerationFailureStage.DIALOGUE_DIRECTION,
+            GenerationFailureStage.AUDIO_GENERATION,
+        )
+        assert line_failure == (self.dialogue_line_id is not None), (
+            "direction and audio failures require a dialogue line; voice failures must omit it"
+        )
+        expected = self.id_for(self.stage, self.voice_id, self.dialogue_line_id)
+        assert self.id == expected, f"generation failure id must be {expected!r}"
+        return self
+
+
 class TtsBatchRecord(_Record):
     """Durable handle for one asynchronous Inworld synthesis operation."""
 
     operation_name: str = Field(min_length=1)
+    custom_ids: list[str] = Field(min_length=1)
     status: RunStatus = Field(strict=False)
     started_at: str = Field(min_length=1)
     completed_at: str | None = None
@@ -356,6 +393,12 @@ class TtsBatchRecord(_Record):
 
     @model_validator(mode="after")
     def validate_lifecycle(self) -> Self:
+        assert all(0 < len(custom_id) <= 63 for custom_id in self.custom_ids), (
+            "TTS batch custom IDs must contain 1 to 63 characters"
+        )
+        assert len(self.custom_ids) == len(set(self.custom_ids)), (
+            "TTS batch custom IDs must be unique"
+        )
         running = self.status is RunStatus.RUNNING
         assert running == (self.completed_at is None), (
             "running TTS batches must be open and terminal batches must be completed"

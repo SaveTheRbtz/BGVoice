@@ -103,8 +103,8 @@ For each voice, dialogue resources are sorted once and their lowest remaining st
 round-robin order. Voice design combines extracted metadata, ability scores, biography, and portrait
 with required web research under an annotated 12-part voice profile. Dialogue direction has no web
 access and returns an explicit character-or-narrator result for every line. Direction is submitted
-in homogeneous 10-line batches with a stable prompt prefix. Its two-turn dialogue context is loaded
-once into a typed in-memory index rather than queried line by line. Speech is ordered by provider
+one line per request with a stable prompt prefix. Its two-turn dialogue context is loaded once into
+a typed in-memory index rather than queried line by line. Speech is ordered by provider
 voice, packed into 200,000-character asynchronous Inworld jobs, and scheduled globally with at most
 75 jobs and 15 million characters in flight: half of the Developer plan's published limits.
 Inworld returns each batch line as one or more concatenated WAV segments. PyAV joins and normalizes
@@ -119,7 +119,7 @@ voice. Existing voices, directions, and recordings are reused; only missing work
 external services.
 
 Up to 75 voices are designed and directed concurrently. Line selection remains deterministic,
-up to 100 OpenAI requests may run concurrently across direction batches, and generation state is
+up to 100 single-line OpenAI direction requests may run concurrently, and generation state is
 serialized at the database boundary. As soon as one voice's direction is complete, its missing
 speech is scheduled under the shared Inworld limits while the other voices continue.
 

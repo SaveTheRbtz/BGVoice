@@ -192,6 +192,9 @@ class PipelineService(pipeline_connect.PipelineService):
                 generated_audios=stats.generated_audios,
                 running_tts_batches=stats.running_tts_batches,
                 failed_tts_batches=stats.failed_tts_batches,
+                voice_creation_failures=stats.voice_creation_failures,
+                dialogue_direction_failures=stats.dialogue_direction_failures,
+                audio_generation_failures=stats.audio_generation_failures,
             ),
         )
         return message

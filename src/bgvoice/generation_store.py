@@ -19,12 +19,14 @@ from bgvoice.storage_records import (
     GeneratedAudioIdentity,
     GeneratedAudioRecord,
     GeneratedVoiceRecord,
+    GenerationFailureRecord,
     TtsBatchRecord,
 )
 from bgvoice.storage_schema import (
     _DIRECTED_LINES,
     _GENERATED_AUDIO,
     _GENERATED_VOICES,
+    _GENERATION_FAILURES,
     _TTS_BATCHES,
     TABLE_NAMES,
 )
@@ -40,6 +42,7 @@ class GenerationStore:
     _directed_lines: AsyncTable
     _generated_audio: AsyncTable
     _tts_batches: AsyncTable
+    _generation_failures: AsyncTable
     _write_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     @classmethod
@@ -54,11 +57,18 @@ class GenerationStore:
         assert existing == TABLE_NAMES, (
             f"LanceDB tables are {sorted(existing)}; expected {sorted(TABLE_NAMES)}"
         )
-        generated_voices, directed_lines, generated_audio, tts_batches = await asyncio.gather(
+        (
+            generated_voices,
+            directed_lines,
+            generated_audio,
+            tts_batches,
+            failures,
+        ) = await asyncio.gather(
             connection.open_table(_GENERATED_VOICES),
             connection.open_table(_DIRECTED_LINES),
             connection.open_table(_GENERATED_AUDIO),
             connection.open_table(_TTS_BATCHES),
+            connection.open_table(_GENERATION_FAILURES),
         )
         return cls(
             resolved,
@@ -67,6 +77,7 @@ class GenerationStore:
             directed_lines,
             generated_audio,
             tts_batches,
+            failures,
         )
 
     def close(self) -> None:
@@ -107,6 +118,12 @@ class GenerationStore:
     async def batches(self) -> list[TtsBatchRecord]:
         return await _records(self._tts_batches, TtsBatchRecord)
 
+    async def failures(
+        self,
+        voice_ids: Sequence[str] | None = None,
+    ) -> list[GenerationFailureRecord]:
+        return await _records(self._generation_failures, GenerationFailureRecord, voice_ids)
+
     async def running_batches(self) -> list[TtsBatchRecord]:
         return cast(
             list[TtsBatchRecord],
@@ -131,6 +148,16 @@ class GenerationStore:
         async with self._write_lock:
             await _upsert(self._tts_batches, "operation_name", records)
 
+    async def upsert_failures(self, records: Sequence[GenerationFailureRecord]) -> None:
+        async with self._write_lock:
+            await _upsert(self._generation_failures, "id", records)
+
+    async def delete_failures(self, ids: Sequence[str]) -> None:
+        if not ids:
+            return
+        async with self._write_lock:
+            await self._generation_failures.delete(col("id").isin(ids))
+
     async def delete_voice_generation(self, voice_id: str) -> None:
         """Remove every regenerable artifact owned by one canonical character voice."""
         predicate = col("voice_id") == lit(voice_id)
@@ -138,6 +165,7 @@ class GenerationStore:
             await self._generated_audio.delete(predicate)
             await self._directed_lines.delete(predicate)
             await self._generated_voices.delete(predicate)
+            await self._generation_failures.delete(predicate)
 
 
 async def _records[Record: LanceModel](

@@ -2,6 +2,7 @@
 
 import argparse
 import asyncio
+import logging
 import os
 import sys
 from collections.abc import Sequence
@@ -144,6 +145,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(summary.model_dump_json(indent=2))
         return 0
     if args.command == "generate":
+        logging.basicConfig(level=logging.WARNING, format="%(asctime)s %(message)s")
+        logging.getLogger("bgvoice.generation_ai").setLevel(logging.INFO)
         summary = asyncio.run(
             generate(
                 args.database,

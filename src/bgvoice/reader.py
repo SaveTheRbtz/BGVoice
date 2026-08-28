@@ -21,6 +21,7 @@ from bgvoice.model_types import (
     AttributionPublicationStatus,
     DetailStatus,
     DialogueLineKind,
+    GenerationFailureStage,
     IdentifierKind,
     RunKind,
     RunStatus,
@@ -144,6 +145,7 @@ class PipelineReader:
     directed_lines_table: AsyncTable
     generated_audio_table: AsyncTable
     tts_batches_table: AsyncTable
+    generation_failures_table: AsyncTable
     dialogues_table: AsyncTable
     lines_table: AsyncTable
     transitions_table: AsyncTable
@@ -189,6 +191,7 @@ class PipelineReader:
             tables["directed_lines"],
             tables["generated_audio"],
             tables["tts_batches"],
+            tables["generation_failures"],
             tables["dialogues"],
             tables["dialogue_lines"],
             tables["dialogue_transitions"],
@@ -336,9 +339,32 @@ class PipelineReader:
             self.happiness_rules_table.count_rows(),
             self.banter_timing_settings_table.count_rows(),
         )
+        failure_counts = dict(
+            zip(
+                GenerationFailureStage,
+                await asyncio.gather(
+                    *(
+                        count_rows(
+                            self.generation_failures_table,
+                            col("stage") == lit(stage.value),
+                        )
+                        for stage in GenerationFailureStage
+                    )
+                ),
+                strict=True,
+            )
+        )
         return StatsTableCounts(
             *counts,
             *generation.pipeline_counts(attribution.voices),
+            *(
+                failure_counts[stage]
+                for stage in (
+                    GenerationFailureStage.VOICE_CREATION,
+                    GenerationFailureStage.DIALOGUE_DIRECTION,
+                    GenerationFailureStage.AUDIO_GENERATION,
+                )
+            ),
         )
 
     async def characters(self, query: CharacterQuery) -> CharacterPage:

@@ -512,3 +512,6 @@ class PipelineStats(_ReaderModel):
     generated_audios: int = Field(ge=0)
     running_tts_batches: int = Field(ge=0)
     failed_tts_batches: int = Field(ge=0)
+    voice_creation_failures: int = Field(ge=0)
+    dialogue_direction_failures: int = Field(ge=0)
+    audio_generation_failures: int = Field(ge=0)

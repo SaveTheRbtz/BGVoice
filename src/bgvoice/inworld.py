@@ -18,6 +18,8 @@ INWORLD_BATCH_CONCURRENCY = 75
 INWORLD_QUEUED_CHARACTER_LIMIT = 15_000_000
 INWORLD_BATCH_CHARACTER_LIMIT = INWORLD_QUEUED_CHARACTER_LIMIT // INWORLD_BATCH_CONCURRENCY
 INWORLD_BATCH_ITEM_LIMIT = 10_000
+INWORLD_VOICE_DESIGN_INTERVAL_SECONDS = 6.1
+INWORLD_OPERATION_POLL_INTERVAL_SECONDS = 0.1
 
 _API_ROOT = "https://api.inworld.ai"
 _DESIGN_VOICE_URL = f"{_API_ROOT}/voices/v1/voices:design"
@@ -140,6 +142,20 @@ def pack_synthesis_items(
     return batches
 
 
+class _RequestPacer:
+    def __init__(self, interval_seconds: float) -> None:
+        self._interval_seconds = interval_seconds
+        self._lock = asyncio.Lock()
+        self._next_request_at = 0.0
+
+    async def wait(self) -> None:
+        async with self._lock:
+            delay = self._next_request_at - asyncio.get_running_loop().time()
+            if delay > 0:
+                await asyncio.sleep(delay)
+            self._next_request_at = asyncio.get_running_loop().time() + self._interval_seconds
+
+
 class InworldClient:
     """Small async boundary for the Inworld operations used by the pipeline."""
 
@@ -147,8 +163,11 @@ class InworldClient:
         assert api_key, "Inworld API key is required"
         self._http = http
         self._headers = {"Authorization": f"Basic {api_key}"}
+        self._voice_design_pacer = _RequestPacer(INWORLD_VOICE_DESIGN_INTERVAL_SECONDS)
+        self._operation_pacer = _RequestPacer(INWORLD_OPERATION_POLL_INTERVAL_SECONDS)
 
     async def design_voice(self, request: VoiceDesignRequest) -> VoiceDesignResponse:
+        await self._voice_design_pacer.wait()
         response = await self._http.post(
             _DESIGN_VOICE_URL,
             headers=self._headers,
@@ -251,10 +270,15 @@ class InworldClient:
 
     async def get_operation(self, name: str) -> BatchOperation:
         assert name, "operation name is required"
-        response = await self._http.get(
-            f"{_API_ROOT}/lro/v1alpha/{name}",
-            headers=self._headers,
-        )
+        while True:
+            await self._operation_pacer.wait()
+            response = await self._http.get(
+                f"{_API_ROOT}/lro/v1alpha/{name}",
+                headers=self._headers,
+            )
+            if response.status_code != httpx.codes.TOO_MANY_REQUESTS:
+                break
+            await asyncio.sleep(1)
         _raise_for_status(response)
         return BatchOperation.model_validate_json(response.content)
 

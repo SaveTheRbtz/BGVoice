@@ -12,6 +12,7 @@ from bgvoice.model_types import (
     AttributionStatus,
     DetailStatus,
     DialogueLineKind,
+    GenerationFailureStage,
     IdentifierKind,
     RunKind,
     RunStatus,
@@ -36,6 +37,7 @@ from bgvoice.storage_records import (
     DirectedLineRecord,
     GeneratedAudioRecord,
     GeneratedVoiceRecord,
+    GenerationFailureRecord,
     TtsBatchRecord,
     VoiceDescription,
 )
@@ -270,16 +272,38 @@ async def test_generation_progress_enriches_and_filters_source_resources(
             [
                 TtsBatchRecord(
                     operation_name="operations/running",
+                    custom_ids=["d-running"],
                     status=RunStatus.RUNNING,
                     started_at="2026-08-27T10:02:00+00:00",
                 ),
                 TtsBatchRecord(
                     operation_name="operations/failed",
+                    custom_ids=["d-failed"],
                     status=RunStatus.FAILED,
                     started_at="2026-08-27T10:02:00+00:00",
                     completed_at="2026-08-27T10:03:00+00:00",
                     error="provider rejected the batch",
                 ),
+            ]
+        )
+        await store.upsert_failures(
+            [
+                GenerationFailureRecord(
+                    id=GenerationFailureRecord.id_for(
+                        stage,
+                        "aerie",
+                        None if stage is GenerationFailureStage.VOICE_CREATION else line_id,
+                    ),
+                    stage=stage,
+                    voice_id="aerie",
+                    dialogue_line_id=(
+                        None if stage is GenerationFailureStage.VOICE_CREATION else line_id
+                    ),
+                    error_type="RuntimeError",
+                    error=f"{stage.value} failed",
+                    failed_at="2026-08-27T10:04:00+00:00",
+                )
+                for stage in GenerationFailureStage
             ]
         )
     finally:
@@ -318,7 +342,10 @@ async def test_generation_progress_enriches_and_filters_source_resources(
         stats.generated_audios,
         stats.running_tts_batches,
         stats.failed_tts_batches,
-    ) == (1, 1, 1, 1, 1)
+        stats.voice_creation_failures,
+        stats.dialogue_direction_failures,
+        stats.audio_generation_failures,
+    ) == (1, 1, 1, 1, 1, 1, 1, 1)
 
 
 @pytest.mark.anyio

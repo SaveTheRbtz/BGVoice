@@ -15,6 +15,7 @@ from bgvoice.dialogue_models import DlgDump
 from bgvoice.model_types import (
     CreResource,
     DlgResource,
+    GenerationFailureStage,
     PortraitResource,
     RunKind,
     StringReference,
@@ -25,6 +26,7 @@ from bgvoice.storage_records import (
     DirectedLineRecord,
     GeneratedAudioRecord,
     GeneratedVoiceRecord,
+    GenerationFailureRecord,
     VoiceDescription,
 )
 from bgvoice.web import create_app
@@ -125,6 +127,26 @@ def _seed_generated_audio(path: Path) -> DirectedLineRecord:
     connection = lancedb.connect(path)
     for table_name, record in records.items():
         connection.open_table(table_name).add([record.model_dump()])
+    connection.open_table("generation_failures").add(
+        [
+            GenerationFailureRecord(
+                id=GenerationFailureRecord.id_for(
+                    stage,
+                    "aerie",
+                    None if stage is GenerationFailureStage.VOICE_CREATION else line_id,
+                ),
+                stage=stage,
+                voice_id="aerie",
+                dialogue_line_id=(
+                    None if stage is GenerationFailureStage.VOICE_CREATION else line_id
+                ),
+                error_type="RuntimeError",
+                error=f"{stage.value} failed",
+                failed_at="2026-08-27T10:03:00+00:00",
+            ).model_dump()
+            for stage in GenerationFailureStage
+        ]
+    )
     return direction
 
 
@@ -198,6 +220,11 @@ def test_generated_work_is_browsable_filterable_and_playable(
         summary["generatedVoices"],
         summary["directedLines"],
         summary["generatedAudios"],
+    ) == ("1", "1", "1")
+    assert (
+        summary["voiceCreationFailures"],
+        summary["dialogueDirectionFailures"],
+        summary["audioGenerationFailures"],
     ) == ("1", "1", "1")
     assert voice["generatedVoice"]["inworldVoiceId"] == "voice-aerie"
     assert (voice["directedLineCount"], voice["generatedAudioCount"]) == ("1", "1")

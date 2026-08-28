@@ -1,6 +1,7 @@
 """Iterative voice design, dialogue direction, and batch speech synthesis."""
 
 import asyncio
+import logging
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -14,10 +15,10 @@ from bgvoice.dialogue_context import DialogueHistoryIndex, dialogue_history
 from bgvoice.game_audio import encode_game_audio
 from bgvoice.generation_ai import (
     CharacterAbilityScores,
-    DialogueDirectionSource,
-    DirectionBatchSource,
+    DirectionPlan,
+    DirectionSource,
     VoiceDesignSource,
-    create_direction_batch,
+    create_direction,
     create_voice_design_plan,
     tts_speakable_text,
 )
@@ -30,7 +31,7 @@ from bgvoice.inworld import (
     VoiceDesignRequest,
     pack_synthesis_items,
 )
-from bgvoice.model_types import DialogueLineKind, RunStatus, utc_now
+from bgvoice.model_types import DialogueLineKind, GenerationFailureStage, RunStatus, utc_now
 from bgvoice.reader import PipelineReader
 from bgvoice.reader_stats import AttributionSnapshot
 from bgvoice.storage_records import (
@@ -41,6 +42,7 @@ from bgvoice.storage_records import (
     DirectedLineRecord,
     GeneratedAudioRecord,
     GeneratedVoiceRecord,
+    GenerationFailureRecord,
     NarratorDirection,
     PortraitImageRecord,
     TtsBatchRecord,
@@ -48,9 +50,12 @@ from bgvoice.storage_records import (
     VoiceResourceRecord,
 )
 
+logger = logging.getLogger(__name__)
+
 VOICE_DESIGN_MODEL = "gpt-5.6-sol"
 DIRECTION_MODEL = "gpt-5.6-luna"
-DIRECTION_BATCH_SIZE = 10
+DIRECTION_FALLBACK_MODEL = "gpt-5.6-terra"
+DIRECTION_WRITE_BATCH_SIZE = 100
 AUDIO_WRITE_BATCH_SIZE = 25
 VOICE_CONCURRENCY = 75
 OPENAI_CONCURRENCY = 100
@@ -77,6 +82,9 @@ class GenerationSummary(_StructuredOutput):
     selected_lines: int
     directed_lines: int
     generated_audio: int
+    voice_creation_failures: int
+    dialogue_direction_failures: int
+    audio_generation_failures: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,6 +93,80 @@ class VoiceWorkload:
     lines: tuple[DialogueLineRecord, ...]
     ability_scores: CharacterAbilityScores
     portrait_png: bytes | None
+
+
+async def _record_failures(
+    store: GenerationStore,
+    stage: GenerationFailureStage,
+    voice_id: str,
+    dialogue_line_ids: Sequence[str | None],
+    error: Exception,
+    *,
+    error_code: str | None = None,
+    error_type: str | None = None,
+) -> None:
+    message = (str(error).strip() or repr(error))[:2000]
+    records = [
+        GenerationFailureRecord(
+            id=GenerationFailureRecord.id_for(stage, voice_id, dialogue_line_id),
+            stage=stage,
+            voice_id=voice_id,
+            dialogue_line_id=dialogue_line_id,
+            error_type=error_type or type(error).__name__,
+            error_code=error_code,
+            error=message,
+            failed_at=utc_now().isoformat(),
+        )
+        for dialogue_line_id in dialogue_line_ids
+    ]
+    await store.upsert_failures(records)
+    for record in records:
+        logger.warning(
+            "generation_failure stage=%s voice_id=%s dialogue_line_id=%s "
+            "error_type=%s error_code=%s error=%s",
+            record.stage.value,
+            record.voice_id,
+            record.dialogue_line_id,
+            record.error_type,
+            record.error_code,
+            record.error.replace("\r", " ").replace("\n", " "),
+        )
+
+
+async def _clear_failures(
+    store: GenerationStore,
+    stage: GenerationFailureStage,
+    voice_id: str,
+    dialogue_line_ids: Sequence[str | None],
+) -> None:
+    await store.delete_failures(
+        [
+            GenerationFailureRecord.id_for(stage, voice_id, dialogue_line_id)
+            for dialogue_line_id in dialogue_line_ids
+        ]
+    )
+
+
+async def _record_audio_failures(
+    store: GenerationStore,
+    directions: Mapping[str, DirectedLineRecord],
+    custom_ids: Sequence[str],
+    error: Exception,
+    *,
+    error_code: str | None = None,
+    error_type: str | None = None,
+) -> None:
+    if not custom_ids:
+        return
+    await _record_failures(
+        store,
+        GenerationFailureStage.AUDIO_GENERATION,
+        directions[custom_ids[0]].voice_id,
+        [directions[custom_id].dialogue_line_id for custom_id in custom_ids],
+        error,
+        error_code=error_code,
+        error_type=error_type,
+    )
 
 
 def round_robin_lines(
@@ -295,30 +377,70 @@ async def generate(
             await _resume_batches(store, inworld, inworld_capacity)
             provider_voices = _provider_voice_catalog(await inworld.list_voices())
 
-            narrator_lock = asyncio.Lock()
-            narrator_voice: GeneratedVoiceRecord | None = None
+            narrator_task: asyncio.Task[GeneratedVoiceRecord] | None = None
+
+            async def create_narrator() -> GeneratedVoiceRecord:
+                try:
+                    voice = await _ensure_narrator_voice(
+                        inworld,
+                        store,
+                        provider_voices,
+                    )
+                except Exception as error:
+                    await _record_failures(
+                        store,
+                        GenerationFailureStage.VOICE_CREATION,
+                        NARRATOR_VOICE_ID,
+                        [None],
+                        error,
+                    )
+                    raise
+                await _clear_failures(
+                    store,
+                    GenerationFailureStage.VOICE_CREATION,
+                    NARRATOR_VOICE_ID,
+                    [None],
+                )
+                return voice
 
             async def ensure_narrator() -> GeneratedVoiceRecord:
-                nonlocal narrator_voice
-                async with narrator_lock:
-                    if narrator_voice is None:
-                        narrator_voice = await _ensure_narrator_voice(
+                nonlocal narrator_task
+                if narrator_task is None:
+                    narrator_task = asyncio.create_task(create_narrator())
+                return await narrator_task
+
+            voice_capacity = asyncio.Semaphore(VOICE_CONCURRENCY)
+
+            async def process(workload: VoiceWorkload) -> None:
+                voice_ready = False
+                try:
+                    async with voice_capacity:
+                        await _ensure_character_voice(
+                            openai,
                             inworld,
                             store,
+                            workload,
+                            openai_capacity,
                             provider_voices,
+                            recreate=recreate_voices,
                         )
-                    return narrator_voice
+                except Exception as error:
+                    await _record_failures(
+                        store,
+                        GenerationFailureStage.VOICE_CREATION,
+                        workload.voice.voice_id,
+                        [None],
+                        error,
+                    )
+                else:
+                    voice_ready = True
+                    await _clear_failures(
+                        store,
+                        GenerationFailureStage.VOICE_CREATION,
+                        workload.voice.voice_id,
+                        [None],
+                    )
 
-            async def prepare(workload: VoiceWorkload) -> None:
-                await _ensure_character_voice(
-                    openai,
-                    inworld,
-                    store,
-                    workload,
-                    openai_capacity,
-                    provider_voices,
-                    recreate=recreate_voices,
-                )
                 await _direct_workload(
                     openai,
                     store,
@@ -326,26 +448,21 @@ async def generate(
                     history_index,
                     openai_capacity,
                 )
+                if voice_ready:
+                    await _synthesize_workload(
+                        store,
+                        inworld,
+                        workload,
+                        ensure_narrator,
+                        inworld_capacity,
+                    )
 
-            async def synthesize(workload: VoiceWorkload) -> None:
-                await _synthesize_workload(
-                    store,
-                    inworld,
-                    workload,
-                    ensure_narrator,
-                    inworld_capacity,
-                )
-
-            await _run_workload_pipeline(
-                workloads,
-                prepare,
-                synthesize,
-                asyncio.Semaphore(VOICE_CONCURRENCY),
-            )
+            await _wait_for_all([asyncio.create_task(process(workload)) for workload in workloads])
 
         voice_ids = [workload.voice.voice_id for workload in workloads]
         directions = await store.directed_lines(voice_ids)
         audio = await store.generated_audio_identities(voice_ids)
+        failures = await store.failures(voice_ids)
         selected = {
             (workload.voice.voice_id, line.id) for workload in workloads for line in workload.lines
         }
@@ -356,6 +473,19 @@ async def generate(
                 (line.voice_id, line.dialogue_line_id) in selected for line in directions
             ),
             generated_audio=sum((row.voice_id, row.dialogue_line_id) in selected for row in audio),
+            voice_creation_failures=sum(
+                row.stage is GenerationFailureStage.VOICE_CREATION for row in failures
+            ),
+            dialogue_direction_failures=sum(
+                row.stage is GenerationFailureStage.DIALOGUE_DIRECTION
+                and (row.voice_id, row.dialogue_line_id) in selected
+                for row in failures
+            ),
+            audio_generation_failures=sum(
+                row.stage is GenerationFailureStage.AUDIO_GENERATION
+                and (row.voice_id, row.dialogue_line_id) in selected
+                for row in failures
+            ),
         )
     finally:
         reader.close()
@@ -532,64 +662,71 @@ async def _direct_workload(
     }
     missing = [line for line in workload.lines if line.id not in existing]
     metadata, _biography = _metadata_and_biography(workload.voice.prompt)
-    batches = [
-        missing[start : start + DIRECTION_BATCH_SIZE]
-        for start in range(0, len(missing), DIRECTION_BATCH_SIZE)
-    ]
 
-    async def direct(source_lines: list[DialogueLineRecord]) -> None:
-        histories = [dialogue_history(history_index, line) for line in source_lines]
-        sources = [
-            DialogueDirectionSource(
-                id=str(index),
-                text=cast(str, line.text),
-                dialogue_history=history,
-            )
-            for index, (line, history) in enumerate(
-                zip(source_lines, histories, strict=True),
-                start=1,
-            )
-        ]
-        async with openai_capacity:
-            plan = await create_direction_batch(
-                openai,
-                DirectionBatchSource(
-                    display_name=workload.voice.display_name,
-                    metadata=metadata,
-                    lines=sources,
-                ),
-                model=DIRECTION_MODEL,
-            )
-        expected = {source.id: line.id for source, line in zip(sources, source_lines, strict=True)}
-        records: list[DirectedLineRecord] = []
-        for item in plan.items:
-            result = item.result
-            character = (
+    async def direct(line: DialogueLineRecord) -> DirectedLineRecord | None:
+        source = DirectionSource(
+            display_name=workload.voice.display_name,
+            metadata=metadata,
+            text=cast(str, line.text),
+            dialogue_history=dialogue_history(history_index, line),
+        )
+
+        async def request(model: str) -> DirectionPlan:
+            async with openai_capacity:
+                return await create_direction(
+                    openai,
+                    source,
+                    model=model,
+                )
+
+        try:
+            plan = await request(DIRECTION_MODEL)
+        except Exception:
+            try:
+                plan = await request(DIRECTION_FALLBACK_MODEL)
+            except Exception as error:
+                await _record_failures(
+                    store,
+                    GenerationFailureStage.DIALOGUE_DIRECTION,
+                    workload.voice.voice_id,
+                    [line.id],
+                    error,
+                )
+                return None
+
+        result = plan.result
+        return DirectedLineRecord(
+            id=DirectedLineRecord.id_for(workload.voice.voice_id, line.id),
+            voice_id=workload.voice.voice_id,
+            dialogue_line_id=line.id,
+            character=(
                 CharacterDirection(directed_dialogue=result.directed_dialogue)
                 if result.speaker == "character"
                 else None
-            )
-            narrator = (
+            ),
+            narrator=(
                 NarratorDirection(directed_dialogue=result.directed_dialogue)
                 if result.speaker == "narrator"
                 else None
-            )
-            records.append(
-                DirectedLineRecord(
-                    id=DirectedLineRecord.id_for(
-                        workload.voice.voice_id,
-                        expected[item.id],
-                    ),
-                    voice_id=workload.voice.voice_id,
-                    dialogue_line_id=expected[item.id],
-                    character=character,
-                    narrator=narrator,
-                    created_at=utc_now().isoformat(),
-                )
-            )
-        await store.upsert_directed_lines(records)
+            ),
+            created_at=utc_now().isoformat(),
+        )
 
-    await _wait_for_all([asyncio.create_task(direct(batch)) for batch in batches])
+    for start in range(0, len(missing), DIRECTION_WRITE_BATCH_SIZE):
+        results = await _wait_for_all(
+            [
+                asyncio.create_task(direct(line))
+                for line in missing[start : start + DIRECTION_WRITE_BATCH_SIZE]
+            ]
+        )
+        records = [record for record in results if record is not None]
+        await store.upsert_directed_lines(records)
+        await _clear_failures(
+            store,
+            GenerationFailureStage.DIALOGUE_DIRECTION,
+            workload.voice.voice_id,
+            [record.dialogue_line_id for record in records],
+        )
 
 
 async def _synthesize_workload(
@@ -599,21 +736,33 @@ async def _synthesize_workload(
     ensure_narrator: Callable[[], Awaitable[GeneratedVoiceRecord]],
     capacity: asyncio.Semaphore,
 ) -> None:
-    selected = {line.id for line in workload.lines}
     direction_rows = await store.directed_lines([workload.voice.voice_id])
-    if any(
-        line.dialogue_line_id in selected and line.narrator is not None for line in direction_rows
-    ):
-        await ensure_narrator()
-    voices = await store.generated_voices()
     directions = {line.dialogue_line_id: line for line in direction_rows}
+    directions_by_id = {line.id: line for line in direction_rows}
     existing = {
         audio.id for audio in await store.generated_audio_identities([workload.voice.voice_id])
     }
-    items_by_provider_voice: dict[str, list[BatchSynthesisItem]] = {}
-    for source_line in workload.lines:
-        direction = directions[source_line.id]
-        if direction.id in existing:
+    existing.update(
+        custom_id for batch in await store.running_batches() for custom_id in batch.custom_ids
+    )
+    pending = [
+        directions[source_line.id]
+        for source_line in workload.lines
+        if source_line.id in directions and directions[source_line.id].id not in existing
+    ]
+    narrator_ready = True
+    narrator_ids = [direction.id for direction in pending if direction.narrator is not None]
+    if narrator_ids:
+        try:
+            await ensure_narrator()
+        except Exception as error:
+            narrator_ready = False
+            await _record_audio_failures(store, directions_by_id, narrator_ids, error)
+
+    voices = await store.generated_voices()
+    items: list[BatchSynthesisItem] = []
+    for direction in pending:
+        if direction.narrator is not None and not narrator_ready:
             continue
         generated_voice = voices[
             workload.voice.voice_id if direction.character is not None else NARRATOR_VOICE_ID
@@ -623,7 +772,7 @@ async def _synthesize_workload(
             if direction.character is not None
             else cast(NarratorDirection, direction.narrator).directed_dialogue
         )
-        items_by_provider_voice.setdefault(generated_voice.inworld_voice_id, []).append(
+        items.append(
             BatchSynthesisItem(
                 custom_id=direction.id,
                 text=tts_speakable_text(text),
@@ -632,60 +781,32 @@ async def _synthesize_workload(
             )
         )
 
-    batches = pack_synthesis_items(
-        [item for items in items_by_provider_voice.values() for item in items]
-    )
-    directions_by_id = {line.id: line for line in direction_rows}
+    batches = pack_synthesis_items(items)
 
     async def synthesize(batch: list[BatchSynthesisItem]) -> None:
-        operation = await inworld.submit_batch(batch)
+        custom_ids = [item.custom_id for item in batch]
+        try:
+            operation = await inworld.submit_batch(batch)
+        except Exception as error:
+            await _record_audio_failures(store, directions_by_id, custom_ids, error)
+            return
         record = TtsBatchRecord(
             operation_name=operation.name,
+            custom_ids=custom_ids,
             status=RunStatus.RUNNING,
             started_at=utc_now().isoformat(),
         )
         await store.upsert_batches([record])
-        await _complete_batch(store, inworld, record, directions_by_id, voices)
+        try:
+            await _complete_batch(store, inworld, record, directions_by_id, voices)
+        except Exception as error:
+            await _record_audio_failures(store, directions_by_id, custom_ids, error)
 
     await _run_concurrently(
         batches,
         synthesize,
         capacity,
     )
-
-
-async def _run_workload_pipeline[Workload](
-    workloads: Sequence[Workload],
-    prepare: Callable[[Workload], Awaitable[None]],
-    synthesize: Callable[[Workload], Awaitable[None]],
-    capacity: asyncio.Semaphore,
-) -> None:
-    synthesis_tasks: list[asyncio.Task[None]] = []
-
-    async def prepare_and_schedule(workload: Workload) -> None:
-        await prepare(workload)
-
-        async def run_synthesis() -> None:
-            await synthesize(workload)
-
-        synthesis_tasks.append(asyncio.create_task(run_synthesis()))
-
-    preparation_failure: BaseException | None = None
-    try:
-        await _run_concurrently(workloads, prepare_and_schedule, capacity)
-    except BaseException as error:
-        preparation_failure = error
-
-    synthesis_failure: BaseException | None = None
-    try:
-        await _wait_for_all(synthesis_tasks)
-    except BaseException as error:
-        synthesis_failure = error
-
-    if preparation_failure is not None:
-        raise preparation_failure
-    if synthesis_failure is not None:
-        raise synthesis_failure
 
 
 async def _run_concurrently[Item](
@@ -700,17 +821,11 @@ async def _run_concurrently[Item](
     await _wait_for_all([asyncio.create_task(run(item)) for item in items])
 
 
-async def _wait_for_all(tasks: Sequence[asyncio.Task[None]]) -> None:
+async def _wait_for_all[Result](tasks: Sequence[asyncio.Task[Result]]) -> list[Result]:
+    """Let every started operation settle before propagating the first failure."""
     if tasks:
         await asyncio.wait(tasks)
-    failure: BaseException | None = None
-    for task in tasks:
-        try:
-            task.result()
-        except BaseException as error:
-            failure = failure or error
-    if failure is not None:
-        raise failure
+    return [task.result() for task in tasks]
 
 
 async def _resume_batches(
@@ -725,7 +840,10 @@ async def _resume_batches(
     voices = await store.generated_voices()
 
     async def resume(batch: TtsBatchRecord) -> None:
-        await _complete_batch(store, inworld, batch, directions, voices)
+        try:
+            await _complete_batch(store, inworld, batch, directions, voices)
+        except Exception as error:
+            await _record_audio_failures(store, directions, batch.custom_ids, error)
 
     await _run_concurrently(
         batches,
@@ -740,9 +858,17 @@ async def _complete_batch(
     batch: TtsBatchRecord,
     directions: Mapping[str, DirectedLineRecord],
     voices: Mapping[str, GeneratedVoiceRecord],
-) -> int:
+) -> None:
     operation = await inworld.poll_operation(batch.operation_name)
     if operation.error is not None:
+        await _record_audio_failures(
+            store,
+            directions,
+            batch.custom_ids,
+            RuntimeError(operation.error.message),
+            error_code=str(operation.error.code),
+            error_type="InworldOperationError",
+        )
         await store.upsert_batches(
             [
                 batch.model_copy(
@@ -754,20 +880,49 @@ async def _complete_batch(
                 )
             ]
         )
-        return 0
+        return
     assert operation.response is not None, "completed Inworld batch has no result manifest"
     results = await inworld.download_results(operation.response.results_uri)
+    voice_id = directions[batch.custom_ids[0]].voice_id
+    existing = {audio.id for audio in await store.generated_audio_identities([voice_id])}
 
-    generated = 0
+    failed = False
     records: list[GeneratedAudioRecord] = []
     for result in results.results:
-        if result.audio_uri is None:
+        if result.custom_id in existing:
             continue
-        source = await inworld.download_audio(result.audio_uri)
         direction = directions[result.custom_id]
-        generated_voice = voices[
-            direction.voice_id if direction.character is not None else NARRATOR_VOICE_ID
-        ]
+        if result.error is not None:
+            failed = True
+            await _record_audio_failures(
+                store,
+                directions,
+                [result.custom_id],
+                RuntimeError(result.error.message),
+                error_code=None if result.error.code is None else str(result.error.code),
+                error_type="InworldBatchItemError",
+            )
+            continue
+        if result.audio_uri is None:
+            failed = True
+            await _record_audio_failures(
+                store,
+                directions,
+                [result.custom_id],
+                RuntimeError("Inworld returned neither audio nor an error for this item"),
+                error_type="InworldBatchItemError",
+            )
+            continue
+        try:
+            source = await inworld.download_audio(result.audio_uri)
+            generated_voice = voices[
+                direction.voice_id if direction.character is not None else NARRATOR_VOICE_ID
+            ]
+            audio = await asyncio.to_thread(encode_game_audio, source)
+        except Exception as error:
+            failed = True
+            await _record_audio_failures(store, directions, [result.custom_id], error)
+            continue
         records.append(
             GeneratedAudioRecord(
                 id=direction.id,
@@ -775,17 +930,37 @@ async def _complete_batch(
                 dialogue_line_id=direction.dialogue_line_id,
                 inworld_voice_id=generated_voice.inworld_voice_id,
                 batch_operation_name=batch.operation_name,
-                audio=await asyncio.to_thread(encode_game_audio, source),
+                audio=audio,
                 created_at=utc_now().isoformat(),
             )
         )
         if len(records) == AUDIO_WRITE_BATCH_SIZE:
             await store.upsert_generated_audio(records)
-            generated += len(records)
+            await store.delete_failures(
+                [
+                    GenerationFailureRecord.id_for(
+                        GenerationFailureStage.AUDIO_GENERATION,
+                        record.voice_id,
+                        record.dialogue_line_id,
+                    )
+                    for record in records
+                ]
+            )
             records.clear()
-    status = RunStatus.COMPLETE_WITH_ERRORS if results.failed_items else RunStatus.COMPLETE
+    status = (
+        RunStatus.COMPLETE_WITH_ERRORS if failed or results.failed_items else RunStatus.COMPLETE
+    )
     await store.upsert_generated_audio(records)
+    await store.delete_failures(
+        [
+            GenerationFailureRecord.id_for(
+                GenerationFailureStage.AUDIO_GENERATION,
+                record.voice_id,
+                record.dialogue_line_id,
+            )
+            for record in records
+        ]
+    )
     await store.upsert_batches(
         [batch.model_copy(update={"status": status, "completed_at": utc_now().isoformat()})]
     )
-    return generated + len(records)

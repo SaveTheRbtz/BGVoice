@@ -24,6 +24,7 @@ from bgvoice.storage_records import (
     FavoredEnemyRecord,
     GeneratedAudioRecord,
     GeneratedVoiceRecord,
+    GenerationFailureRecord,
     HappinessRuleRecord,
     IdentifierDefinitionRecord,
     InteractionRuleRecord,
@@ -47,6 +48,7 @@ _GENERATED_VOICES = "generated_voices"
 _DIRECTED_LINES = "directed_lines"
 _GENERATED_AUDIO = "generated_audio"
 _TTS_BATCHES = "tts_batches"
+_GENERATION_FAILURES = "generation_failures"
 _DIALOGUES = "dialogues"
 _DIALOGUE_LINES = "dialogue_lines"
 _DIALOGUE_TRANSITIONS = "dialogue_transitions"
@@ -98,6 +100,7 @@ TABLE_NAMES = frozenset(
         _DIRECTED_LINES,
         _GENERATED_AUDIO,
         _TTS_BATCHES,
+        _GENERATION_FAILURES,
         _DIALOGUES,
         _DIALOGUE_LINES,
         _DIALOGUE_TRANSITIONS,
@@ -168,6 +171,11 @@ TABLE_INDEXES: dict[str, tuple[IndexSpec, ...]] = {
         IndexSpec("dialogue_line_id", BTree(), "generated_audio_dialogue_line_id_btree"),
     ),
     _TTS_BATCHES: (IndexSpec("operation_name", BTree(), "tts_batches_operation_name_btree"),),
+    _GENERATION_FAILURES: (
+        IndexSpec("id", BTree(), "generation_failures_id_btree"),
+        IndexSpec("stage", BTree(), "generation_failures_stage_btree"),
+        IndexSpec("voice_id", BTree(), "generation_failures_voice_id_btree"),
+    ),
     _DIALOGUES: (
         IndexSpec("resource_name", BTree(), "dialogues_resource_name_btree"),
         IndexSpec("search_text", _FTS, "dialogues_search_fts"),
@@ -310,6 +318,7 @@ TABLE_MODELS: dict[str, type[LanceModel]] = {
     _DIRECTED_LINES: DirectedLineRecord,
     _GENERATED_AUDIO: GeneratedAudioRecord,
     _TTS_BATCHES: TtsBatchRecord,
+    _GENERATION_FAILURES: GenerationFailureRecord,
     _DIALOGUES: DialogueRecord,
     _DIALOGUE_LINES: DialogueLineRecord,
     _DIALOGUE_TRANSITIONS: DialogueTransitionRecord,

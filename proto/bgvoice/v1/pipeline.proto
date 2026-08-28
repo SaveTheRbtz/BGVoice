@@ -137,6 +137,9 @@ message PipelineSummary {
   uint64 generated_audios = 18;
   uint64 running_tts_batches = 19;
   uint64 failed_tts_batches = 20;
+  uint64 voice_creation_failures = 21;
+  uint64 dialogue_direction_failures = 22;
+  uint64 audio_generation_failures = 23;
 }
 
 message Installation {
