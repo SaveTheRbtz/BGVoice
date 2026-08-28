@@ -438,7 +438,7 @@ tbody tr:hover { background: #171c2380; }
 .generation-card { margin-bottom: 14px; padding: 20px; background: #111923; border: 1px solid #26394d; border-radius: 10px; }
 .generation-card-head { display: flex; align-items: start; justify-content: space-between; gap: 16px; }
 .generation-card h3 { margin: 0; font-size: 14px; }
-.generation-card > p { margin: 12px 0 0; color: #d4dae2; font-size: 13px; line-height: 1.65; }
+.generation-card > p { margin: 12px 0 0; color: #d4dae2; font-size: 13px; line-height: 1.65; white-space: pre-wrap; }
 .generation-card dl { margin: 14px 0 0; display: grid; gap: 4px; }
 .generation-card dt { color: var(--faint); font-size: 10px; text-transform: uppercase; }
 .generation-card dd { margin: 0; color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
