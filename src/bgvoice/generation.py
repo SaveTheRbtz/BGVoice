@@ -369,7 +369,10 @@ async def generate(
         history_index = await DialogueHistoryIndex.load(reader)
         async with (
             AsyncOpenAI(api_key=openai_api_key) as openai,
-            httpx.AsyncClient(timeout=httpx.Timeout(120)) as http,
+            httpx.AsyncClient(
+                timeout=httpx.Timeout(120),
+                transport=httpx.AsyncHTTPTransport(retries=3),
+            ) as http,
         ):
             inworld = InworldClient(http, inworld_api_key)
             openai_capacity = asyncio.Semaphore(OPENAI_CONCURRENCY)
