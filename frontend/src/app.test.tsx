@@ -224,9 +224,11 @@ describe("application jobs", () => {
     expect(health.getByText("Voice creation").nextElementSibling?.textContent).toBe("1");
     expect(health.getByText("Audio generation").nextElementSibling?.textContent).toBe("6");
     expect(api.listExtractionRuns).not.toHaveBeenCalled();
+    expect(screen.getAllByRole("link", { name: "Pipeline", current: "page" })).toHaveLength(2);
 
-    await user.click(screen.getByRole("link", { name: "Extraction runs" }));
+    await user.click(screen.getAllByRole("link", { name: "Extraction runs" })[0]!);
     await waitFor(() => expect(window.location.pathname).toBe("/pipeline/runs"));
+    expect(screen.getAllByRole("link", { name: "Extraction runs", current: "page" })).toHaveLength(2);
     expect(await screen.findByRole("heading", { name: "Extraction runs", level: 2 })).toBeTruthy();
     expect(screen.getByRole("searchbox", { name: "Full-text search runs" })).toBeTruthy();
     expect(api.listExtractionRuns).toHaveBeenCalledOnce();

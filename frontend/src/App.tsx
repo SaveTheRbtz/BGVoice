@@ -17,7 +17,7 @@ import {
 import { PipelinePage } from "./PipelinePage";
 import { toNumber } from "./pipeline-labels";
 import { followLink, navigate, useRoute } from "./routes";
-import type { AppRoute } from "./routes";
+import type { AppRoute, PipelineView } from "./routes";
 import { SoundBrowser, TransitionBrowser } from "./SourceBrowsers";
 import { errorMessage } from "./use-browser";
 import { VoiceBrowser } from "./VoiceBrowser";
@@ -27,6 +27,7 @@ interface NavigationLinkData {
   label: string;
   icon: string;
   routes: readonly AppRoute["name"][];
+  pipelineView?: PipelineView;
 }
 
 interface NavigationGroup {
@@ -65,7 +66,10 @@ const NAVIGATION: readonly NavigationGroup[] = [
   },
   {
     label: "System",
-    links: [{ href: "/pipeline", label: "Pipeline", icon: "P", routes: ["pipeline"] }],
+    links: [
+      { href: "/pipeline", label: "Pipeline", icon: "P", routes: ["pipeline"], pipelineView: "overview" },
+      { href: "/pipeline/runs", label: "Extraction runs", icon: "R", routes: ["pipeline"], pipelineView: "runs" },
+    ],
   },
 ];
 
@@ -159,7 +163,9 @@ function NavigationLink({ link, route, compact = false }: {
   route: AppRoute;
   compact?: boolean;
 }) {
-  const active = link.routes.includes(route.name);
+  const active = link.routes.includes(route.name)
+    && (link.pipelineView == null
+      || (route.name === "pipeline" && route.view === link.pipelineView));
   return (
     <a
       className={active ? "is-active" : undefined}

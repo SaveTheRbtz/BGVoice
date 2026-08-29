@@ -510,12 +510,7 @@ tbody tr:hover { background: #171c2380; }
 .database-meta { display: grid; gap: 3px; text-align: right; }
 .database-meta span { color: var(--faint); font-size: 11px; text-transform: uppercase; }
 .database-meta strong { font-size: 15px; }
-.pipeline-tabs { display: flex; gap: 28px; border-bottom: 1px solid var(--line); }
-.pipeline-tabs a { position: relative; padding: 10px 1px 13px; color: var(--muted); font-size: 13px; font-weight: 700; }
-.pipeline-tabs a:hover { color: var(--text); }
-.pipeline-tabs a[aria-current="page"] { color: var(--accent); }
-.pipeline-tabs a[aria-current="page"]::after { content: ""; position: absolute; right: 0; bottom: -1px; left: 0; height: 2px; background: var(--accent); border-radius: 2px 2px 0 0; }
-.pipeline-overview { margin-top: 28px; display: grid; gap: 16px; }
+.pipeline-overview { display: grid; gap: 16px; }
 .pipeline-attention { min-height: 86px; padding: 18px 20px; display: grid; grid-template-columns: minmax(300px, 1.25fr) minmax(430px, 1fr); align-items: center; gap: 24px; background: #0e1218; border: 1px solid var(--line); border-radius: var(--radius); }
 .attention-message { display: flex; align-items: center; gap: 13px; }
 .attention-mark { width: 30px; height: 30px; flex: 0 0 auto; display: grid; place-items: center; color: var(--success); border: 2px solid currentColor; border-radius: 50%; font-size: 15px; font-weight: 850; }
@@ -553,7 +548,7 @@ tbody tr:hover { background: #171c2380; }
 .corpus-quality dd { margin: 0; font-size: 12px; font-weight: 700; }
 .resource-inventory > dl { display: grid; grid-template-columns: repeat(6, 1fr); }
 .resource-inventory dd { font-size: 20px; }
-.runs-browser { margin-top: 28px; }
+.runs-browser { margin-top: 0; }
 .runs-browser .section-head h2 { margin-bottom: 8px; font-size: 26px; letter-spacing: -.025em; }
 
 .not-found { min-height: 70vh; display: grid; place-content: center; justify-items: center; text-align: center; }
@@ -601,7 +596,6 @@ tbody tr:hover { background: #171c2380; }
   .detail-columns { grid-template-columns: 1fr; }
   .metric-grid { grid-template-columns: 1fr 1fr; }
   .database-meta { text-align: left; }
-  .pipeline-tabs { gap: 20px; }
   .pipeline-attention { padding: 17px; }
   .pipeline-health { grid-template-columns: 1fr 1fr; gap: 16px 0; }
   .pipeline-health > div:nth-child(3) { padding-left: 0; border-left: 0; }

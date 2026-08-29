@@ -10,7 +10,6 @@ import {
   toNumber,
 } from "./pipeline-labels";
 import { StatusPill } from "./resource-ui";
-import { followLink } from "./routes";
 import type { PipelineView } from "./routes";
 
 type RunOrder = "started_at" | "completed_at" | "run_kind" | "status";
@@ -60,22 +59,6 @@ export function PipelinePage({
           <strong>{formatBytes(toNumber(installation?.databaseSize))}</strong>
         </div>
       </header>
-      <nav className="pipeline-tabs" aria-label="Pipeline views">
-        <a
-          href="/pipeline"
-          aria-current={view === "overview" ? "page" : undefined}
-          onClick={(event) => followLink(event, "/pipeline")}
-        >
-          Overview
-        </a>
-        <a
-          href="/pipeline/runs"
-          aria-current={view === "runs" ? "page" : undefined}
-          onClick={(event) => followLink(event, "/pipeline/runs")}
-        >
-          Extraction runs
-        </a>
-      </nav>
       {view === "overview"
         ? <PipelineOverview installation={installation} />
         : <ExtractionRuns />}
