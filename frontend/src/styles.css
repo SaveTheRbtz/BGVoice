@@ -33,6 +33,19 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
+.skip-link {
+  position: fixed;
+  top: 10px;
+  left: 10px;
+  z-index: 100;
+  padding: 8px 11px;
+  background: var(--accent);
+  color: #111;
+  border-radius: 6px;
+  font-weight: 700;
+  transform: translateY(-150%);
+}
+.skip-link:focus { transform: none; }
 
 .app-shell {
   min-height: 100vh;
@@ -317,7 +330,7 @@ tbody tr:hover { background: #171c2380; }
 .resource-title:hover strong { color: var(--accent); }
 .voice-link { color: var(--accent); font-size: 11px; font-weight: 700; }
 .voice-link:hover { text-decoration: underline; }
-.source, .status-pill, .line-kind, .identifier-kind {
+.source, .status-pill, .identifier-kind {
   display: inline-flex;
   padding: 4px 7px;
   color: var(--muted);
@@ -410,7 +423,7 @@ tbody tr:hover { background: #171c2380; }
 .identifier-definition span { color: var(--faint); font-size: 10px; }
 
 /* Character roster */
-.character-table { min-width: 850px; }
+.character-table table { min-width: 850px; }
 .character-table td { vertical-align: middle; }
 .character-list-identity { min-width: 210px; display: flex; align-items: center; gap: 11px; }
 .character-list-profile, .character-dialogue-workload { min-width: 170px; display: grid; gap: 4px; }
@@ -559,7 +572,7 @@ tbody tr:hover { background: #171c2380; }
 .dialogue-line-item { overflow: hidden; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
 .dialogue-line-meta { min-height: 38px; padding: 8px 12px; display: flex; align-items: center; flex-wrap: wrap; gap: 7px 14px; background: #0d1116; border-bottom: 1px solid var(--line); }
 .dialogue-line-meta a { color: var(--accent); font: 700 11px/1.2 "Cascadia Code", "SFMono-Regular", Consolas, monospace; }
-.dialogue-line-meta > span:not(.source-badge) { color: var(--faint); font-size: 10px; font-variant-numeric: tabular-nums; }
+.dialogue-line-meta > span:not(.source) { color: var(--faint); font-size: 10px; font-variant-numeric: tabular-nums; }
 .dialogue-line-body { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .corpus-line .dialogue-line-body { grid-template-columns: 1fr; }
 .dialogue-line-body > section { min-width: 0; padding: 15px; }
@@ -639,8 +652,6 @@ tbody tr:hover { background: #171c2380; }
 .character-profile-copy h1 { margin: 0; }
 .character-profile-links { margin-top: 9px; display: flex; align-items: center; flex-wrap: wrap; gap: 7px; }
 .character-profile-links > span:first-child { padding-right: 3px; color: var(--faint); font-size: 11px; }
-.resource-detail-head { margin-bottom: 28px; display: flex; align-items: end; justify-content: space-between; gap: 20px; }
-.resource-detail-head h1 { margin-bottom: 7px; font-size: clamp(25px, 3vw, 38px); letter-spacing: -.03em; }
 .detail-card { padding: 20px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
 .detail-card h2 { margin-bottom: 16px; font-size: 14px; }
 .detail-card dl { margin: 0; display: grid; gap: 11px; }
@@ -786,15 +797,12 @@ tbody tr:hover { background: #171c2380; }
 .corpus-quality dd { margin: 0; font-size: 12px; font-weight: 700; }
 .resource-inventory > dl { display: grid; grid-template-columns: repeat(6, 1fr); }
 .resource-inventory dd { font-size: 20px; }
-.runs-browser { margin-top: 0; }
-.runs-browser .section-head h2 { margin-bottom: 8px; font-size: 26px; letter-spacing: -.025em; }
 
 .not-found { min-height: 70vh; display: grid; place-content: center; justify-items: center; text-align: center; }
 .not-found > span { color: var(--accent); font: 700 64px/1 Georgia, serif; opacity: .5; }
 .not-found h1 { margin: 17px 0 7px; }
 .not-found p { color: var(--muted); }
 .not-found a { margin-top: 10px; display: inline-flex; align-items: center; }
-.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 
 @media (max-width: 1250px) {
   .voice-library-head, .voice-row { grid-template-columns: 58px minmax(200px, 1fr) 80px minmax(270px, 330px) 14px; gap: 12px; }
@@ -839,7 +847,6 @@ tbody tr:hover { background: #171c2380; }
   .voice-order { width: 100%; margin-left: 0; }
   .voice-order select { width: 100%; }
   .voice-detail-hero, .character-profile { align-items: start; flex-direction: column; }
-  .resource-detail-head { align-items: start; flex-direction: column; }
   .definition-card > summary, .definition-card-summary {
     grid-template-columns: 40px minmax(0, 1fr) 16px;
     gap: 10px;

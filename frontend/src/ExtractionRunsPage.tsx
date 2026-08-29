@@ -51,7 +51,6 @@ export function ExtractionRunsPage() {
       description="Each source extraction stage attempt, newest first."
       noun="runs"
       searchPlaceholder="Search run IDs and stages…"
-      className="runs-browser"
     />
   );
 }

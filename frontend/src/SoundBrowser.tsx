@@ -103,7 +103,7 @@ function SoundText({ value }: { value: string | undefined }) {
   if (value.length <= 220) return <p className="sound-text">{value}</p>;
   return (
     <details className="sound-text expandable-copy">
-      <summary>{value}</summary>
+      <summary aria-label="Show full sound text">{value}</summary>
       <p>{value}</p>
     </details>
   );

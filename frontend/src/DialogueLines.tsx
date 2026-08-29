@@ -65,7 +65,6 @@ export function DialogueLineBrowser({ lineKind }: { lineKind: DialogueLineKind }
       noun={page.noun}
       searchPlaceholder={page.placeholder}
       renderFilters={(controls) => <LineFilters lineKind={lineKind} controls={controls} />}
-      className={`dialogue-line-browser ${lineKind}-line-browser`}
     >
       <div className={`dialogue-line-results ${loading ? "is-loading" : ""}`} aria-busy={loading}>
         {result.items.map((line) => (
@@ -171,7 +170,7 @@ function ExpandableLineText({ value }: { value: string | undefined }) {
   if (value.length <= 240) return <p>{value}</p>;
   return (
     <details className="expandable-copy">
-      <summary>{value}</summary>
+      <summary aria-label="Show full dialogue text">{value}</summary>
       <p>{value}</p>
     </details>
   );

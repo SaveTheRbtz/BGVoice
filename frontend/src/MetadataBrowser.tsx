@@ -200,7 +200,6 @@ function DefinitionCatalog<Row extends { name: string }>({
           />
         </>
       )}
-      className="definition-browser"
     >
       <div className={`definition-list ${loading ? "is-loading" : ""}`} aria-busy={loading}>
         {result.items.map((row) => (
@@ -434,6 +433,7 @@ function KitDefinition({ kit }: { kit: Kit }) {
           <dl className="definition-fields definition-engine-fields">
             <DefinitionField label="KITLIST row" value={kit.rowName} />
             <DefinitionField label="Class" value={className} />
+            <DefinitionField label="Class resource" value={kit.characterClass} />
             <DefinitionField
               label="KITIDS value"
               value={kit.kitIdsValue == null ? undefined : formatHex(kit.kitIdsValue)}

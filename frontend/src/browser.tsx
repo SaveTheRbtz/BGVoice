@@ -28,9 +28,7 @@ export interface TableBrowserProps<Row, Order extends string> {
   noun: string;
   searchPlaceholder: string;
   renderFilters?: (controls: FilterControls) => ReactNode;
-  className?: string;
   tableClassName?: string;
-  headingLevel?: 1 | 2;
 }
 
 export interface BrowserScaffoldProps<Row> {
@@ -41,8 +39,6 @@ export interface BrowserScaffoldProps<Row> {
   noun: string;
   searchPlaceholder: string;
   renderFilters?: (controls: FilterControls) => ReactNode;
-  className?: string;
-  headingLevel?: 1 | 2;
   children: ReactNode;
 }
 
@@ -57,9 +53,7 @@ export function TableBrowser<Row, Order extends string>({
   noun,
   searchPlaceholder,
   renderFilters,
-  className = "",
   tableClassName = "",
-  headingLevel = 1,
 }: TableBrowserProps<Row, Order>) {
   const browser = useBrowser(defaultOrderBy, loadPage);
   const { query, result, loading } = browser;
@@ -72,8 +66,6 @@ export function TableBrowser<Row, Order extends string>({
       noun={noun}
       searchPlaceholder={searchPlaceholder}
       renderFilters={renderFilters}
-      className={className}
-      headingLevel={headingLevel}
     >
       <div
         className={`table-wrap ${tableClassName} ${loading ? "is-loading" : ""}`}
@@ -130,8 +122,6 @@ export function BrowserScaffold<Row>({
   noun,
   searchPlaceholder,
   renderFilters,
-  className = "",
-  headingLevel = 1,
   children,
 }: BrowserScaffoldProps<Row>) {
   const { query, result, loading } = browser;
@@ -142,7 +132,7 @@ export function BrowserScaffold<Row>({
   };
 
   return (
-    <section className={`browser-card resource-page ${className}`}>
+    <section className="browser-card">
       <BrowserHeading
         eyebrow={eyebrow}
         title={title}
@@ -150,7 +140,6 @@ export function BrowserScaffold<Row>({
         loading={loading}
         count={Number(result.totalSize)}
         noun={noun}
-        headingLevel={headingLevel}
       />
       {browser.error != null && <ErrorBanner message={browser.error} />}
       <div className="toolbar">
@@ -217,7 +206,6 @@ export function BrowserHeading({
   loading,
   count,
   noun,
-  headingLevel = 1,
 }: {
   eyebrow: string;
   title: string;
@@ -225,13 +213,12 @@ export function BrowserHeading({
   loading: boolean;
   count: number;
   noun: string;
-  headingLevel?: 1 | 2;
 }) {
   return (
     <div className="section-head">
       <div>
         <p className="eyebrow">{eyebrow}</p>
-        {headingLevel === 1 ? <h1>{title}</h1> : <h2>{title}</h2>}
+        <h1>{title}</h1>
         <p>{description}</p>
       </div>
       <div className="result-count" aria-live="polite">

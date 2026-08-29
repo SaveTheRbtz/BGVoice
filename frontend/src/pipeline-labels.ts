@@ -4,7 +4,6 @@ import { formatDate } from "./format";
 import {
   AttributionStatus,
   DetailStatus,
-  DialogueLineKind,
   RunKind,
   RunStatus,
   SourceKind,
@@ -22,10 +21,6 @@ export function attributionStatusLabel(value: AttributionStatus): string {
   return enumLabel(AttributionStatus[value], "ATTRIBUTION_STATUS");
 }
 
-export function lineKindLabel(value: DialogueLineKind): string {
-  return enumLabel(DialogueLineKind[value], "DIALOGUE_LINE_KIND");
-}
-
 export function runKindLabel(value: RunKind): string {
   return enumLabel(RunKind[value], "RUN_KIND");
 }
@@ -36,10 +31,6 @@ export function runStatusLabel(value: RunStatus): string {
 
 function enumLabel(value: string, prefix: string): string {
   return value.replace(`${prefix}_`, "").replaceAll("_", " ").toLowerCase();
-}
-
-export function definitionText(label: string | undefined, id: number | undefined): string {
-  return label == null || id == null ? "—" : `${label} [${id}]`;
 }
 
 export function toNumber(value: bigint | number | undefined): number | undefined {

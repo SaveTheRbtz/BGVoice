@@ -510,7 +510,7 @@ describe("application jobs", () => {
     expect(screen.getByText("A warrior who channels a controlled battle rage.")).toBeTruthy();
     expect(screen.getByText("CLABFI02")).toBeTruthy();
     expect(screen.getAllByText("0x00004001")).toHaveLength(2);
-    expect(screen.queryByText(characterClass.name)).toBeNull();
+    expect(screen.getByText(characterClass.name)).toBeTruthy();
 
     await user.click(screen.getAllByRole("link", { name: "Identifiers" })[0]!);
     expect(await screen.findByRole("heading", { name: "Identifiers", level: 1 })).toBeTruthy();
@@ -528,6 +528,8 @@ describe("application jobs", () => {
     const user = userEvent.setup();
     render(<App />);
 
+    expect(screen.getByRole("link", { name: "Skip to content" }).getAttribute("href"))
+      .toBe("#main-content");
     const output = within(await screen.findByRole("region", { name: "Generated output" }));
     expect(output.getByText("Voice assignments").nextElementSibling?.textContent).toBe("7");
     expect(output.getByText("Unique Inworld voices").nextElementSibling?.textContent).toBe("3");
@@ -545,6 +547,8 @@ describe("application jobs", () => {
 
     await user.click(screen.getAllByRole("link", { name: "Extraction runs" })[0]!);
     await waitFor(() => expect(window.location.pathname).toBe("/extraction-runs"));
+    await waitFor(() => expect(document.title).toBe("Extraction runs · BGVoice"));
+    expect(document.activeElement).toBe(screen.getByRole("main"));
     expect(screen.getAllByRole("link", { name: "Extraction runs", current: "page" })).toHaveLength(2);
     expect(await screen.findByRole("heading", { name: "Extraction runs", level: 1 })).toBeTruthy();
     expect(screen.getByRole("searchbox", { name: "Full-text search runs" })).toBeTruthy();

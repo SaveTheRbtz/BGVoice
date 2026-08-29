@@ -21,7 +21,6 @@ export function TransitionBrowser() {
       noun="transitions"
       searchPlaceholder="Search dialogues, triggers, actions, and destinations…"
       renderFilters={TransitionFilters}
-      className="transition-browser"
     >
       <div className={`transition-list ${loading ? "is-loading" : ""}`} aria-busy={loading}>
         {result.items.map((transition) => (
@@ -123,7 +122,7 @@ function ScriptPanel({ label, index, text, empty }: {
         <p className="muted">{index == null ? empty : "Unresolved"}</p>
       ) : (
         <details>
-          <summary>{text}</summary>
+          <summary aria-label={`Show full ${label.toLowerCase()}`}>{text}</summary>
           <code>{text}</code>
         </details>
       )}

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ComponentType } from "react";
 
 import { getInstallation } from "./api";
@@ -28,7 +28,7 @@ interface NavigationLinkData {
   href: string;
   label: string;
   icon: string;
-  routes: readonly AppRoute["name"][];
+  route: AppRoute["name"];
   lineKind?: DialogueLineKind;
 }
 
@@ -40,48 +40,60 @@ interface NavigationGroup {
 const NAVIGATION: readonly NavigationGroup[] = [
   {
     label: "Work",
-    links: [{ href: "/voices", label: "Voices", icon: "V", routes: ["voices"] }],
+    links: [{ href: "/voices", label: "Voices", icon: "V", route: "voices" }],
   },
   {
     label: "Dialogue",
     links: [
-      { href: "/dialogues", label: "Dialogues", icon: "D", routes: ["dialogues"] },
-      { href: dialogueLinesPath(), label: "NPC lines", icon: "N", routes: ["dialogue-lines"], lineKind: "npc" },
-      { href: dialogueLinesPath({ line_kind: "player" }), label: "Player lines", icon: "P", routes: ["dialogue-lines"], lineKind: "player" },
-      { href: dialogueLinesPath({ line_kind: "journal" }), label: "Journal", icon: "J", routes: ["dialogue-lines"], lineKind: "journal" },
-      { href: "/dialogue-transitions", label: "Transitions", icon: "T", routes: ["dialogue-transitions"] },
+      { href: "/dialogues", label: "Dialogues", icon: "D", route: "dialogues" },
+      { href: dialogueLinesPath(), label: "NPC lines", icon: "N", route: "dialogue-lines", lineKind: "npc" },
+      { href: dialogueLinesPath({ line_kind: "player" }), label: "Player lines", icon: "P", route: "dialogue-lines", lineKind: "player" },
+      { href: dialogueLinesPath({ line_kind: "journal" }), label: "Journal", icon: "J", route: "dialogue-lines", lineKind: "journal" },
+      { href: "/dialogue-transitions", label: "Transitions", icon: "T", route: "dialogue-transitions" },
     ],
   },
   {
     label: "Source data",
     links: [
-      { href: "/characters", label: "Characters", icon: "C", routes: ["characters"] },
-      { href: "/character-sounds", label: "Sounds", icon: "S", routes: ["character-sounds"] },
+      { href: "/characters", label: "Characters", icon: "C", route: "characters" },
+      { href: "/character-sounds", label: "Sounds", icon: "S", route: "character-sounds" },
     ],
   },
   {
     label: "Definitions",
     links: [
-      { href: "/definitions/races", label: "Races", icon: "R", routes: ["races"] },
-      { href: "/definitions/character-classes", label: "Classes", icon: "C", routes: ["character-classes"] },
-      { href: "/definitions/kits", label: "Kits", icon: "K", routes: ["kits"] },
-      { href: "/definitions/identifier-definitions", label: "Identifiers", icon: "I", routes: ["identifier-definitions"] },
+      { href: "/definitions/races", label: "Races", icon: "R", route: "races" },
+      { href: "/definitions/character-classes", label: "Classes", icon: "C", route: "character-classes" },
+      { href: "/definitions/kits", label: "Kits", icon: "K", route: "kits" },
+      { href: "/definitions/identifier-definitions", label: "Identifiers", icon: "I", route: "identifier-definitions" },
     ],
   },
   {
     label: "System",
     links: [
-      { href: "/pipeline", label: "Pipeline", icon: "P", routes: ["pipeline"] },
-      { href: "/extraction-runs", label: "Extraction runs", icon: "R", routes: ["extraction-runs"] },
+      { href: "/pipeline", label: "Pipeline", icon: "P", route: "pipeline" },
+      { href: "/extraction-runs", label: "Extraction runs", icon: "R", route: "extraction-runs" },
     ],
   },
 ];
 
-interface PageProps {
-  installation: Installation | null;
-}
+const ROUTE_TITLES = {
+  voices: "Voices",
+  characters: "Characters",
+  dialogues: "Dialogues",
+  "dialogue-lines": "Dialogue lines",
+  "dialogue-transitions": "Transitions",
+  "character-sounds": "Character sounds",
+  races: "Races",
+  "character-classes": "Character classes",
+  kits: "Kits",
+  "identifier-definitions": "Identifiers",
+  pipeline: "Pipeline",
+  "extraction-runs": "Extraction runs",
+  "not-found": "Resource not found",
+} satisfies Record<AppRoute["name"], string>;
 
-const STATIC_PAGES: Partial<Record<AppRoute["name"], ComponentType<PageProps>>> = {
+const STATIC_PAGES: Partial<Record<AppRoute["name"], ComponentType>> = {
   "dialogue-transitions": TransitionBrowser,
   "character-sounds": SoundBrowser,
   "extraction-runs": ExtractionRunsPage,
@@ -93,12 +105,21 @@ const STATIC_PAGES: Partial<Record<AppRoute["name"], ComponentType<PageProps>>> 
 
 export default function App() {
   const route = useRoute();
+  const pathname = window.location.pathname;
+  const pageTitle = ROUTE_TITLES[route.name];
   const [installation, setInstallation] = useState<Installation | null>(null);
   const [installationError, setInstallationError] = useState<string | null>(null);
 
   useEffect(() => {
     if (window.location.pathname === "/") navigate("/voices", true);
   }, []);
+
+  useEffect(() => {
+    document.title = `${pageTitle} · BGVoice`;
+    document.documentElement.scrollTop = 0;
+    document.body.scrollTop = 0;
+    document.getElementById("main-content")?.focus({ preventScroll: true });
+  }, [pageTitle, pathname]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -112,9 +133,10 @@ export default function App() {
 
   return (
     <div className="app-shell">
+      <a className="skip-link" href="#main-content">Skip to content</a>
       <DesktopNavigation route={route} installation={installation} />
       <MobileNavigation route={route} />
-      <main className="page-main">
+      <main id="main-content" className="page-main" tabIndex={-1}>
         {installationError != null && <ErrorBanner message={installationError} />}
         <RouteContent route={route} installation={installation} />
       </main>
@@ -147,13 +169,21 @@ function DesktopNavigation({ route, installation }: {
 }
 
 function MobileNavigation({ route }: { route: AppRoute }) {
+  const navigation = useRef<HTMLElement>(null);
+  const pathname = window.location.pathname;
+  useEffect(() => {
+    navigation.current
+      ?.querySelector<HTMLElement>('[aria-current="page"]')
+      ?.scrollIntoView?.({ block: "nearest", inline: "center" });
+  }, [pathname]);
+
   return (
     <header className="mobile-topbar">
       <div className="mobile-topbar-head">
         <Brand />
         <span className="read-only"><i /> Read only</span>
       </div>
-      <nav className="mobile-nav" aria-label="Pipeline resources">
+      <nav ref={navigation} className="mobile-nav" aria-label="Pipeline resources">
         {NAVIGATION.flatMap((group) => group.links).map((link) => (
           <NavigationLink key={link.href} link={link} route={route} compact />
         ))}
@@ -167,7 +197,7 @@ function NavigationLink({ link, route, compact = false }: {
   route: AppRoute;
   compact?: boolean;
 }) {
-  const active = link.routes.includes(route.name)
+  const active = link.route === route.name
     && (link.lineKind == null || (route.name === "dialogue-lines" && route.lineKind === link.lineKind));
   return (
     <a
@@ -217,7 +247,7 @@ function RouteContent({ route, installation }: { route: AppRoute; installation: 
     return <DialogueLineBrowser key={route.lineKind} lineKind={route.lineKind} />;
   }
   const Page = STATIC_PAGES[route.name];
-  return Page == null ? <NotFound /> : <Page installation={installation} />;
+  return Page == null ? <NotFound /> : <Page />;
 }
 
 function NotFound() {
