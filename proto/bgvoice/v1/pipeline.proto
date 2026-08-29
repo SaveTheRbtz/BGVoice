@@ -120,7 +120,7 @@ message PipelineSummary {
   uint64 voices = 1;
   uint64 characters = 2;
   uint64 dialogues = 3;
-  uint64 dialogue_lines = 4;
+  uint64 npc_lines = 4;
   uint64 character_sounds = 5;
   uint64 dialogue_transitions = 6;
   uint64 races = 7;
@@ -141,6 +141,8 @@ message PipelineSummary {
   uint64 dialogue_direction_failures = 22;
   uint64 audio_generation_failures = 23;
   uint64 unique_inworld_voices = 24;
+  uint64 player_lines = 25;
+  uint64 journal_lines = 26;
 }
 
 message Installation {

@@ -216,6 +216,11 @@ def test_generated_work_is_browsable_filterable_and_playable(
         missing_audio = client.get(f"/v1/{_PARENT}/generatedAudios/missing:download")
 
     summary = installation["summary"]
+    assert (summary["npcLines"], summary["playerLines"], summary["journalLines"]) == (
+        "4",
+        "4",
+        "2",
+    )
     assert (
         summary["generatedVoices"],
         summary["uniqueInworldVoices"],

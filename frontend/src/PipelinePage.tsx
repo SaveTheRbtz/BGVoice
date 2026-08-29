@@ -44,7 +44,9 @@ export function PipelinePage({ installation }: { installation: Installation | nu
     voices,
     characters,
     dialogues,
-    dialogueLines,
+    npcLines,
+    playerLines,
+    journalLines,
     matchedCharacters,
     unattributedDialogueLines,
     characterSounds,
@@ -80,7 +82,9 @@ export function PipelinePage({ installation }: { installation: Installation | nu
         <Stat label="Voices" value={voices} />
         <Stat label="Characters" value={characters} />
         <Stat label="Dialogues" value={dialogues} />
-        <Stat label="Dialogue lines" value={dialogueLines} />
+        <Stat label="NPC lines" value={npcLines} />
+        <Stat label="Player lines" value={playerLines} />
+        <Stat label="Journal lines" value={journalLines} />
         <Stat label="Matched characters" value={matchedCharacters} />
         <Stat label="Unattributed lines" value={unattributedDialogueLines} />
       </div>

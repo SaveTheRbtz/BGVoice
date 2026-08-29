@@ -510,7 +510,7 @@ tbody tr:hover { background: #171c2380; }
 .database-meta { padding: 12px 15px; display: grid; gap: 3px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
 .database-meta span { color: var(--faint); font-size: 11px; text-transform: uppercase; }
 .database-meta strong { font-size: 15px; }
-.stats-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; }
+.stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
 .stat { min-height: 108px; padding: 17px; display: flex; flex-direction: column; justify-content: space-between; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
 .stat > span { color: var(--muted); font-size: 11px; }
 .stat > strong { font-size: 24px; letter-spacing: -.03em; }
@@ -541,7 +541,6 @@ tbody tr:hover { background: #171c2380; }
 
 @media (max-width: 1250px) {
   .voice-layout { grid-template-columns: 330px minmax(0, 1fr); }
-  .stats-grid { grid-template-columns: repeat(3, 1fr); }
   .support-stats { grid-template-columns: repeat(3, 1fr); }
 }
 

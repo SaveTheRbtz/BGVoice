@@ -77,7 +77,9 @@ class _CharacterStats:
 class _DialogueStats:
     total: int
     complete: int
-    lines: int
+    npc_lines: int
+    player_lines: int
+    journal_lines: int
     attributed: int
     unattributed: int
     attributed_lines: int
@@ -121,7 +123,9 @@ def pipeline_stats(
         characters_without_dialogue=character.without_dialogue,
         dialogues_total=dialogue.total,
         dialogues_complete=dialogue.complete,
-        dialogue_lines=dialogue.lines,
+        npc_lines=dialogue.npc_lines,
+        player_lines=dialogue.player_lines,
+        journal_lines=dialogue.journal_lines,
         line_records_total=tables.line_records,
         voices_total=len(attribution.voices),
         character_sounds_total=tables.character_sounds,
@@ -195,7 +199,13 @@ def _dialogue_stats(
     return _DialogueStats(
         total=len(dialogues),
         complete=sum(row.extraction.status is DetailStatus.COMPLETE for row in dialogues),
-        lines=_line_count(dialogues),
+        npc_lines=sum(row.detail.npc_line_count for row in dialogues if row.detail is not None),
+        player_lines=sum(
+            row.detail.player_line_count for row in dialogues if row.detail is not None
+        ),
+        journal_lines=sum(
+            row.detail.journal_line_count for row in dialogues if row.detail is not None
+        ),
         attributed=len(attributed),
         unattributed=len(unattributed),
         attributed_lines=_line_count(attributed),

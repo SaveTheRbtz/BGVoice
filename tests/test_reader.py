@@ -63,7 +63,13 @@ async def test_stats_report_the_published_pipeline_generation(
         stats.characters_complete,
         stats.characters_with_dialogue,
     ) == (12, 12, 3)
-    assert (stats.dialogues_total, stats.dialogues_complete, stats.dialogue_lines) == (3, 2, 8)
+    assert (
+        stats.dialogues_total,
+        stats.dialogues_complete,
+        stats.npc_lines,
+        stats.player_lines,
+        stats.journal_lines,
+    ) == (3, 2, 4, 4, 2)
     assert (stats.line_records_total, stats.transition_edges_total, stats.voices_total) == (
         10,
         6,

@@ -48,6 +48,9 @@ import App from "./App";
 const installation = create(InstallationSchema, {
   name: "installations/bg2ee-eet",
   summary: {
+    npcLines: 11n,
+    playerLines: 7n,
+    journalLines: 2n,
     generatedVoices: 7n,
     uniqueInworldVoices: 3n,
     voiceCreationFailures: 1n,
@@ -203,9 +206,20 @@ describe("application jobs", () => {
     );
   });
 
-  it("summarizes unresolved generation failures by stage", async () => {
+  it("summarizes dialogue kinds and unresolved generation failures", async () => {
     window.history.replaceState(null, "", "/pipeline");
     render(<App />);
+
+    for (const [label, value] of [
+      ["NPC lines", "11"],
+      ["Player lines", "7"],
+      ["Journal lines", "2"],
+    ] as const) {
+      const stat = (await screen.findByText(label)).closest("article");
+      expect(stat).not.toBeNull();
+      expect(within(stat!).getByText(value)).toBeTruthy();
+    }
+    expect(screen.queryByText("Dialogue lines")).toBeNull();
 
     const progress = within(await screen.findByRole("region", { name: "Voice-over progress" }));
     const assignments = progress.getByText("Voice assignments").closest("article");

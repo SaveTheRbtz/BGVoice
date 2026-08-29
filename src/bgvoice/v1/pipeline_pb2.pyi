@@ -145,11 +145,11 @@ class ExtractionState(_message.Message):
     def __init__(self, status: _Optional[_Union[DetailStatus, str]] = ..., error: _Optional[str] = ..., updated_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., extraction_run: _Optional[str] = ...) -> None: ...
 
 class PipelineSummary(_message.Message):
-    __slots__ = ("voices", "characters", "dialogues", "dialogue_lines", "character_sounds", "dialogue_transitions", "races", "character_classes", "kits", "identifier_definitions", "matched_characters", "partially_matched_characters", "missing_dialogue_characters", "unattributed_dialogues", "unattributed_dialogue_lines", "generated_voices", "directed_lines", "generated_audios", "running_tts_batches", "failed_tts_batches", "voice_creation_failures", "dialogue_direction_failures", "audio_generation_failures", "unique_inworld_voices")
+    __slots__ = ("voices", "characters", "dialogues", "npc_lines", "character_sounds", "dialogue_transitions", "races", "character_classes", "kits", "identifier_definitions", "matched_characters", "partially_matched_characters", "missing_dialogue_characters", "unattributed_dialogues", "unattributed_dialogue_lines", "generated_voices", "directed_lines", "generated_audios", "running_tts_batches", "failed_tts_batches", "voice_creation_failures", "dialogue_direction_failures", "audio_generation_failures", "unique_inworld_voices", "player_lines", "journal_lines")
     VOICES_FIELD_NUMBER: _ClassVar[int]
     CHARACTERS_FIELD_NUMBER: _ClassVar[int]
     DIALOGUES_FIELD_NUMBER: _ClassVar[int]
-    DIALOGUE_LINES_FIELD_NUMBER: _ClassVar[int]
+    NPC_LINES_FIELD_NUMBER: _ClassVar[int]
     CHARACTER_SOUNDS_FIELD_NUMBER: _ClassVar[int]
     DIALOGUE_TRANSITIONS_FIELD_NUMBER: _ClassVar[int]
     RACES_FIELD_NUMBER: _ClassVar[int]
@@ -170,10 +170,12 @@ class PipelineSummary(_message.Message):
     DIALOGUE_DIRECTION_FAILURES_FIELD_NUMBER: _ClassVar[int]
     AUDIO_GENERATION_FAILURES_FIELD_NUMBER: _ClassVar[int]
     UNIQUE_INWORLD_VOICES_FIELD_NUMBER: _ClassVar[int]
+    PLAYER_LINES_FIELD_NUMBER: _ClassVar[int]
+    JOURNAL_LINES_FIELD_NUMBER: _ClassVar[int]
     voices: int
     characters: int
     dialogues: int
-    dialogue_lines: int
+    npc_lines: int
     character_sounds: int
     dialogue_transitions: int
     races: int
@@ -194,7 +196,9 @@ class PipelineSummary(_message.Message):
     dialogue_direction_failures: int
     audio_generation_failures: int
     unique_inworld_voices: int
-    def __init__(self, voices: _Optional[int] = ..., characters: _Optional[int] = ..., dialogues: _Optional[int] = ..., dialogue_lines: _Optional[int] = ..., character_sounds: _Optional[int] = ..., dialogue_transitions: _Optional[int] = ..., races: _Optional[int] = ..., character_classes: _Optional[int] = ..., kits: _Optional[int] = ..., identifier_definitions: _Optional[int] = ..., matched_characters: _Optional[int] = ..., partially_matched_characters: _Optional[int] = ..., missing_dialogue_characters: _Optional[int] = ..., unattributed_dialogues: _Optional[int] = ..., unattributed_dialogue_lines: _Optional[int] = ..., generated_voices: _Optional[int] = ..., directed_lines: _Optional[int] = ..., generated_audios: _Optional[int] = ..., running_tts_batches: _Optional[int] = ..., failed_tts_batches: _Optional[int] = ..., voice_creation_failures: _Optional[int] = ..., dialogue_direction_failures: _Optional[int] = ..., audio_generation_failures: _Optional[int] = ..., unique_inworld_voices: _Optional[int] = ...) -> None: ...
+    player_lines: int
+    journal_lines: int
+    def __init__(self, voices: _Optional[int] = ..., characters: _Optional[int] = ..., dialogues: _Optional[int] = ..., npc_lines: _Optional[int] = ..., character_sounds: _Optional[int] = ..., dialogue_transitions: _Optional[int] = ..., races: _Optional[int] = ..., character_classes: _Optional[int] = ..., kits: _Optional[int] = ..., identifier_definitions: _Optional[int] = ..., matched_characters: _Optional[int] = ..., partially_matched_characters: _Optional[int] = ..., missing_dialogue_characters: _Optional[int] = ..., unattributed_dialogues: _Optional[int] = ..., unattributed_dialogue_lines: _Optional[int] = ..., generated_voices: _Optional[int] = ..., directed_lines: _Optional[int] = ..., generated_audios: _Optional[int] = ..., running_tts_batches: _Optional[int] = ..., failed_tts_batches: _Optional[int] = ..., voice_creation_failures: _Optional[int] = ..., dialogue_direction_failures: _Optional[int] = ..., audio_generation_failures: _Optional[int] = ..., unique_inworld_voices: _Optional[int] = ..., player_lines: _Optional[int] = ..., journal_lines: _Optional[int] = ...) -> None: ...
 
 class Installation(_message.Message):
     __slots__ = ("name", "display_name", "database_path", "database_size", "attribution_publication", "attribution_completed_at", "summary")
