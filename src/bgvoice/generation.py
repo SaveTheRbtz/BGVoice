@@ -596,9 +596,9 @@ async def _run_generation(
             voice_capacity = asyncio.Semaphore(VOICE_CONCURRENCY)
 
             async def process(workload: VoiceWorkload) -> VoiceWorkload | None:
-                voice_ready = False
-                try:
-                    async with voice_capacity:
+                async with voice_capacity:
+                    voice_ready = False
+                    try:
                         await _ensure_character_voice(
                             openai,
                             inworld,
@@ -613,42 +613,42 @@ async def _run_generation(
                                 else None
                             ),
                         )
-                except Exception as error:
-                    await _record_failures(
-                        store,
-                        GenerationFailureStage.VOICE_CREATION,
-                        workload.voice.voice_id,
-                        [None],
-                        error,
-                    )
-                else:
-                    voice_ready = True
-                    await _clear_failures(
-                        store,
-                        GenerationFailureStage.VOICE_CREATION,
-                        workload.voice.voice_id,
-                        [None],
-                    )
-
-                await _direct_workload(
-                    openai,
-                    store,
-                    workload,
-                    history_index,
-                    openai_capacity,
-                )
-                if voice_ready:
-                    if not shared_defaults:
-                        await _synthesize_workloads(
+                    except Exception as error:
+                        await _record_failures(
                             store,
-                            inworld,
-                            [workload],
-                            ensure_narrator,
-                            inworld_capacity,
-                            running_audio_ids,
+                            GenerationFailureStage.VOICE_CREATION,
+                            workload.voice.voice_id,
+                            [None],
+                            error,
                         )
-                    return workload
-                return None
+                    else:
+                        voice_ready = True
+                        await _clear_failures(
+                            store,
+                            GenerationFailureStage.VOICE_CREATION,
+                            workload.voice.voice_id,
+                            [None],
+                        )
+
+                    await _direct_workload(
+                        openai,
+                        store,
+                        workload,
+                        history_index,
+                        openai_capacity,
+                    )
+                    if voice_ready:
+                        if not shared_defaults:
+                            await _synthesize_workloads(
+                                store,
+                                inworld,
+                                [workload],
+                                ensure_narrator,
+                                inworld_capacity,
+                                running_audio_ids,
+                            )
+                        return workload
+                    return None
 
             processed = await _wait_for_all(
                 [asyncio.create_task(process(workload)) for workload in workloads]
