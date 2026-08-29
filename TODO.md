@@ -7,3 +7,4 @@
 * EEex script to read books aloud.
 * Create default voices for chars with < 20 lines for every gender/race combination.
 * Figure out ideal volume for the voiceovers.
+  * normalize LUFS.
