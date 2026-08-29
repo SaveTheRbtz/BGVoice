@@ -1,7 +1,7 @@
 """Async persistence for generated voices, directed lines, and audio."""
 
 import asyncio
-from collections.abc import Awaitable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Sequence
 from dataclasses import dataclass, field
 from datetime import timedelta
 from pathlib import Path
@@ -104,6 +104,16 @@ class GenerationStore:
         voice_ids: Sequence[str] | None = None,
     ) -> list[GeneratedAudioRecord]:
         return await _records(self._generated_audio, GeneratedAudioRecord, voice_ids)
+
+    async def generated_audio_batches(
+        self,
+        batch_size: int,
+    ) -> AsyncIterator[list[GeneratedAudioRecord]]:
+        """Stream audio blobs without materializing the complete corpus."""
+        assert batch_size > 0, "audio batch size must be positive"
+        batches = await self._generated_audio.query().to_batches(max_batch_length=batch_size)
+        async for batch in batches:
+            yield [GeneratedAudioRecord.model_validate(row) for row in batch.to_pylist()]
 
     async def generated_audio_identities(
         self,

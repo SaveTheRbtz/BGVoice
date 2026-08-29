@@ -2,33 +2,82 @@
 
 from fractions import Fraction
 from io import BytesIO
+from itertools import pairwise
 from typing import cast
 
 import av
+from av.audio.frame import AudioFrame
 from av.audio.resampler import AudioResampler
 from av.audio.stream import AudioStream
 from av.container import InputContainer
+from av.filter import Graph
 
 GAME_AUDIO_MIME_TYPE = "audio/ogg"
 GAME_AUDIO_SAMPLE_RATE_HERTZ = 22_050
-GAME_AUDIO_BIT_RATE = 90_000
+GAME_AUDIO_BIT_RATE = 44_000
+GAME_AUDIO_GAIN_DB = 3.0
+PRE_CODEC_TRUE_PEAK_DB = -2.3
 
 
 def encode_game_audio(source: bytes) -> bytes:
-    """Convert provider audio to mono Ogg Vorbis for installation as a .WAV resource."""
+    """Join provider segments, raise them 3 dB safely, and encode Ogg Vorbis once."""
     assert source, "source audio is empty"
     output = BytesIO()
-    samples = 0
     time_base = Fraction(1, GAME_AUDIO_SAMPLE_RATE_HERTZ)
-    with av.open(output, mode="w", format="ogg") as encoded:
-        stream = cast(
+    input_samples = 0
+    output_samples = 0
+
+    with av.open(output, mode="w", format="ogg") as destination:
+        encoded = cast(
             AudioStream,
-            encoded.add_stream("libvorbis", rate=GAME_AUDIO_SAMPLE_RATE_HERTZ),
+            destination.add_stream("libvorbis", rate=GAME_AUDIO_SAMPLE_RATE_HERTZ),
         )
-        stream.bit_rate = GAME_AUDIO_BIT_RATE
-        stream.layout = "mono"
-        stream.time_base = time_base
-        stream.codec_context.time_base = time_base
+        encoded.bit_rate = GAME_AUDIO_BIT_RATE
+        encoded.layout = "mono"
+        encoded.time_base = time_base
+        encoded.codec_context.time_base = time_base
+
+        graph = Graph()
+        graph.threads = 1
+        limit = 10 ** (PRE_CODEC_TRUE_PEAK_DB / 20)
+        nodes = [
+            graph.add_abuffer(
+                sample_rate=GAME_AUDIO_SAMPLE_RATE_HERTZ,
+                format="fltp",
+                layout="mono",
+                channels=1,
+                time_base=time_base,
+            ),
+            graph.add("aresample", "192000"),
+            graph.add("volume", f"volume={GAME_AUDIO_GAIN_DB:.6f}dB:precision=float"),
+            graph.add(
+                "alimiter",
+                f"limit={limit:.9f}:attack=5:release=50:level=false:latency=true",
+            ),
+            graph.add("aresample", str(GAME_AUDIO_SAMPLE_RATE_HERTZ)),
+            graph.add(
+                "aformat",
+                "sample_fmts=fltp:"
+                f"sample_rates={GAME_AUDIO_SAMPLE_RATE_HERTZ}:channel_layouts=mono",
+            ),
+            graph.add("abuffersink"),
+        ]
+        for left, right in pairwise(nodes):
+            left.link_to(right)
+        graph.configure()
+
+        def drain() -> None:
+            nonlocal output_samples
+            while True:
+                try:
+                    frame = cast(AudioFrame, graph.pull())
+                except av.error.BlockingIOError, av.error.EOFError:
+                    return
+                frame.pts = output_samples
+                frame.time_base = time_base
+                output_samples += frame.samples
+                for packet in encoded.encode(frame):
+                    destination.mux(packet)
 
         for segment in _audio_segments(source):
             resampler = AudioResampler(
@@ -39,21 +88,24 @@ def encode_game_audio(source: bytes) -> bytes:
             with cast(InputContainer, av.open(BytesIO(segment))) as decoded:
                 for decoded_frame in decoded.decode(audio=0):
                     for frame in resampler.resample(decoded_frame):
-                        frame.pts = samples
+                        frame.pts = input_samples
                         frame.time_base = time_base
-                        samples += frame.samples
-                        for packet in stream.encode(frame):
-                            encoded.mux(packet)
+                        input_samples += frame.samples
+                        graph.push(frame)
+                        drain()
                 for frame in resampler.resample(None):
-                    frame.pts = samples
+                    frame.pts = input_samples
                     frame.time_base = time_base
-                    samples += frame.samples
-                    for packet in stream.encode(frame):
-                        encoded.mux(packet)
+                    input_samples += frame.samples
+                    graph.push(frame)
+                    drain()
 
-        assert samples, "source audio has no decodable frames"
-        for packet in stream.encode():
-            encoded.mux(packet)
+        assert input_samples, "source audio has no decodable frames"
+        graph.push(None)
+        drain()
+        assert output_samples, "audio filter produced no frames"
+        for packet in encoded.encode():
+            destination.mux(packet)
 
     audio = output.getvalue()
     assert audio.startswith(b"OggS"), "audio encoder did not produce Ogg audio"

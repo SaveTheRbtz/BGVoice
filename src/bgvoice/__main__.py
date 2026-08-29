@@ -10,6 +10,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from bgvoice.audio_normalization import normalize_existing_audio
 from bgvoice.database import PipelineDatabase
 from bgvoice.direction_audit import (
     DEFAULT_SIMILARITY_THRESHOLD,
@@ -30,6 +31,7 @@ from bgvoice.pipeline_models import ExtractionProgress
 _DEFAULT_DATABASE = Path("data/bgvoice.lancedb")
 _DEFAULT_DIRECTION_AUDIT = Path("data/direction-mismatches.json")
 _DEFAULT_MOD_OUTPUT = Path("data/bgvoice-mod")
+_DEFAULT_AUDIO_NORMALIZATION_CHECKPOINT = Path("data/audio-normalization-v1.tsv")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -124,6 +126,26 @@ def build_parser() -> argparse.ArgumentParser:
         "--database", type=Path, default=_DEFAULT_DATABASE, help="LanceDB directory"
     )
 
+    normalization = commands.add_parser(
+        "normalize-audio",
+        help="raise and peak-protect game audio encoded before the current policy",
+    )
+    normalization.add_argument(
+        "--database", type=Path, default=_DEFAULT_DATABASE, help="LanceDB directory"
+    )
+    normalization.add_argument(
+        "--checkpoint",
+        type=Path,
+        default=_DEFAULT_AUDIO_NORMALIZATION_CHECKPOINT,
+        help="resumable input-hash checkpoint",
+    )
+    normalization.add_argument(
+        "--workers",
+        type=_positive_int,
+        default=workers,
+        help="parallel audio encoders (default: available logical CPU count)",
+    )
+
     audit = commands.add_parser(
         "audit-directions",
         help="find directed dialogue that no longer matches its extracted source text",
@@ -179,6 +201,17 @@ def main(argv: Sequence[str] | None = None) -> int:
             f"pipeline database does not exist: {args.database}"
         )
         summary = PipelineDatabase(args.database).rebuild_attributions()
+        print(summary.model_dump_json(indent=2))
+        return 0
+    if args.command == "normalize-audio":
+        logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
+        summary = asyncio.run(
+            normalize_existing_audio(
+                args.database,
+                args.checkpoint,
+                args.workers,
+            )
+        )
         print(summary.model_dump_json(indent=2))
         return 0
     if args.command in {"generate", "generate-defaults"}:
