@@ -68,6 +68,7 @@ LINE_ORDER: Final[dict[str, LineSort]] = {
     "state_index": "state_index",
     "transition_index": "transition_index",
     "serialized_size": "serialized_size",
+    "text_length": "text_length",
 }
 SOUND_ORDER: Final[dict[str, SoundSort]] = {
     "character": "character_resource_name",

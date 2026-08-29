@@ -41,6 +41,7 @@ type LineSort = Literal[
     "line_kind",
     "strref",
     "serialized_size",
+    "text_length",
     "state_index",
     "transition_index",
 ]

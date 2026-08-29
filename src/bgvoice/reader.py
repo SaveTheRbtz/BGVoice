@@ -537,7 +537,7 @@ class PipelineReader:
         if query.voice_id is not None:
             conditions.append(col("line_kind") == lit(DialogueLineKind.NPC))
         predicate = combine(conditions)
-        if query.directed is None and query.voiced is None:
+        if query.directed is None and query.voiced is None and sort != "text_length":
             total, records = await records_page(
                 table=self.lines_table,
                 model=DialogueLineRecord,
@@ -575,7 +575,20 @@ class PipelineReader:
             records = _filter_value(
                 records, query.voiced, lambda row, value: has_audio(row) is value
             )
-            records = browse_order(records, sort, direction, scores, lambda row: row.id)
+            if sort == "text_length":
+                resolved = [row for row in records if row.text is not None]
+                unresolved = sorted(
+                    (row for row in records if row.text is None),
+                    key=lambda row: row.id,
+                )
+                resolved.sort(key=lambda row: row.id)
+                resolved.sort(
+                    key=lambda row: len(row.text or ""),
+                    reverse=direction == "desc",
+                )
+                records = [*resolved, *unresolved]
+            else:
+                records = browse_order(records, sort, direction, scores, lambda row: row.id)
             total = len(records)
             records = page_items(records, query)
 

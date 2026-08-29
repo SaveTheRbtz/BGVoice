@@ -15,6 +15,11 @@ import { useBrowser } from "./use-browser";
 
 const SOURCE_FILTERS = ["override", "bif", "dlc"] as const;
 const BOOLEAN_FILTERS = ["true", "false"] as const;
+const LINE_ORDERS = [
+  ["dialogue asc", "Dialogue order"],
+  ["text_length desc", "Longest first"],
+  ["text_length asc", "Shortest first"],
+] as const;
 
 const LINE_PAGES = {
   npc: {
@@ -64,7 +69,14 @@ export function DialogueLineBrowser({ lineKind }: { lineKind: DialogueLineKind }
       description={page.description}
       noun={page.noun}
       searchPlaceholder={page.placeholder}
-      renderFilters={(controls) => <LineFilters lineKind={lineKind} controls={controls} />}
+      renderFilters={(controls) => (
+        <LineFilters
+          lineKind={lineKind}
+          controls={controls}
+          orderBy={browser.query.orderBy}
+          onOrderChange={browser.setOrderBy}
+        />
+      )}
     >
       <div className={`dialogue-line-results ${loading ? "is-loading" : ""}`} aria-busy={loading}>
         {result.items.map((line) => (
@@ -85,9 +97,11 @@ function lineLoader(lineKind: DialogueLineKind): typeof listDialogueLines {
   }, signal);
 }
 
-function LineFilters({ lineKind, controls }: {
+function LineFilters({ lineKind, controls, orderBy, onOrderChange }: {
   lineKind: DialogueLineKind;
   controls: FilterControls;
+  orderBy: string;
+  onOrderChange: (value: string) => void;
 }) {
   const { value, update } = controls;
   return (
@@ -129,6 +143,15 @@ function LineFilters({ lineKind, controls }: {
           />
         </>
       )}
+      <label className="filter">
+        <span>Order</span>
+        <select value={orderBy} onChange={(event) => onOrderChange(event.currentTarget.value)}>
+          {orderBy === "" && <option value="">Relevance</option>}
+          {LINE_ORDERS.map(([value, label]) => (
+            <option key={value} value={value}>{label}</option>
+          ))}
+        </select>
+      </label>
     </>
   );
 }

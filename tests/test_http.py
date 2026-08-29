@@ -177,10 +177,17 @@ def test_pipeline_output_is_browsable_over_connect_and_portrait_http(tmp_path: P
         lines = _connect(
             web,
             "ListDialogueLines",
-            {"parent": _PARENT, "pageSize": 10, "filter": 'line_kind = "npc"'},
+            {
+                "parent": _PARENT,
+                "pageSize": 10,
+                "filter": 'line_kind = "npc"',
+                "orderBy": "text_length desc",
+            },
         )
         assert lines.status_code == 200
-        assert {line["text"] for line in lines.json()["dialogueLines"]} == {
+        dialogue_lines = lines.json()["dialogueLines"]
+        assert dialogue_lines[0]["text"] == "A quest for <DAYANDMONTH>."
+        assert {line["text"] for line in dialogue_lines} == {
             "Hello.",
             "A quest for <DAYANDMONTH>.",
         }

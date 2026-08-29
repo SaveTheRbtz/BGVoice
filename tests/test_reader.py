@@ -236,6 +236,14 @@ async def test_dialogue_line_voice_sound_and_transition_queries(
                 q="DAYANDMONTH", line_kind=DialogueLineKind.NPC, attributed=True, page_size=10
             )
         )
+        by_length = await reader.lines(
+            LineQuery(
+                line_kind=DialogueLineKind.PLAYER,
+                sort="text_length",
+                direction="desc",
+                page_size=10,
+            )
+        )
         voices = await reader.voices(VoiceQuery(page_size=10))
         sounds = await reader.sounds(
             SoundQuery(
@@ -264,6 +272,10 @@ async def test_dialogue_line_voice_sound_and_transition_queries(
     ]
     assert (lines.total, lines.items[0].dialogue_resource_name) == (1, "UNUSED.DLG")
     assert tokenized.items[0].tokens == ["DAYANDMONTH"]
+    assert [len(row.text or "") for row in by_length.items] == sorted(
+        (len(row.text or "") for row in by_length.items),
+        reverse=True,
+    )
     assert (voices.total, voices.sort, voices.items[0].id) == (1, "npc_line_count", "aerie")
     assert (voices.items[0].npc_line_count, voices.items[0].dialogue_resrefs) == (2, ["AERIE"])
     assert (sounds.total, sounds.sort, sounds.items[0].character_resource_name) == (

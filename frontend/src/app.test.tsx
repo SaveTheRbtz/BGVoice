@@ -457,6 +457,11 @@ describe("application jobs", () => {
       expect.objectContaining({ filter: 'line_kind = "npc"', orderBy: "dialogue asc", pageSize: 25 }),
       expect.any(AbortSignal),
     );
+    await user.selectOptions(screen.getByRole("combobox", { name: "Order" }), "text_length desc");
+    await waitFor(() => expect(api.listDialogueLines).toHaveBeenLastCalledWith(
+      expect.objectContaining({ filter: 'line_kind = "npc"', orderBy: "text_length desc" }),
+      expect.any(AbortSignal),
+    ));
 
     await user.click(screen.getAllByRole("link", { name: "Player lines" })[0]!);
     expect(await screen.findByRole("heading", { name: "Player lines", level: 1 })).toBeTruthy();
@@ -465,6 +470,19 @@ describe("application jobs", () => {
       expect.objectContaining({ filter: 'line_kind = "player"', orderBy: "dialogue asc" }),
       expect.any(AbortSignal),
     );
+    await user.selectOptions(screen.getByRole("combobox", { name: "Order" }), "text_length asc");
+    await waitFor(() => expect(api.listDialogueLines).toHaveBeenLastCalledWith(
+      expect.objectContaining({ filter: 'line_kind = "player"', orderBy: "text_length asc" }),
+      expect.any(AbortSignal),
+    ));
+
+    await user.click(screen.getAllByRole("link", { name: "Journal" })[0]!);
+    expect(await screen.findByRole("heading", { name: "Journal entries", level: 1 })).toBeTruthy();
+    await user.selectOptions(screen.getByRole("combobox", { name: "Order" }), "text_length desc");
+    await waitFor(() => expect(api.listDialogueLines).toHaveBeenLastCalledWith(
+      expect.objectContaining({ filter: 'line_kind = "journal"', orderBy: "text_length desc" }),
+      expect.any(AbortSignal),
+    ));
   });
 
   it("reads canonical definitions and their engine provenance", async () => {
