@@ -140,6 +140,7 @@ message PipelineSummary {
   uint64 voice_creation_failures = 21;
   uint64 dialogue_direction_failures = 22;
   uint64 audio_generation_failures = 23;
+  uint64 unique_inworld_voices = 24;
 }
 
 message Installation {

@@ -508,6 +508,7 @@ class PipelineStats(_ReaderModel):
     attributed_dialogue_lines: int = Field(ge=0)
     unattributed_dialogue_lines: int = Field(ge=0)
     generated_voices: int = Field(ge=0)
+    unique_inworld_voices: int = Field(ge=0)
     directed_lines: int = Field(ge=0)
     generated_audios: int = Field(ge=0)
     running_tts_batches: int = Field(ge=0)

@@ -54,6 +54,7 @@ export function PipelinePage({ installation }: { installation: Installation | nu
     kits,
     identifierDefinitions,
     generatedVoices,
+    uniqueInworldVoices,
     directedLines,
     generatedAudios,
     runningTtsBatches,
@@ -89,7 +90,8 @@ export function PipelinePage({ installation }: { installation: Installation | nu
           <h2 id="generation-summary-title">Voice-over progress</h2>
         </div>
         <div className="generation-stats">
-          <Stat label="Created voices" value={generatedVoices} accent />
+          <Stat label="Voice assignments" value={generatedVoices} accent />
+          <Stat label="Unique Inworld voices" value={uniqueInworldVoices} />
           <Stat label="Directed lines" value={directedLines} />
           <Stat label="Audio samples" value={generatedAudios} />
         </div>

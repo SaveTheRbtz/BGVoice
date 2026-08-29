@@ -188,6 +188,7 @@ class PipelineService(pipeline_connect.PipelineService):
                 unattributed_dialogues=stats.dialogues_unattributed,
                 unattributed_dialogue_lines=stats.unattributed_dialogue_lines,
                 generated_voices=stats.generated_voices,
+                unique_inworld_voices=stats.unique_inworld_voices,
                 directed_lines=stats.directed_lines,
                 generated_audios=stats.generated_audios,
                 running_tts_batches=stats.running_tts_batches,

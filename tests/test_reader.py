@@ -1,5 +1,6 @@
 """Read-model search, ordering, pagination, and publication semantics."""
 
+from collections import Counter
 from pathlib import Path
 
 import lancedb
@@ -19,6 +20,7 @@ from bgvoice.model_types import (
     SourceKind,
 )
 from bgvoice.reader import PipelineReader
+from bgvoice.reader_generation import GenerationSnapshot
 from bgvoice.reader_models import (
     CharacterQuery,
     ClassQuery,
@@ -40,6 +42,7 @@ from bgvoice.storage_records import (
     GenerationFailureRecord,
     TtsBatchRecord,
     VoiceDescription,
+    VoiceResourceRecord,
 )
 from tests.factories import make_dump, make_resource
 
@@ -76,6 +79,48 @@ async def test_stats_report_the_published_pipeline_generation(
     assert stats.attribution_completed_at is not None
     assert (stats.dialogues_attributed, stats.dialogues_unattributed) == (2, 1)
     assert (stats.attributed_dialogue_lines, stats.unattributed_dialogue_lines) == (4, 4)
+
+
+def test_generation_counts_distinguish_assignments_from_inworld_voices() -> None:
+    records = {
+        voice_id: GeneratedVoiceRecord(
+            voice_id=voice_id,
+            inworld_voice_id=("shared-provider-voice" if voice_id != "default:male" else "default"),
+            description=VoiceDescription(
+                text="A clear reusable voice description for this focused test.",
+                language_code="en-GB",
+            ),
+            created_at="2026-08-29T00:00:00+00:00",
+        )
+        for voice_id in ("aerie", "minsc", "default:male")
+    }
+    snapshot = GenerationSnapshot(
+        voices=records,
+        directions=[],
+        audio=[],
+        batches=[],
+        voice_names={},
+        directions_by_line={},
+        audio_by_id={},
+        direction_count_by_voice=Counter(),
+        audio_count_by_voice=Counter(),
+        audio_voices_by_line={},
+    )
+    current_voices = [
+        VoiceResourceRecord(
+            key=VoiceResourceRecord.key_for("attribution", voice_id),
+            run_id="attribution",
+            voice_id=voice_id,
+            display_name=voice_id.title(),
+            prompt=f"Name: {voice_id.title()}",
+            variant_resource_names=[f"{voice_id.upper()}.CRE"],
+            dialogue_resrefs=[],
+            search_text=voice_id,
+        )
+        for voice_id in ("aerie", "minsc")
+    ]
+
+    assert snapshot.pipeline_counts(current_voices)[:2] == (2, 1)
 
 
 @pytest.mark.anyio
@@ -338,6 +383,7 @@ async def test_generation_progress_enriches_and_filters_source_resources(
     assert directed.items[0].directions[0].narrator is None
     assert (
         stats.generated_voices,
+        stats.unique_inworld_voices,
         stats.directed_lines,
         stats.generated_audios,
         stats.running_tts_batches,
@@ -345,7 +391,7 @@ async def test_generation_progress_enriches_and_filters_source_resources(
         stats.voice_creation_failures,
         stats.dialogue_direction_failures,
         stats.audio_generation_failures,
-    ) == (1, 1, 1, 1, 1, 1, 1, 1)
+    ) == (1, 1, 1, 1, 1, 1, 1, 1, 1)
 
 
 @pytest.mark.anyio

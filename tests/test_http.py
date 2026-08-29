@@ -218,9 +218,10 @@ def test_generated_work_is_browsable_filterable_and_playable(
     summary = installation["summary"]
     assert (
         summary["generatedVoices"],
+        summary["uniqueInworldVoices"],
         summary["directedLines"],
         summary["generatedAudios"],
-    ) == ("1", "1", "1")
+    ) == ("1", "1", "1", "1")
     assert (
         summary["voiceCreationFailures"],
         summary["dialogueDirectionFailures"],

@@ -48,6 +48,8 @@ import App from "./App";
 const installation = create(InstallationSchema, {
   name: "installations/bg2ee-eet",
   summary: {
+    generatedVoices: 7n,
+    uniqueInworldVoices: 3n,
     voiceCreationFailures: 1n,
     dialogueDirectionFailures: 3n,
     audioGenerationFailures: 6n,
@@ -205,7 +207,15 @@ describe("application jobs", () => {
     window.history.replaceState(null, "", "/pipeline");
     render(<App />);
 
-    const failures = within(await screen.findByRole("group", { name: "Generation failures" }));
+    const progress = within(await screen.findByRole("region", { name: "Voice-over progress" }));
+    const assignments = progress.getByText("Voice assignments").closest("article");
+    const providerVoices = progress.getByText("Unique Inworld voices").closest("article");
+    expect(assignments).not.toBeNull();
+    expect(providerVoices).not.toBeNull();
+    expect(within(assignments!).getByText("7")).toBeTruthy();
+    expect(within(providerVoices!).getByText("3")).toBeTruthy();
+
+    const failures = within(screen.getByRole("group", { name: "Generation failures" }));
     expect(failures.getByText("Voice creation")).toBeTruthy();
     expect(failures.getByText("1")).toBeTruthy();
     expect(failures.getByText("Dialogue direction")).toBeTruthy();

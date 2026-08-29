@@ -49,6 +49,7 @@ class StatsTableCounts:
     happiness_rules: int
     banter_timing_settings: int
     generated_voices: int
+    unique_inworld_voices: int
     directed_lines: int
     generated_audios: int
     running_tts_batches: int
@@ -143,6 +144,7 @@ def pipeline_stats(
         attributed_dialogue_lines=dialogue.attributed_lines,
         unattributed_dialogue_lines=dialogue.unattributed_lines,
         generated_voices=tables.generated_voices,
+        unique_inworld_voices=tables.unique_inworld_voices,
         directed_lines=tables.directed_lines,
         generated_audios=tables.generated_audios,
         running_tts_batches=tables.running_tts_batches,

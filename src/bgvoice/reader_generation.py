@@ -121,8 +121,14 @@ class GenerationSnapshot:
 
     def pipeline_counts(self, current_voices: list[VoiceResourceRecord]) -> tuple[int, ...]:
         current_ids = {row.voice_id.casefold() for row in current_voices}
+        assignments = [
+            record
+            for voice_id, record in self.voices.items()
+            if voice_id in current_ids and voice_id != "narrator"
+        ]
         return (
-            sum(voice_id in current_ids for voice_id in self.voices if voice_id != "narrator"),
+            len(assignments),
+            len({record.inworld_voice_id for record in assignments}),
             len(self.directions),
             len(self.audio),
             sum(row.status is RunStatus.RUNNING for row in self.batches),
