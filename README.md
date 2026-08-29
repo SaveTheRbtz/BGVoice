@@ -110,7 +110,7 @@ a typed in-memory index rather than queried line by line. Speech is ordered by p
 voice, packed into 200,000-character asynchronous Inworld jobs, and scheduled globally with at most
 75 jobs and 15 million characters in flight: half of the Developer plan's published limits.
 Inworld returns each batch line as one or more concatenated WAV segments. PyAV joins and normalizes
-them into mono 22.05 kHz Ogg Vorbis at 90 kb/s. Published provider IDs, final voice descriptions,
+them into mono 22.05 kHz Ogg Vorbis at 44 kb/s. Published provider IDs, final voice descriptions,
 directed text, game-ready audio bytes, and durable batch operation names are stored immediately.
 Prompts, preview artifacts, manifests, and expiring signed URLs are not persisted. Re-running the
 command resumes missing work.
