@@ -15,7 +15,7 @@ from bgvoice.direction_audit import (
     DEFAULT_SIMILARITY_THRESHOLD,
     audit_directions,
 )
-from bgvoice.generation import generate
+from bgvoice.generation import generate, generate_defaults
 from bgvoice.iecli import IeCli
 from bgvoice.mod_export import export_mod
 from bgvoice.model_types import RunStatus
@@ -110,6 +110,20 @@ def build_parser() -> argparse.ArgumentParser:
         help="delete and recreate every selected character voice, direction, and audio",
     )
 
+    defaults = commands.add_parser(
+        "generate-defaults",
+        help="voice every character with a small workload through shared gender/race defaults",
+    )
+    defaults.add_argument(
+        "--max-lines",
+        type=_positive_int,
+        default=5,
+        help="largest non-empty NPC workload to include (default: 5)",
+    )
+    defaults.add_argument(
+        "--database", type=Path, default=_DEFAULT_DATABASE, help="LanceDB directory"
+    )
+
     audit = commands.add_parser(
         "audit-directions",
         help="find directed dialogue that no longer matches its extracted source text",
@@ -130,7 +144,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     export = commands.add_parser(
         "export-mod",
-        help="build a WeiDU EET mod containing both generated-audio policies",
+        help="build a WeiDU EET mod that replaces matching dialogue audio",
     )
     export.add_argument(
         "--database", type=Path, default=_DEFAULT_DATABASE, help="LanceDB directory"
@@ -167,19 +181,29 @@ def main(argv: Sequence[str] | None = None) -> int:
         summary = PipelineDatabase(args.database).rebuild_attributions()
         print(summary.model_dump_json(indent=2))
         return 0
-    if args.command == "generate":
+    if args.command in {"generate", "generate-defaults"}:
         logging.basicConfig(level=logging.WARNING, format="%(asctime)s %(message)s")
         logging.getLogger("bgvoice.generation_ai").setLevel(logging.INFO)
-        summary = asyncio.run(
-            generate(
-                args.database,
-                args.voice,
-                args.lines_per_voice,
-                os.environ["OPENAI_API_KEY"],
-                os.environ["INWORLD_API_KEY"],
-                recreate_voices=args.recreate_voices,
+        if args.command == "generate":
+            summary = asyncio.run(
+                generate(
+                    args.database,
+                    args.voice,
+                    args.lines_per_voice,
+                    os.environ["OPENAI_API_KEY"],
+                    os.environ["INWORLD_API_KEY"],
+                    recreate_voices=args.recreate_voices,
+                )
             )
-        )
+        else:
+            summary = asyncio.run(
+                generate_defaults(
+                    args.database,
+                    args.max_lines,
+                    os.environ["OPENAI_API_KEY"],
+                    os.environ["INWORLD_API_KEY"],
+                )
+            )
         print(summary.model_dump_json(indent=2))
         return 0
     if args.command == "audit-directions":

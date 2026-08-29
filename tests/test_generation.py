@@ -20,6 +20,7 @@ from bgvoice.dialogue_context import DialogueHistoryIndex
 from bgvoice.game_audio import encode_game_audio
 from bgvoice.generation import (
     generate,
+    generate_defaults,
     load_workloads,
     round_robin_lines,
 )
@@ -115,8 +116,13 @@ async def test_current_voice_workload_uses_attributed_nonempty_npc_lines(
     assert all(line.line_kind is DialogueLineKind.NPC and line.text for line in workload.lines)
     assert workload.ability_scores.render() == ("STR 10, DEX 17, CON 9, INT 16, WIS 16, CHA 14")
     assert workload.portrait_png == b"\x89PNG\r\n\x1a\nfixture"
-
-
+    assert (
+        workload.default_voice.gender_id,
+        workload.default_voice.gender,
+        workload.default_voice.race_id,
+        workload.default_voice.race,
+    ) == (2, "Female", 2, "Elf")
+    assert workload.default_voice.display_name == "BGVoice Default G2 Female R2 Elf"
 @pytest.mark.anyio
 async def test_directions_continue_skip_persisted_and_clear_failures(
     scenario_database: Path,
@@ -220,6 +226,7 @@ async def test_unprocessable_direction_input_is_recorded_and_skipped(
             lines=(invalid, selected.lines[1]),
             ability_scores=selected.ability_scores,
             portrait_png=selected.portrait_png,
+            default_voice=selected.default_voice,
         )
         history = await DialogueHistoryIndex.load(reader)
         requests: list[str] = []
@@ -303,10 +310,10 @@ async def test_voice_failure_does_not_block_direction_and_is_cleared_on_retry(
     async def synthesize(
         _store: GenerationStore,
         _inworld: object,
-        workload: generation_module.VoiceWorkload,
+        workloads: list[generation_module.VoiceWorkload],
         *_: object,
     ) -> None:
-        synthesized.append(workload.voice.voice_id)
+        synthesized.append(workloads[0].voice.voice_id)
 
     async def resume(*_: object) -> None:
         return None
@@ -317,7 +324,7 @@ async def test_voice_failure_does_not_block_direction_and_is_cleared_on_retry(
     monkeypatch.setattr(generation_module, "_resume_batches", resume)
     monkeypatch.setattr(generation_module, "_ensure_character_voice", ensure_voice)
     monkeypatch.setattr(generation_module, "_direct_workload", direct)
-    monkeypatch.setattr(generation_module, "_synthesize_workload", synthesize)
+    monkeypatch.setattr(generation_module, "_synthesize_workloads", synthesize)
 
     stale_failures = [
         GenerationFailureRecord(
@@ -487,6 +494,127 @@ class _FakeOpenAI:
         traceback: TracebackType | None,
     ) -> None:
         return None
+
+
+class _DefaultVoiceProvider:
+    def __init__(self) -> None:
+        self.designs = 0
+        self.publishes = 0
+
+    async def list_voices(self) -> list[PublishedVoice]:
+        return []
+
+    async def design_voice(self, _request: object) -> object:
+        self.designs += 1
+        return SimpleNamespace(preview_voices=[SimpleNamespace(voice_id="draft-default")])
+
+    async def publish_voice(
+        self,
+        _draft_voice_id: str,
+        *,
+        display_name: str,
+        description: str,
+        tags: tuple[str, ...],
+    ) -> PublishedVoice:
+        self.publishes += 1
+        return PublishedVoice(
+            name="workspaces/test/voices/default-female-elf",
+            voiceId="default-female-elf",
+            displayName=display_name,
+            description=description,
+            langCode="EN_GB",
+            tags=list(tags),
+            source="IVC",
+        )
+
+
+@pytest.mark.anyio
+async def test_shared_default_generation_is_persisted_and_idempotent(
+    scenario_database: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = _DefaultVoiceProvider()
+    synthesized: list[list[str]] = []
+
+    async def synthesize(
+        _store: GenerationStore,
+        _inworld: object,
+        workloads: list[generation_module.VoiceWorkload],
+        *_: object,
+    ) -> None:
+        synthesized.append([workload.voice.voice_id for workload in workloads])
+
+    monkeypatch.setattr(generation_module, "AsyncOpenAI", _FakeOpenAI)
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **_: _FakeHttp())
+    monkeypatch.setattr(generation_module, "InworldClient", lambda *_: provider)
+    monkeypatch.setattr(generation_module, "_synthesize_workloads", synthesize)
+    _FakeResponses.calls.clear()
+
+    excluded = await generate_defaults(
+        scenario_database,
+        1,
+        "openai-test",
+        "inworld-test",
+    )
+    first = await generate_defaults(
+        scenario_database,
+        5,
+        "openai-test",
+        "inworld-test",
+    )
+    second = await generate_defaults(
+        scenario_database,
+        5,
+        "openai-test",
+        "inworld-test",
+    )
+    reader = await PipelineReader.open(scenario_database)
+    store = await GenerationStore.open(scenario_database)
+    try:
+        workload = (await load_workloads(reader, ["Aerie"], None))[0]
+        copied_voice = workload.voice.model_copy(
+            update={
+                "key": workload.voice.key_for(workload.voice.run_id, "aerie-copy"),
+                "voice_id": "aerie-copy",
+                "display_name": "Aerie Copy",
+            }
+        )
+        master = await store.generated_voice("default:gender:2:race:2")
+        assert master is not None
+        await generation_module._ensure_character_voice(
+            cast(Any, object()),
+            cast(InworldClient, provider),
+            store,
+            generation_module.VoiceWorkload(
+                voice=copied_voice,
+                lines=workload.lines,
+                ability_scores=workload.ability_scores,
+                portrait_png=workload.portrait_png,
+                default_voice=workload.default_voice,
+            ),
+            asyncio.Semaphore(1),
+            {},
+            recreate=False,
+            default_voice=asyncio.sleep(0, result=master),
+        )
+        voices = await store.generated_voices()
+    finally:
+        reader.close()
+        store.close()
+
+    default_id = "default:gender:2:race:2"
+    assert excluded.voices == 0
+    assert first.directed_lines == second.directed_lines == 2
+    assert provider.designs == provider.publishes == 1
+    assert {default_id, "aerie", "aerie-copy"} <= voices.keys()
+    assert {
+        voices[default_id].inworld_voice_id,
+        voices["aerie"].inworld_voice_id,
+        voices["aerie-copy"].inworld_voice_id,
+    } == {"default-female-elf"}
+    assert sum(call["text_format"] is VoiceDesignPlan for call in _FakeResponses.calls) == 1
+    assert sum(call["text_format"] is DirectionPlan for call in _FakeResponses.calls) == 2
+    assert synthesized == [["aerie"], ["aerie"]]
 
 
 class _ReusableVoiceProvider:
@@ -761,12 +889,13 @@ async def test_synthesis_skips_lines_owned_by_running_batches(
 
         provider = _RecordingBatchProvider()
         monkeypatch.setattr(generation_module, "_complete_batch", complete)
-        await generation_module._synthesize_workload(
+        await generation_module._synthesize_workloads(
             store,
             cast(InworldClient, provider),
-            workload,
+            [workload],
             narrator,
             asyncio.Semaphore(1),
+            set(running.custom_ids),
         )
     finally:
         reader.close()
@@ -782,8 +911,11 @@ async def test_mixed_tts_batch_keeps_good_audio_and_clears_failures_on_retry(
 ) -> None:
     directions = [
         DirectedLineRecord(
-            id=DirectedLineRecord.id_for("aerie", f"AERIE.DLG:npc:{state}:-"),
-            voice_id="aerie",
+            id=DirectedLineRecord.id_for(
+                "aerie" if state % 2 == 0 else "imoen",
+                f"AERIE.DLG:npc:{state}:-",
+            ),
+            voice_id="aerie" if state % 2 == 0 else "imoen",
             dialogue_line_id=f"AERIE.DLG:npc:{state}:-",
             character=CharacterDirection(directed_dialogue=f"[clearly] Line {state}."),
             created_at="2026-08-27T12:00:00+00:00",
@@ -796,15 +928,18 @@ async def test_mixed_tts_batch_keeps_good_audio_and_clears_failures_on_retry(
         status=RunStatus.RUNNING,
         started_at="2026-08-27T12:00:00+00:00",
     )
-    voice = GeneratedVoiceRecord(
-        voice_id="aerie",
-        inworld_voice_id="voice-aerie",
-        description=VoiceDescription(
-            text="A warm, clear voice with steady delivery.",
-            language_code="en-GB",
-        ),
-        created_at="2026-08-27T12:00:00+00:00",
-    )
+    voices = {
+        voice_id: GeneratedVoiceRecord(
+            voice_id=voice_id,
+            inworld_voice_id=f"voice-{voice_id}",
+            description=VoiceDescription(
+                text="A warm, clear voice with steady delivery.",
+                language_code="en-GB",
+            ),
+            created_at="2026-08-27T12:00:00+00:00",
+        )
+        for voice_id in ("aerie", "imoen")
+    }
     provider = _MixedBatchProvider(batch.custom_ids)
     monkeypatch.setattr(
         generation_module,
@@ -815,7 +950,7 @@ async def test_mixed_tts_batch_keeps_good_audio_and_clears_failures_on_retry(
 
     store = await GenerationStore.open(scenario_database)
     try:
-        await store.upsert_generated_voices([voice])
+        await store.upsert_generated_voices(list(voices.values()))
         await store.upsert_directed_lines(directions)
         await store.upsert_batches([batch])
         direction_map = {direction.id: direction for direction in directions}
@@ -824,11 +959,11 @@ async def test_mixed_tts_batch_keeps_good_audio_and_clears_failures_on_retry(
             cast(InworldClient, provider),
             batch,
             direction_map,
-            {voice.voice_id: voice},
+            voices,
         )
-        partial_audio = await store.generated_audio(["aerie"])
+        partial_audio = await store.generated_audio()
         original_audio = partial_audio[0]
-        failures = await store.failures(["aerie"])
+        failures = await store.failures()
         failed_batch = (await store.batches())[0]
 
         provider.recovered = True
@@ -837,29 +972,35 @@ async def test_mixed_tts_batch_keeps_good_audio_and_clears_failures_on_retry(
             cast(InworldClient, provider),
             batch,
             direction_map,
-            {voice.voice_id: voice},
+            voices,
         )
-        recovered_audio = await store.generated_audio(["aerie"])
-        recovered_failures = await store.failures(["aerie"])
+        recovered_audio = await store.generated_audio()
+        recovered_failures = await store.failures()
         recovered_batch = (await store.batches())[0]
     finally:
         store.close()
 
     assert [audio.dialogue_line_id for audio in partial_audio] == [directions[3].dialogue_line_id]
     assert {
-        (failure.dialogue_line_id, failure.error_code, failure.error) for failure in failures
+        (failure.voice_id, failure.dialogue_line_id, failure.error_code, failure.error)
+        for failure in failures
     } == {
-        (directions[0].dialogue_line_id, "bad-input", "text was rejected"),
+        ("aerie", directions[0].dialogue_line_id, "bad-input", "text was rejected"),
         (
+            "imoen",
             directions[1].dialogue_line_id,
             None,
             "Inworld returned neither audio nor an error for this item",
         ),
-        (directions[2].dialogue_line_id, None, "signed audio download failed"),
+        ("aerie", directions[2].dialogue_line_id, None, "signed audio download failed"),
     }
     assert failed_batch.status is RunStatus.COMPLETE_WITH_ERRORS
-    assert {audio.dialogue_line_id for audio in recovered_audio} == {
-        direction.dialogue_line_id for direction in directions
+    assert {
+        (audio.voice_id, audio.dialogue_line_id, audio.inworld_voice_id)
+        for audio in recovered_audio
+    } == {
+        (direction.voice_id, direction.dialogue_line_id, voices[direction.voice_id].inworld_voice_id)
+        for direction in directions
     }
     assert (
         next(audio for audio in recovered_audio if audio.id == original_audio.id) == original_audio

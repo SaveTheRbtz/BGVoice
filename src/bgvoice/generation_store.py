@@ -83,8 +83,11 @@ class GenerationStore:
     def close(self) -> None:
         self._connection.close()
 
-    async def generated_voices(self) -> dict[str, GeneratedVoiceRecord]:
-        records = await _records(self._generated_voices, GeneratedVoiceRecord)
+    async def generated_voices(
+        self,
+        voice_ids: Sequence[str] | None = None,
+    ) -> dict[str, GeneratedVoiceRecord]:
+        records = await _records(self._generated_voices, GeneratedVoiceRecord, voice_ids)
         return {record.voice_id: record for record in records}
 
     async def generated_voice(self, voice_id: str) -> GeneratedVoiceRecord | None:

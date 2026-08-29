@@ -276,7 +276,7 @@ class VoiceDesignSource(_StructuredOutput):
     display_name: str = Field(min_length=1)
     metadata: str = Field(min_length=1)
     biography: str | None = None
-    ability_scores: CharacterAbilityScores
+    ability_scores: CharacterAbilityScores | None
     portrait_png: bytes | None = Field(default=None, exclude=True, repr=False)
 
 
@@ -292,6 +292,9 @@ def build_voice_design_prompt(context: VoiceDesignSource) -> str:
         if context.portrait_png is not None
         else f"No local game portrait is available for {context.display_name}."
     )
+    ability_scores = (
+        context.ability_scores.render() if context.ability_scores is not None else "unavailable"
+    )
     return f"""Design an original synthetic voice for {context.display_name} from Baldur's Gate.
 
 Combine your internal model knowledge with current web research. Use web search at least once to
@@ -305,7 +308,7 @@ Local metadata:
 {context.metadata}{biography}
 
 Additional local character evidence:
-- Ability scores: {context.ability_scores.render()}
+- Ability scores: {ability_scores}
 - Portrait: {portrait}
 
 ## Voice Description Best Practices

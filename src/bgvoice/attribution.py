@@ -242,7 +242,7 @@ def _voice_resource(
     if not dialogues:
         return None
 
-    representative = _voice_representative(members)
+    representative = voice_representative(members)
     detail = representative.detail
     assert detail is not None
     biography = _voice_biography(members, character_sounds)
@@ -308,7 +308,7 @@ def _biography_priority(sound: CharacterSoundRecord) -> tuple[int, int, str, str
     )
 
 
-def _voice_representative(members: Sequence[CharacterRecord]) -> CharacterRecord:
+def voice_representative(members: Sequence[CharacterRecord]) -> CharacterRecord:
     """Choose one real CRE for both the canonical name and prompt metadata."""
     assert all(character.detail is not None for character in members)
     metadata_counts = Counter(_voice_metadata(character) for character in members)

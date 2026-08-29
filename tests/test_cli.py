@@ -61,6 +61,9 @@ def test_parser_uses_available_cpu_count(monkeypatch: pytest.MonkeyPatch) -> Non
     assert generation.voice == ["Imoen"]
     assert generation.lines_per_voice is None
     assert generation.recreate_voices is True
+    defaults = cli.build_parser().parse_args(["generate-defaults"])
+    assert defaults.max_lines == 5
+    assert defaults.database == Path("data/bgvoice.lancedb")
     audit = cli.build_parser().parse_args(["audit-directions"])
     assert audit.database == Path("data/bgvoice.lancedb")
     assert audit.output == Path("data/direction-mismatches.json")

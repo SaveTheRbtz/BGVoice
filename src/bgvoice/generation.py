@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+from collections import Counter
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -11,6 +12,7 @@ from lancedb.expr import col, lit
 from openai import AsyncOpenAI
 from pydantic import BaseModel, ConfigDict
 
+from bgvoice.attribution import voice_representative
 from bgvoice.dialogue_context import DialogueHistoryIndex, dialogue_history
 from bgvoice.game_audio import encode_game_audio
 from bgvoice.generation_ai import (
@@ -31,8 +33,15 @@ from bgvoice.inworld import (
     VoiceDesignRequest,
     pack_synthesis_items,
 )
-from bgvoice.model_types import DialogueLineKind, GenerationFailureStage, RunStatus, utc_now
+from bgvoice.model_types import (
+    DialogueLineKind,
+    GenerationFailureStage,
+    IdentifierKind,
+    RunStatus,
+    utc_now,
+)
 from bgvoice.reader import PipelineReader
+from bgvoice.reader_metadata import LabelResolver
 from bgvoice.reader_stats import AttributionSnapshot
 from bgvoice.storage_records import (
     CharacterDirection,
@@ -88,11 +97,37 @@ class GenerationSummary(_StructuredOutput):
 
 
 @dataclass(frozen=True, slots=True)
+class DefaultVoice:
+    """One reusable provider voice for an observed CRE gender/race pair."""
+
+    gender_id: int
+    gender: str
+    race_id: int
+    race: str
+
+    @property
+    def voice_id(self) -> str:
+        return f"default:gender:{self.gender_id}:race:{self.race_id}"
+
+    @property
+    def display_name(self) -> str:
+        return (
+            f"BGVoice Default G{self.gender_id} {self.gender} "
+            f"R{self.race_id} {self.race}"
+        )
+
+    @property
+    def archetype(self) -> str:
+        return f"unnamed {self.gender} {self.race} character"
+
+
+@dataclass(frozen=True, slots=True)
 class VoiceWorkload:
     voice: VoiceResourceRecord
     lines: tuple[DialogueLineRecord, ...]
     ability_scores: CharacterAbilityScores
     portrait_png: bytes | None
+    default_voice: DefaultVoice
 
 
 async def _record_failures(
@@ -156,17 +191,20 @@ async def _record_audio_failures(
     error_code: str | None = None,
     error_type: str | None = None,
 ) -> None:
-    if not custom_ids:
-        return
-    await _record_failures(
-        store,
-        GenerationFailureStage.AUDIO_GENERATION,
-        directions[custom_ids[0]].voice_id,
-        [directions[custom_id].dialogue_line_id for custom_id in custom_ids],
-        error,
-        error_code=error_code,
-        error_type=error_type,
-    )
+    by_voice: dict[str, list[str]] = {}
+    for custom_id in custom_ids:
+        direction = directions[custom_id]
+        by_voice.setdefault(direction.voice_id, []).append(direction.dialogue_line_id)
+    for voice_id, dialogue_line_ids in by_voice.items():
+        await _record_failures(
+            store,
+            GenerationFailureStage.AUDIO_GENERATION,
+            voice_id,
+            dialogue_line_ids,
+            error,
+            error_code=error_code,
+            error_type=error_type,
+        )
 
 
 def round_robin_lines(
@@ -196,15 +234,17 @@ async def load_workloads(
     lines_per_voice: int | None,
 ) -> list[VoiceWorkload]:
     """Resolve requested current voices and their deterministic NPC workloads."""
-    attribution = await reader.attribution_snapshot()
-    assert attribution.run is not None, "voice generation requires published attribution"
-    dialogue_rows = cast(
-        list[DialogueRecord],
-        await reader.dialogues_table.query().to_pydantic(DialogueRecord),
+    attribution, dialogue_result, metadata = await asyncio.gather(
+        reader.attribution_snapshot(),
+        reader.dialogues_table.query().to_pydantic(DialogueRecord),
+        reader.metadata_snapshot(),
     )
+    assert attribution.run is not None, "voice generation requires published attribution"
+    dialogue_rows = cast(list[DialogueRecord], dialogue_result)
     dialogues_by_resref = {row.resref.casefold(): row for row in dialogue_rows}
     dialogues_by_name = {row.resource_name.casefold(): row for row in dialogue_rows}
-    workloads: list[VoiceWorkload] = []
+    labels = LabelResolver.from_snapshot(metadata)
+    voices: list[VoiceResourceRecord] = []
     selected_voice_ids: set[str] = set()
 
     for requested in requested_voices:
@@ -219,34 +259,80 @@ async def load_workloads(
         if voice.voice_id in selected_voice_ids:
             continue
         selected_voice_ids.add(voice.voice_id)
-        dialogue_names = sorted(
+        voices.append(voice)
+    if not voices:
+        return []
+
+    dialogue_names_by_voice = {
+        voice.voice_id: sorted(
             {
                 dialogues_by_resref[resref.casefold()].resource_name
                 for resref in voice.dialogue_resrefs
                 if resref.casefold() in dialogues_by_resref
             }
         )
-        assert dialogue_names, f"voice {voice.display_name!r} has no extracted dialogues"
-        rows = cast(
-            list[DialogueLineRecord],
-            await reader.lines_table.query()
-            .where(
-                col("dialogue_resource_name").isin(dialogue_names)
-                & (col("line_kind") == lit(DialogueLineKind.NPC))
-            )
-            .to_pydantic(DialogueLineRecord),
+        for voice in voices
+    }
+    assert all(dialogue_names_by_voice.values()), "selected voices must have extracted dialogues"
+    dialogue_names = sorted(
+        {name for names in dialogue_names_by_voice.values() for name in names}
+    )
+    variant_names = sorted(
+        {name for voice in voices for name in voice.variant_resource_names}
+    )
+    line_result, character_result = await asyncio.gather(
+        reader.lines_table.query()
+        .where(
+            col("dialogue_resource_name").isin(dialogue_names)
+            & (col("line_kind") == lit(DialogueLineKind.NPC))
         )
+        .to_pydantic(DialogueLineRecord),
+        reader.characters_table.query()
+        .where(col("resource_name").isin(variant_names))
+        .to_pydantic(CharacterRecord),
+    )
+    characters = cast(list[CharacterRecord], character_result)
+    portrait_resrefs = sorted(
+        {
+            resref
+            for character in characters
+            if character.detail is not None
+            for resref in (character.detail.small_portrait, character.detail.large_portrait)
+            if resref is not None
+        }
+    )
+    portraits = (
+        cast(
+            list[PortraitImageRecord],
+            await reader.portrait_images_table.query()
+            .where(col("resref").isin(portrait_resrefs))
+            .to_pydantic(PortraitImageRecord),
+        )
+        if portrait_resrefs
+        else []
+    )
+    lines_by_dialogue: dict[str, list[DialogueLineRecord]] = {}
+    for line in cast(list[DialogueLineRecord], line_result):
+        if line.text and line.text.strip():
+            lines_by_dialogue.setdefault(line.dialogue_resource_name, []).append(line)
+    characters_by_name = {row.resource_name.casefold(): row for row in characters}
+    portraits_by_resref = {row.resref.casefold(): row.png for row in portraits}
+
+    workloads: list[VoiceWorkload] = []
+    for voice in voices:
         groups = {
-            name: [line for line in rows if line.dialogue_resource_name == name and line.text]
-            for name in dialogue_names
+            name: lines_by_dialogue.get(name, [])
+            for name in dialogue_names_by_voice[voice.voice_id]
         }
         lines = tuple(round_robin_lines(groups, lines_per_voice))
         assert lines, f"voice {voice.display_name!r} has no non-empty NPC lines"
-        ability_scores, portrait_png = await _voice_evidence(
-            reader,
+        ability_scores, portrait_png, default_voice = _voice_evidence(
             voice,
             attribution,
             dialogues_by_name,
+            labels,
+            characters_by_name,
+            portraits_by_resref,
         )
         workloads.append(
             VoiceWorkload(
@@ -254,63 +340,84 @@ async def load_workloads(
                 lines=lines,
                 ability_scores=ability_scores,
                 portrait_png=portrait_png,
+                default_voice=default_voice,
             )
         )
     return workloads
 
 
-async def _voice_evidence(
-    reader: PipelineReader,
+async def _sparse_voice_ids(reader: PipelineReader, max_lines: int) -> list[str]:
+    assert max_lines > 0, "sparse voice line limit must be positive"
+    attribution, dialogue_result, line_result = await asyncio.gather(
+        reader.attribution_snapshot(),
+        reader.dialogues_table.query().to_pydantic(DialogueRecord),
+        reader.lines_table.query()
+        .where(col("line_kind") == lit(DialogueLineKind.NPC))
+        .to_pydantic(DialogueLineRecord),
+    )
+    assert attribution.run is not None, "default voice generation requires published attribution"
+    dialogues = {
+        row.resref.casefold(): row.resource_name
+        for row in cast(list[DialogueRecord], dialogue_result)
+    }
+    counts = Counter(
+        line.dialogue_resource_name
+        for line in cast(list[DialogueLineRecord], line_result)
+        if line.text and line.text.strip()
+    )
+    return [
+        voice.voice_id
+        for voice in attribution.voices
+        if 0
+        < sum(
+            counts[name]
+            for name in {
+                dialogues[resref.casefold()]
+                for resref in voice.dialogue_resrefs
+                if resref.casefold() in dialogues
+            }
+        )
+        <= max_lines
+    ]
+
+
+def _voice_evidence(
     voice: VoiceResourceRecord,
     attribution: AttributionSnapshot,
     dialogues: dict[str, DialogueRecord],
-) -> tuple[CharacterAbilityScores, bytes | None]:
+    labels: LabelResolver,
+    characters_by_name: Mapping[str, CharacterRecord],
+    portraits: Mapping[str, bytes],
+) -> tuple[CharacterAbilityScores, bytes | None, DefaultVoice]:
     """Choose the most-used CRE and return its ability scores and best portrait."""
-    characters = cast(
-        list[CharacterRecord],
-        await reader.characters_table.query()
-        .where(col("resource_name").isin(voice.variant_resource_names))
-        .to_pydantic(CharacterRecord),
-    )
-    assert characters, f"voice {voice.display_name!r} has no extracted character variants"
-    resrefs = [
-        resref
-        for character in characters
-        if character.detail is not None
-        for resref in (character.detail.small_portrait, character.detail.large_portrait)
-        if resref is not None
+    characters = [
+        characters_by_name[name.casefold()]
+        for name in voice.variant_resource_names
+        if name.casefold() in characters_by_name
     ]
-    portraits = (
-        cast(
-            list[PortraitImageRecord],
-            await reader.portrait_images_table.query()
-            .where(col("resref").isin(resrefs))
-            .to_pydantic(PortraitImageRecord),
-        )
-        if resrefs
-        else []
-    )
-    by_resref = {row.resref.casefold(): row.png for row in portraits}
+    assert characters, f"voice {voice.display_name!r} has no extracted character variants"
     representative = min(
         (character for character in characters if character.detail is not None),
         key=lambda character: _representative_priority(
             character,
             attribution,
             dialogues,
-            by_resref,
+            portraits,
         ),
     )
     detail = representative.detail
     assert detail is not None
     portrait = next(
         (
-            by_resref[resref.casefold()]
+            portraits[resref.casefold()]
             for resref in (detail.large_portrait, detail.small_portrait)
-            if resref is not None and resref.casefold() in by_resref
+            if resref is not None and resref.casefold() in portraits
         ),
         None,
     )
     attributes = detail.base_attributes
+    default_detail = voice_representative(characters).detail
+    assert default_detail is not None
     ability_scores = CharacterAbilityScores(
         strength=attributes.strength,
         strength_bonus=attributes.strength_bonus,
@@ -320,14 +427,23 @@ async def _voice_evidence(
         constitution=attributes.constitution,
         charisma=attributes.charisma,
     )
-    return ability_scores, portrait
+    return (
+        ability_scores,
+        portrait,
+        DefaultVoice(
+            gender_id=default_detail.gender_id,
+            gender=labels.identifier_label(IdentifierKind.GENDER, default_detail.gender_id),
+            race_id=default_detail.race_id,
+            race=labels.race_label(default_detail.race_id),
+        ),
+    )
 
 
 def _representative_priority(
     character: CharacterRecord,
     attribution: AttributionSnapshot,
     dialogues: dict[str, DialogueRecord],
-    portraits: dict[str, bytes],
+    portraits: Mapping[str, bytes],
 ) -> tuple[int, int, bool, str, str]:
     record = attribution.by_character[character.resource_name.casefold()]
     details = [
@@ -359,6 +475,28 @@ async def generate(
     *,
     recreate_voices: bool = False,
 ) -> GenerationSummary:
+    """Generate selected character voices and every missing downstream artifact."""
+    return await _run_generation(
+        database_path,
+        requested_voices,
+        lines_per_voice,
+        openai_api_key,
+        inworld_api_key,
+        recreate_voices=recreate_voices,
+        shared_defaults=False,
+    )
+
+
+async def _run_generation(
+    database_path: Path,
+    requested_voices: Sequence[str],
+    lines_per_voice: int | None,
+    openai_api_key: str,
+    inworld_api_key: str,
+    *,
+    recreate_voices: bool,
+    shared_defaults: bool,
+) -> GenerationSummary:
     """Run all missing generation stages and persist each completed unit."""
     import httpx
 
@@ -378,7 +516,50 @@ async def generate(
             openai_capacity = asyncio.Semaphore(OPENAI_CONCURRENCY)
             inworld_capacity = asyncio.Semaphore(INWORLD_BATCH_CONCURRENCY)
             await _resume_batches(store, inworld, inworld_capacity)
+            running_audio_ids = {
+                custom_id
+                for batch in await store.running_batches()
+                for custom_id in batch.custom_ids
+            }
             provider_voices = _provider_voice_catalog(await inworld.list_voices())
+
+            async def create_default(
+                default_voice: DefaultVoice,
+            ) -> GeneratedVoiceRecord | None:
+                try:
+                    voice = await _ensure_default_voice(
+                        openai,
+                        inworld,
+                        store,
+                        default_voice,
+                        openai_capacity,
+                        provider_voices,
+                    )
+                except Exception as error:
+                    await _record_failures(
+                        store,
+                        GenerationFailureStage.VOICE_CREATION,
+                        default_voice.voice_id,
+                        [None],
+                        error,
+                    )
+                    return None
+                await _clear_failures(
+                    store,
+                    GenerationFailureStage.VOICE_CREATION,
+                    default_voice.voice_id,
+                    [None],
+                )
+                return voice
+
+            default_tasks = (
+                {
+                    default_voice: asyncio.create_task(create_default(default_voice))
+                    for default_voice in {workload.default_voice for workload in workloads}
+                }
+                if shared_defaults
+                else {}
+            )
 
             narrator_task: asyncio.Task[GeneratedVoiceRecord] | None = None
 
@@ -414,7 +595,7 @@ async def generate(
 
             voice_capacity = asyncio.Semaphore(VOICE_CONCURRENCY)
 
-            async def process(workload: VoiceWorkload) -> None:
+            async def process(workload: VoiceWorkload) -> VoiceWorkload | None:
                 voice_ready = False
                 try:
                     async with voice_capacity:
@@ -426,6 +607,11 @@ async def generate(
                             openai_capacity,
                             provider_voices,
                             recreate=recreate_voices,
+                            default_voice=(
+                                default_tasks[workload.default_voice]
+                                if shared_defaults
+                                else None
+                            ),
                         )
                 except Exception as error:
                     await _record_failures(
@@ -452,15 +638,33 @@ async def generate(
                     openai_capacity,
                 )
                 if voice_ready:
-                    await _synthesize_workload(
+                    if not shared_defaults:
+                        await _synthesize_workloads(
+                            store,
+                            inworld,
+                            [workload],
+                            ensure_narrator,
+                            inworld_capacity,
+                            running_audio_ids,
+                        )
+                    return workload
+                return None
+
+            processed = await _wait_for_all(
+                [asyncio.create_task(process(workload)) for workload in workloads]
+            )
+            if shared_defaults:
+                ready = [workload for workload in processed if workload is not None]
+                if ready:
+                    await _synthesize_workloads(
                         store,
                         inworld,
-                        workload,
+                        ready,
                         ensure_narrator,
                         inworld_capacity,
+                        running_audio_ids,
                     )
-
-            await _wait_for_all([asyncio.create_task(process(workload)) for workload in workloads])
+                await _wait_for_all(list(default_tasks.values()))
 
         voice_ids = [workload.voice.voice_id for workload in workloads]
         directions = await store.directed_lines(voice_ids)
@@ -495,6 +699,29 @@ async def generate(
         store.close()
 
 
+async def generate_defaults(
+    database_path: Path,
+    max_lines: int,
+    openai_api_key: str,
+    inworld_api_key: str,
+) -> GenerationSummary:
+    """Generate every sparse canonical voice through shared gender/race defaults."""
+    reader = await PipelineReader.open(database_path)
+    try:
+        voice_ids = await _sparse_voice_ids(reader, max_lines)
+    finally:
+        reader.close()
+    return await _run_generation(
+        database_path,
+        voice_ids,
+        None,
+        openai_api_key,
+        inworld_api_key,
+        recreate_voices=False,
+        shared_defaults=True,
+    )
+
+
 async def _ensure_character_voice(
     openai: AsyncOpenAI,
     inworld: InworldClient,
@@ -504,13 +731,22 @@ async def _ensure_character_voice(
     provider_voices: Mapping[str, PublishedVoice],
     *,
     recreate: bool,
+    default_voice: Awaitable[GeneratedVoiceRecord | None] | None = None,
 ) -> GeneratedVoiceRecord:
     existing = await store.generated_voice(workload.voice.voice_id)
     if recreate:
         named_voice = provider_voices.get(workload.voice.display_name.casefold())
         provider_ids = set() if named_voice is None else {named_voice.voice_id}
-        if existing is not None and any(
-            voice.voice_id == existing.inworld_voice_id for voice in provider_voices.values()
+        stored = await store.generated_voices()
+        if (
+            existing is not None
+            and sum(
+                voice.inworld_voice_id == existing.inworld_voice_id for voice in stored.values()
+            )
+            == 1
+            and any(
+                voice.voice_id == existing.inworld_voice_id for voice in provider_voices.values()
+            )
         ):
             provider_ids.add(existing.inworld_voice_id)
         await store.delete_voice_generation(workload.voice.voice_id)
@@ -528,6 +764,12 @@ async def _ensure_character_voice(
         )
         if reused is not None:
             return reused
+    if default_voice is not None:
+        shared = await default_voice
+        assert shared is not None, f"default voice unavailable for {workload.default_voice.archetype}"
+        assigned = shared.model_copy(update={"voice_id": workload.voice.voice_id})
+        await store.upsert_generated_voices([assigned])
+        return assigned
 
     metadata, biography = _metadata_and_biography(workload.voice.prompt)
     async with openai_capacity:
@@ -547,6 +789,51 @@ async def _ensure_character_voice(
         store,
         workload.voice.voice_id,
         workload.voice.display_name,
+        description=plan.profile.render(),
+        language_code=plan.language_code,
+        preview_text=plan.preview_text,
+    )
+
+
+async def _ensure_default_voice(
+    openai: AsyncOpenAI,
+    inworld: InworldClient,
+    store: GenerationStore,
+    default_voice: DefaultVoice,
+    openai_capacity: asyncio.Semaphore,
+    provider_voices: Mapping[str, PublishedVoice],
+) -> GeneratedVoiceRecord:
+    existing = await store.generated_voice(default_voice.voice_id)
+    if existing is not None:
+        return existing
+    reused = await _reuse_existing_voice(
+        store,
+        provider_voices,
+        default_voice.voice_id,
+        default_voice.display_name,
+    )
+    if reused is not None:
+        return reused
+    async with openai_capacity:
+        plan = await create_voice_design_plan(
+            openai,
+            VoiceDesignSource(
+                display_name=default_voice.archetype,
+                metadata=(
+                    "Reusable fallback for characters with very little dialogue.\n"
+                    f"Gender: {default_voice.gender}\nRace: {default_voice.race}"
+                ),
+                biography=None,
+                ability_scores=None,
+                portrait_png=None,
+            ),
+            model=VOICE_DESIGN_MODEL,
+        )
+    return await _publish_voice(
+        inworld,
+        store,
+        default_voice.voice_id,
+        default_voice.display_name,
         description=plan.profile.render(),
         language_code=plan.language_code,
         preview_text=plan.preview_text,
@@ -732,26 +1019,26 @@ async def _direct_workload(
         )
 
 
-async def _synthesize_workload(
+async def _synthesize_workloads(
     store: GenerationStore,
     inworld: InworldClient,
-    workload: VoiceWorkload,
+    workloads: Sequence[VoiceWorkload],
     ensure_narrator: Callable[[], Awaitable[GeneratedVoiceRecord]],
     capacity: asyncio.Semaphore,
+    running_audio_ids: set[str],
 ) -> None:
-    direction_rows = await store.directed_lines([workload.voice.voice_id])
-    directions = {line.dialogue_line_id: line for line in direction_rows}
+    voice_ids = [workload.voice.voice_id for workload in workloads]
+    direction_rows = await store.directed_lines(voice_ids)
     directions_by_id = {line.id: line for line in direction_rows}
-    existing = {
-        audio.id for audio in await store.generated_audio_identities([workload.voice.voice_id])
-    }
-    existing.update(
-        custom_id for batch in await store.running_batches() for custom_id in batch.custom_ids
-    )
+    existing = {audio.id for audio in await store.generated_audio_identities(voice_ids)}
+    existing.update(running_audio_ids)
     pending = [
-        directions[source_line.id]
+        directions_by_id[direction_id]
+        for workload in workloads
         for source_line in workload.lines
-        if source_line.id in directions and directions[source_line.id].id not in existing
+        if (direction_id := DirectedLineRecord.id_for(workload.voice.voice_id, source_line.id))
+        in directions_by_id
+        and direction_id not in existing
     ]
     narrator_ready = True
     narrator_ids = [direction.id for direction in pending if direction.narrator is not None]
@@ -762,13 +1049,16 @@ async def _synthesize_workload(
             narrator_ready = False
             await _record_audio_failures(store, directions_by_id, narrator_ids, error)
 
-    voices = await store.generated_voices()
+    needed_voice_ids = set(voice_ids)
+    if narrator_ids and narrator_ready:
+        needed_voice_ids.add(NARRATOR_VOICE_ID)
+    voices = await store.generated_voices(sorted(needed_voice_ids))
     items: list[BatchSynthesisItem] = []
     for direction in pending:
         if direction.narrator is not None and not narrator_ready:
             continue
         generated_voice = voices[
-            workload.voice.voice_id if direction.character is not None else NARRATOR_VOICE_ID
+            direction.voice_id if direction.character is not None else NARRATOR_VOICE_ID
         ]
         text = (
             direction.character.directed_dialogue
@@ -886,8 +1176,8 @@ async def _complete_batch(
         return
     assert operation.response is not None, "completed Inworld batch has no result manifest"
     results = await inworld.download_results(operation.response.results_uri)
-    voice_id = directions[batch.custom_ids[0]].voice_id
-    existing = {audio.id for audio in await store.generated_audio_identities([voice_id])}
+    voice_ids = sorted({directions[custom_id].voice_id for custom_id in batch.custom_ids})
+    existing = {audio.id for audio in await store.generated_audio_identities(voice_ids)}
 
     failed = False
     records: list[GeneratedAudioRecord] = []

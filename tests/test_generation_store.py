@@ -124,6 +124,8 @@ async def test_generated_assets_round_trip_upsert_filter_and_delete(
         voices = await store.generated_voices()
         assert voices["imoen"].description.language_code == "en-GB"
         assert voices["imoen"].inworld_voice_id == "voice-imoen-v2"
+        assert set(await store.generated_voices(["imoen"])) == {"imoen"}
+        assert await store.generated_voices([]) == {}
         assert await store.generated_voice("imoen") == updated_imoen
         assert await store.generated_voice("unknown") is None
         stored_directions = await store.directed_lines()
