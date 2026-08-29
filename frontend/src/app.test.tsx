@@ -206,35 +206,29 @@ describe("application jobs", () => {
     );
   });
 
-  it("summarizes dialogue kinds and unresolved generation failures", async () => {
+  it("summarizes the pipeline and opens extraction history on demand", async () => {
     window.history.replaceState(null, "", "/pipeline");
+    const user = userEvent.setup();
     render(<App />);
 
-    for (const [label, value] of [
-      ["NPC lines", "11"],
-      ["Player lines", "7"],
-      ["Journal lines", "2"],
-    ] as const) {
-      const stat = (await screen.findByText(label)).closest("article");
-      expect(stat).not.toBeNull();
-      expect(within(stat!).getByText(value)).toBeTruthy();
-    }
-    expect(screen.queryByText("Dialogue lines")).toBeNull();
+    const output = within(await screen.findByRole("region", { name: "Generated output" }));
+    expect(output.getByText("Voice assignments").nextElementSibling?.textContent).toBe("7");
+    expect(output.getByText("Unique Inworld voices").nextElementSibling?.textContent).toBe("3");
 
-    const progress = within(await screen.findByRole("region", { name: "Voice-over progress" }));
-    const assignments = progress.getByText("Voice assignments").closest("article");
-    const providerVoices = progress.getByText("Unique Inworld voices").closest("article");
-    expect(assignments).not.toBeNull();
-    expect(providerVoices).not.toBeNull();
-    expect(within(assignments!).getByText("7")).toBeTruthy();
-    expect(within(providerVoices!).getByText("3")).toBeTruthy();
+    const corpus = within(screen.getByRole("region", { name: "Dialogue corpus" }));
+    expect(corpus.getByText("20")).toBeTruthy();
+    expect(corpus.getByRole("img", { name: "NPC 11, Player 7, Journal 2" })).toBeTruthy();
 
-    const failures = within(screen.getByRole("group", { name: "Generation failures" }));
-    expect(failures.getByText("Voice creation")).toBeTruthy();
-    expect(failures.getByText("1")).toBeTruthy();
-    expect(failures.getByText("Dialogue direction")).toBeTruthy();
-    expect(failures.getByText("3")).toBeTruthy();
-    expect(failures.getByText("Audio generation")).toBeTruthy();
-    expect(failures.getByText("6")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "3 dialogue lines need direction" })).toBeTruthy();
+    const health = within(screen.getByLabelText("Generation health"));
+    expect(health.getByText("Voice creation").nextElementSibling?.textContent).toBe("1");
+    expect(health.getByText("Audio generation").nextElementSibling?.textContent).toBe("6");
+    expect(api.listExtractionRuns).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("link", { name: "Extraction runs" }));
+    await waitFor(() => expect(window.location.pathname).toBe("/pipeline/runs"));
+    expect(await screen.findByRole("heading", { name: "Extraction runs", level: 2 })).toBeTruthy();
+    expect(screen.getByRole("searchbox", { name: "Full-text search runs" })).toBeTruthy();
+    expect(api.listExtractionRuns).toHaveBeenCalledOnce();
   });
 });

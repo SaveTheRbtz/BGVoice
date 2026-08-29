@@ -1,7 +1,7 @@
 import { portraitUrl } from "./api";
 import { formatCount } from "./format";
 import type { SourceKind } from "./gen/bgvoice/v1/pipeline_pb";
-import { sourceKindLabel, toNumber } from "./pipeline-labels";
+import { sourceKindLabel } from "./pipeline-labels";
 import { followLink, resourceId, voicePath } from "./routes";
 
 export function ResourceTitle({ href, title, subtitle }: {
@@ -87,21 +87,4 @@ export function ResourceData({ label, name, path }: {
 
 export function Metric({ label, value }: { label: string; value: number | undefined }) {
   return <div><strong>{formatCount(value)}</strong><span>{label}</span></div>;
-}
-
-export function Stat({ label, value, accent = false }: {
-  label: string;
-  value: bigint | undefined;
-  accent?: boolean;
-}) {
-  return (
-    <article className={`stat ${accent ? "stat-accent" : ""}`}>
-      <span>{label}</span>
-      <strong>{formatCount(toNumber(value))}</strong>
-    </article>
-  );
-}
-
-export function SupportStat({ label, value }: { label: string; value: bigint | undefined }) {
-  return <div><span>{label}</span><strong>{formatCount(toNumber(value))}</strong></div>;
 }

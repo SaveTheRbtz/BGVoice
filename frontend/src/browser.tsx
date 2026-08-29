@@ -30,6 +30,7 @@ export interface TableBrowserProps<Row, Order extends string> {
   renderFilters?: (controls: FilterControls) => ReactNode;
   className?: string;
   tableClassName?: string;
+  headingLevel?: 1 | 2;
 }
 
 export function TableBrowser<Row, Order extends string>({
@@ -45,6 +46,7 @@ export function TableBrowser<Row, Order extends string>({
   renderFilters,
   className = "",
   tableClassName = "",
+  headingLevel = 1,
 }: TableBrowserProps<Row, Order>) {
   const browser = useBrowser(defaultOrderBy, loadPage);
   const { query, result, loading } = browser;
@@ -63,6 +65,7 @@ export function TableBrowser<Row, Order extends string>({
         loading={loading}
         count={Number(result.totalSize)}
         noun={noun}
+        headingLevel={headingLevel}
       />
       {browser.error != null && <ErrorBanner message={browser.error} />}
       <div className="toolbar">
@@ -164,19 +167,28 @@ function BrowserFilters({ title, count, controls, render, onClear }: {
   );
 }
 
-export function BrowserHeading({ eyebrow, title, description, loading, count, noun }: {
+export function BrowserHeading({
+  eyebrow,
+  title,
+  description,
+  loading,
+  count,
+  noun,
+  headingLevel = 1,
+}: {
   eyebrow: string;
   title: string;
   description: string;
   loading: boolean;
   count: number;
   noun: string;
+  headingLevel?: 1 | 2;
 }) {
   return (
     <div className="section-head">
       <div>
         <p className="eyebrow">{eyebrow}</p>
-        <h1>{title}</h1>
+        {headingLevel === 1 ? <h1>{title}</h1> : <h2>{title}</h2>}
         <p>{description}</p>
       </div>
       <div className="result-count" aria-live="polite">

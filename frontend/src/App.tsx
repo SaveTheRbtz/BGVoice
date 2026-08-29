@@ -81,7 +81,6 @@ const STATIC_PAGES: Partial<Record<AppRoute["name"], ComponentType<PageProps>>> 
   "character-classes": ClassBrowser,
   kits: KitBrowser,
   "identifier-definitions": IdentifierBrowser,
-  pipeline: PipelinePage,
 };
 
 export default function App() {
@@ -199,6 +198,9 @@ function RouteContent({ route, installation }: { route: AppRoute; installation: 
     return route.resourceName == null
       ? <DialogueBrowser />
       : <DialogueDetailPage name={route.resourceName} />;
+  }
+  if (route.name === "pipeline") {
+    return <PipelinePage installation={installation} view={route.view} />;
   }
   const Page = STATIC_PAGES[route.name];
   return Page == null ? <NotFound /> : <Page installation={installation} />;
