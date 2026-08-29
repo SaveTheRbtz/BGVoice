@@ -4,7 +4,8 @@ import asyncio
 import logging
 from collections import Counter
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from enum import StrEnum
 from pathlib import Path
 from typing import cast
 
@@ -36,7 +37,6 @@ from bgvoice.inworld import (
 from bgvoice.model_types import (
     DialogueLineKind,
     GenerationFailureStage,
-    IdentifierKind,
     RunStatus,
     utc_now,
 )
@@ -69,6 +69,7 @@ AUDIO_WRITE_BATCH_SIZE = 25
 VOICE_CONCURRENCY = 75
 OPENAI_CONCURRENCY = 100
 NARRATOR_VOICE_ID = "narrator"
+DEFAULT_NAMED_RACE_COUNT = 9
 
 _NARRATOR_DISPLAY_NAME = "Narrator"
 _NARRATOR_DESCRIPTION = (
@@ -96,29 +97,53 @@ class GenerationSummary(_StructuredOutput):
     audio_generation_failures: int
 
 
+class DefaultVoiceGender(StrEnum):
+    MALE = "male"
+    FEMALE = "female"
+    NEUTRAL = "neutral"
+
+
+def default_voice_gender(gender_id: int) -> DefaultVoiceGender:
+    """Collapse Infinity Engine creature genders into Inworld's three categories."""
+    match gender_id:
+        case 1:
+            return DefaultVoiceGender.MALE
+        case 2:
+            return DefaultVoiceGender.FEMALE
+        case _:
+            return DefaultVoiceGender.NEUTRAL
+
+
 @dataclass(frozen=True, slots=True)
 class DefaultVoice:
-    """One reusable provider voice for an observed CRE gender/race pair."""
+    """One reusable provider voice for a bounded gender/race bucket."""
 
-    gender_id: int
-    gender: str
-    race_id: int
+    gender: DefaultVoiceGender
+    race_id: int | None
     race: str
 
     @property
     def voice_id(self) -> str:
-        return f"default:gender:{self.gender_id}:race:{self.race_id}"
+        race = self.race_id if self.race_id is not None else "other"
+        return f"default:gender:{self.gender}:race:{race}"
 
     @property
     def display_name(self) -> str:
-        return (
-            f"BGVoice Default G{self.gender_id} {self.gender} "
-            f"R{self.race_id} {self.race}"
-        )
+        race = f"R{self.race_id} {self.race}" if self.race_id is not None else "Other Race"
+        return f"BGVoice Default {self.gender.title()} {race}"
 
     @property
     def archetype(self) -> str:
         return f"unnamed {self.gender} {self.race} character"
+
+
+@dataclass(frozen=True, slots=True)
+class VoiceEvidence:
+    ability_scores: CharacterAbilityScores
+    portrait_png: bytes | None
+    gender: DefaultVoiceGender
+    race_id: int
+    race: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -274,12 +299,8 @@ async def load_workloads(
         for voice in voices
     }
     assert all(dialogue_names_by_voice.values()), "selected voices must have extracted dialogues"
-    dialogue_names = sorted(
-        {name for names in dialogue_names_by_voice.values() for name in names}
-    )
-    variant_names = sorted(
-        {name for voice in voices for name in voice.variant_resource_names}
-    )
+    dialogue_names = sorted({name for names in dialogue_names_by_voice.values() for name in names})
+    variant_names = sorted({name for voice in voices for name in voice.variant_resource_names})
     line_result, character_result = await asyncio.gather(
         reader.lines_table.query()
         .where(
@@ -326,7 +347,7 @@ async def load_workloads(
         }
         lines = tuple(round_robin_lines(groups, lines_per_voice))
         assert lines, f"voice {voice.display_name!r} has no non-empty NPC lines"
-        ability_scores, portrait_png, default_voice = _voice_evidence(
+        evidence = _voice_evidence(
             voice,
             attribution,
             dialogues_by_name,
@@ -338,12 +359,53 @@ async def load_workloads(
             VoiceWorkload(
                 voice=voice,
                 lines=lines,
-                ability_scores=ability_scores,
-                portrait_png=portrait_png,
-                default_voice=default_voice,
+                ability_scores=evidence.ability_scores,
+                portrait_png=evidence.portrait_png,
+                default_voice=DefaultVoice(
+                    gender=evidence.gender,
+                    race_id=evidence.race_id,
+                    race=evidence.race,
+                ),
             )
         )
     return workloads
+
+
+def _common_default_race_ids(race_ids: Sequence[int]) -> frozenset[int]:
+    """Select nine named race buckets; zero and NO_RACE always map to other."""
+    counts = Counter(race_id for race_id in race_ids if race_id not in (0, 255))
+    ranked = sorted(counts, key=lambda race_id: (-counts[race_id], race_id))
+    return frozenset(ranked[:DEFAULT_NAMED_RACE_COUNT])
+
+
+def _bucket_default_voices(workloads: Sequence[VoiceWorkload]) -> list[VoiceWorkload]:
+    """Apply the bounded fallback taxonomy only to shared-default generation."""
+    common_races = _common_default_race_ids(
+        [
+            workload.default_voice.race_id
+            for workload in workloads
+            if workload.default_voice.race_id is not None
+        ]
+    )
+    return [
+        replace(
+            workload,
+            default_voice=replace(
+                workload.default_voice,
+                race_id=(
+                    workload.default_voice.race_id
+                    if workload.default_voice.race_id in common_races
+                    else None
+                ),
+                race=(
+                    workload.default_voice.race
+                    if workload.default_voice.race_id in common_races
+                    else "other"
+                ),
+            ),
+        )
+        for workload in workloads
+    ]
 
 
 async def _sparse_voice_ids(reader: PipelineReader, max_lines: int) -> list[str]:
@@ -388,7 +450,7 @@ def _voice_evidence(
     labels: LabelResolver,
     characters_by_name: Mapping[str, CharacterRecord],
     portraits: Mapping[str, bytes],
-) -> tuple[CharacterAbilityScores, bytes | None, DefaultVoice]:
+) -> VoiceEvidence:
     """Choose the most-used CRE and return its ability scores and best portrait."""
     characters = [
         characters_by_name[name.casefold()]
@@ -427,15 +489,12 @@ def _voice_evidence(
         constitution=attributes.constitution,
         charisma=attributes.charisma,
     )
-    return (
-        ability_scores,
-        portrait,
-        DefaultVoice(
-            gender_id=default_detail.gender_id,
-            gender=labels.identifier_label(IdentifierKind.GENDER, default_detail.gender_id),
-            race_id=default_detail.race_id,
-            race=labels.race_label(default_detail.race_id),
-        ),
+    return VoiceEvidence(
+        ability_scores=ability_scores,
+        portrait_png=portrait,
+        gender=default_voice_gender(default_detail.gender_id),
+        race_id=default_detail.race_id,
+        race=labels.race_label(default_detail.race_id),
     )
 
 
@@ -504,6 +563,8 @@ async def _run_generation(
     store = await GenerationStore.open(database_path)
     try:
         workloads = await load_workloads(reader, requested_voices, lines_per_voice)
+        if shared_defaults:
+            workloads = _bucket_default_voices(workloads)
         history_index = await DialogueHistoryIndex.load(reader)
         async with (
             AsyncOpenAI(api_key=openai_api_key) as openai,
@@ -608,9 +669,7 @@ async def _run_generation(
                             provider_voices,
                             recreate=recreate_voices,
                             default_voice=(
-                                default_tasks[workload.default_voice]
-                                if shared_defaults
-                                else None
+                                default_tasks[workload.default_voice] if shared_defaults else None
                             ),
                         )
                     except Exception as error:
@@ -766,7 +825,9 @@ async def _ensure_character_voice(
             return reused
     if default_voice is not None:
         shared = await default_voice
-        assert shared is not None, f"default voice unavailable for {workload.default_voice.archetype}"
+        assert shared is not None, (
+            f"default voice unavailable for {workload.default_voice.archetype}"
+        )
         assigned = shared.model_copy(update={"voice_id": workload.voice.voice_id})
         await store.upsert_generated_voices([assigned])
         return assigned

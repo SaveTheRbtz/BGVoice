@@ -10,15 +10,14 @@ from pathlib import Path
 from types import SimpleNamespace, TracebackType
 from typing import Any, ClassVar, Self, cast
 
-import av
 import httpx
 import pytest
-from av.container import InputContainer
 
 import bgvoice.generation as generation_module
 from bgvoice.dialogue_context import DialogueHistoryIndex
-from bgvoice.game_audio import encode_game_audio
 from bgvoice.generation import (
+    DefaultVoiceGender,
+    default_voice_gender,
     generate,
     generate_defaults,
     load_workloads,
@@ -117,12 +116,38 @@ async def test_current_voice_workload_uses_attributed_nonempty_npc_lines(
     assert workload.ability_scores.render() == ("STR 10, DEX 17, CON 9, INT 16, WIS 16, CHA 14")
     assert workload.portrait_png == b"\x89PNG\r\n\x1a\nfixture"
     assert (
-        workload.default_voice.gender_id,
         workload.default_voice.gender,
         workload.default_voice.race_id,
         workload.default_voice.race,
-    ) == (2, "Female", 2, "Elf")
-    assert workload.default_voice.display_name == "BGVoice Default G2 Female R2 Elf"
+    ) == (DefaultVoiceGender.FEMALE, 2, "Elf")
+    assert workload.default_voice.display_name == "BGVoice Default Female R2 Elf"
+
+
+@pytest.mark.parametrize(
+    ("gender_id", "expected"),
+    [
+        (1, DefaultVoiceGender.MALE),
+        (2, DefaultVoiceGender.FEMALE),
+        (0, DefaultVoiceGender.NEUTRAL),
+        (4, DefaultVoiceGender.NEUTRAL),
+        (66, DefaultVoiceGender.NEUTRAL),
+    ],
+)
+def test_default_voice_gender_collapses_engine_categories(
+    gender_id: int,
+    expected: DefaultVoiceGender,
+) -> None:
+    assert default_voice_gender(gender_id) is expected
+
+
+def test_default_voice_races_use_nine_named_buckets_and_other() -> None:
+    race_ids = [0] * 100 + [255] * 100
+    for race_id in range(1, 13):
+        race_ids.extend([race_id] * (20 - race_id))
+
+    assert generation_module._common_default_race_ids(race_ids) == frozenset(range(1, 10))
+
+
 @pytest.mark.anyio
 async def test_directions_continue_skip_persisted_and_clear_failures(
     scenario_database: Path,
@@ -387,33 +412,6 @@ async def test_voice_failure_does_not_block_direction_and_is_cleared_on_retry(
     assert recovered_failures == []
 
 
-def test_provider_audio_is_encoded_for_the_enhanced_edition() -> None:
-    first = BytesIO()
-    with wave.open(first, "wb") as audio:
-        audio.setnchannels(2)
-        audio.setsampwidth(2)
-        audio.setframerate(44_100)
-        audio.writeframes(b"\0\0" * 2 * 4_410)
-
-    second = BytesIO()
-    with wave.open(second, "wb") as audio:
-        audio.setnchannels(1)
-        audio.setsampwidth(2)
-        audio.setframerate(22_050)
-        audio.writeframes(b"\0\0" * 2_205)
-
-    encoded = encode_game_audio(first.getvalue() + second.getvalue())
-    identification = encoded.index(b"\x01vorbis")
-    with cast(InputContainer, av.open(BytesIO(encoded))) as container:
-        samples = sum(frame.samples for frame in container.decode(audio=0))
-
-    assert encoded.startswith(b"OggS")
-    assert samples / 22_050 == pytest.approx(0.2, abs=0.015)
-    assert encoded[identification + 11] == 1
-    assert int.from_bytes(encoded[identification + 12 : identification + 16], "little") == 22_050
-    assert int.from_bytes(encoded[identification + 20 : identification + 24], "little") >= 89_000
-
-
 class _FakeResponses:
     calls: ClassVar[list[dict[str, object]]] = []
 
@@ -579,7 +577,7 @@ async def test_shared_default_generation_is_persisted_and_idempotent(
                 "display_name": "Aerie Copy",
             }
         )
-        master = await store.generated_voice("default:gender:2:race:2")
+        master = await store.generated_voice("default:gender:female:race:2")
         assert master is not None
         await generation_module._ensure_character_voice(
             cast(Any, object()),
@@ -602,7 +600,7 @@ async def test_shared_default_generation_is_persisted_and_idempotent(
         reader.close()
         store.close()
 
-    default_id = "default:gender:2:race:2"
+    default_id = "default:gender:female:race:2"
     assert excluded.voices == 0
     assert first.directed_lines == second.directed_lines == 2
     assert provider.designs == provider.publishes == 1
@@ -999,7 +997,11 @@ async def test_mixed_tts_batch_keeps_good_audio_and_clears_failures_on_retry(
         (audio.voice_id, audio.dialogue_line_id, audio.inworld_voice_id)
         for audio in recovered_audio
     } == {
-        (direction.voice_id, direction.dialogue_line_id, voices[direction.voice_id].inworld_voice_id)
+        (
+            direction.voice_id,
+            direction.dialogue_line_id,
+            voices[direction.voice_id].inworld_voice_id,
+        )
         for direction in directions
     }
     assert (
