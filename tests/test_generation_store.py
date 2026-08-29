@@ -157,6 +157,13 @@ async def test_generated_assets_round_trip_upsert_filter_and_delete(
         assert await store.failures() == [updated_imoen_failure]
         await store.upsert_failures([gorion_failure])
 
+        await store.delete_line_generation([imoen_line.id])
+        assert {line.id for line in await store.directed_lines()} == {gorion_line.id}
+        assert {audio.id for audio in await store.generated_audio()} == {gorion_audio.id}
+        assert set(await store.generated_voices()) == {"imoen", "gorion"}
+        await store.upsert_directed_lines([imoen_line])
+        await store.upsert_generated_audio([imoen_audio])
+
         await store.delete_voice_generation("imoen")
         assert set(await store.generated_voices()) == {"gorion"}
         assert {line.voice_id for line in await store.directed_lines()} == {"gorion"}

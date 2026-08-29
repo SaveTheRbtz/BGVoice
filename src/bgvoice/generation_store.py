@@ -158,6 +158,15 @@ class GenerationStore:
         async with self._write_lock:
             await self._generation_failures.delete(col("id").isin(ids))
 
+    async def delete_line_generation(self, ids: Sequence[str]) -> None:
+        """Invalidate selected directions and their generated audio."""
+        if not ids:
+            return
+        predicate = col("id").isin(ids)
+        async with self._write_lock:
+            await self._generated_audio.delete(predicate)
+            await self._directed_lines.delete(predicate)
+
     async def delete_voice_generation(self, voice_id: str) -> None:
         """Remove every regenerable artifact owned by one canonical character voice."""
         predicate = col("voice_id") == lit(voice_id)
