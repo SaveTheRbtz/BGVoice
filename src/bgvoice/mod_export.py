@@ -390,12 +390,10 @@ This export contains {len(assets):,} canonical recordings covering
 
 1. Install every dialogue/content mod you want.
 2. Copy this export's entire contents into the EET game directory.
-3. Run `setup-bgvoice.exe` and choose exactly one audio policy.
+3. Run `setup-bgvoice.exe` and install BGVoice.
 4. Install `EET_end` if the EET installation has not yet been finalized.
 
-The default **replace all exported audio** policy uses generated audio on every
-matched dialogue occurrence. The alternative **fill missing audio** policy patches
-only lines whose male and female sound assignments are both empty.
+BGVoice replaces the audio on every matched dialogue occurrence.
 
 The installer matches the current game by DLG resource name and exact resolved
 English text. State numbering and TLK string references may differ from the source
@@ -415,22 +413,11 @@ SUPPORT ~BGVoice project~
 VERSION ~{version}~
 README ~bgvoice/README.md~
 
-BEGIN ~Replace audio on every exported dialogue occurrence~
-SUBCOMPONENT ~BGVoice EET dialogue audio policy~
+BEGIN ~Install generated dialogue audio~
 DESIGNATED 0
-LABEL ~replace-exported-audio~
+LABEL ~install-generated-audio~
 REQUIRE_PREDICATE GAME_IS ~eet~ ~BGVoice requires an EET installation.~
 REQUIRE_PREDICATE (~%EE_LANGUAGE%~ STRING_EQUAL_CASE ~en_US~) ~This BGVoice export requires the en_US game language.~
-OUTER_SET bgv_replace = 1
-INCLUDE ~bgvoice/lib/install.tpa~
-
-BEGIN ~Fill only dialogue occurrences without assigned audio~
-SUBCOMPONENT ~BGVoice EET dialogue audio policy~
-DESIGNATED 1
-LABEL ~fill-missing-audio~
-REQUIRE_PREDICATE GAME_IS ~eet~ ~BGVoice requires an EET installation.~
-REQUIRE_PREDICATE (~%EE_LANGUAGE%~ STRING_EQUAL_CASE ~en_US~) ~This BGVoice export requires the en_US game language.~
-OUTER_SET bgv_replace = 0
 INCLUDE ~bgvoice/lib/install.tpa~
 """
 
@@ -443,18 +430,9 @@ STR_VAR
 BEGIN
   READ_STRREF text_offset bgv_male_text
   READ_STRREF_F text_offset bgv_female_text
-  READ_STRREF_S text_offset bgv_male_sound
-  READ_STRREF_FS text_offset bgv_female_sound
-  SET bgv_install = bgv_replace OR (
-    (~%bgv_male_sound%~ STRING_EQUAL_CASE ~~) AND
-    (~%bgv_female_sound%~ STRING_EQUAL_CASE ~~)
-  )
-
-  PATCH_IF bgv_install BEGIN
-    SAY text_offset ~%bgv_male_text%~ [%sound%] ~%bgv_female_text%~ [%sound%]
-    INNER_ACTION BEGIN
-      COPY ~bgvoice/audio/%sound%.wav~ ~override/%sound%.wav~
-    END
+  SAY text_offset ~%bgv_male_text%~ [%sound%] ~%bgv_female_text%~ [%sound%]
+  INNER_ACTION BEGIN
+    COPY ~bgvoice/audio/%sound%.wav~ ~override/%sound%.wav~
   END
 END
 

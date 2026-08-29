@@ -33,7 +33,7 @@ def test_sound_resrefs_fill_the_five_digit_base36_namespace(
 
 
 @pytest.mark.anyio
-async def test_export_builds_a_replaceable_weidu_mod_from_generated_audio(
+async def test_export_builds_an_installable_weidu_mod_from_generated_audio(
     scenario_database: Path,
     tmp_path: Path,
 ) -> None:
@@ -125,14 +125,13 @@ async def test_export_builds_a_replaceable_weidu_mod_from_generated_audio(
 
     setup = (output / "setup-bgvoice.tp2").read_text(encoding="utf-8").casefold()
     assert "version ~0.9.0~" in setup
-    assert setup.count("subcomponent") == 2
-    replace, fill = setup.split("begin ~")[1:]
-    assert "replace" in replace
-    assert "designated 0" in replace
-    assert "bgv_replace = 1" in replace
-    assert "missing" in fill
-    assert "designated 1" in fill
-    assert "bgv_replace = 0" in fill
+    assert setup.count("begin ~") == 1
+    assert "begin ~install generated dialogue audio~" in setup
+    assert "designated 0" in setup
+    assert "subcomponent" not in setup
+    assert "bgv_replace" not in setup
+    assert "fill missing" not in setup
+    assert "patch_if" not in installer_library.casefold()
 
     output = tmp_path / "not-an-export"
     output.mkdir()

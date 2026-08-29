@@ -154,9 +154,8 @@ uv run python scripts/package_mod.py data/bgvoice-v1.0.0 data/BGVoice-v1.0.0.zip
 
 The script exports the mod, parse-checks every generated WeiDU source, creates a root-clean Zip64
 archive, verifies its CRCs, and prints its SHA-256. Release directories and archives are immutable:
-choose new paths for each version. The default component replaces audio on every matched NPC
-dialogue occurrence; the alternative fills only empty sound assignments. Ogg Vorbis bytes remain
-in the Enhanced Edition's expected `.wav` resource files.
+choose new paths for each version. BGVoice replaces audio on every matched NPC dialogue occurrence.
+Ogg Vorbis bytes remain in the Enhanced Edition's expected `.wav` resource files.
 
 The mod is a content intersection rather than a snapshot patch. It opens every packaged DLG family
 that exists in the target game, scans its current states, and matches the exact resolved English
