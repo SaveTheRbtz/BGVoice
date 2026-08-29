@@ -99,7 +99,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--lines-per-voice",
         type=_line_limit,
         default=100,
-        help="maximum round-robin lines per voice, or 'all' (default: 100)",
+        help="maximum unique round-robin source texts per voice, or 'all' (default: 100)",
     )
     generation.add_argument(
         "--database", type=Path, default=_DEFAULT_DATABASE, help="LanceDB directory"

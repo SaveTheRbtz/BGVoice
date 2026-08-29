@@ -56,8 +56,9 @@ from bgvoice.storage_records import (
 )
 
 
-def _line(dialogue: str, state: int) -> DialogueLineRecord:
+def _line(dialogue: str, state: int, text: str | None = None) -> DialogueLineRecord:
     identifier = f"{dialogue}:npc:{state}:-"
+    source_text = f"Line {state}" if text is None else text
     return DialogueLineRecord(
         id=identifier,
         run_id="run",
@@ -65,10 +66,10 @@ def _line(dialogue: str, state: int) -> DialogueLineRecord:
         line_kind=DialogueLineKind.NPC,
         state_index=state,
         strref=state,
-        text=f"Line {state}",
+        text=source_text,
         tokens=[],
         serialized_size=10,
-        search_text=f"Line {state}",
+        search_text=source_text,
     )
 
 
@@ -94,6 +95,29 @@ def test_round_robin_takes_each_dialogues_lowest_remaining_state() -> None:
         (line.dialogue_resource_name, line.state_index)
         for line in round_robin_lines(dialogues, None)
     ] == expected
+
+
+def test_round_robin_keeps_first_exact_text_and_fills_limit() -> None:
+    dialogues = {
+        "B.DLG": [
+            _line("B.DLG", 1, "Same"),
+            _line("B.DLG", 3, "case"),
+            _line("B.DLG", 5, "Last"),
+        ],
+        "A.DLG": [
+            _line("A.DLG", 0, "Same"),
+            _line("A.DLG", 2, "Case"),
+            _line("A.DLG", 4, " Same "),
+        ],
+    }
+
+    assert [line.id for line in round_robin_lines(dialogues, 5)] == [
+        "A.DLG:npc:0:-",
+        "A.DLG:npc:2:-",
+        "B.DLG:npc:3:-",
+        "A.DLG:npc:4:-",
+        "B.DLG:npc:5:-",
+    ]
 
 
 @pytest.mark.anyio

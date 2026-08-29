@@ -236,7 +236,7 @@ def round_robin_lines(
     dialogues: Mapping[str, Sequence[DialogueLineRecord]],
     limit: int | None,
 ) -> list[DialogueLineRecord]:
-    """Take each DLG's lowest remaining state in deterministic rounds."""
+    """Take unique exact source texts in deterministic DLG/state rounds."""
     assert limit is None or limit > 0, "line limit must be positive"
     groups = [
         sorted(dialogues[name], key=lambda line: (line.state_index, line.id))
@@ -244,12 +244,18 @@ def round_robin_lines(
         if dialogues[name]
     ]
     selected: list[DialogueLineRecord] = []
+    seen_texts: set[str | None] = set()
     for index in range(max((len(group) for group in groups), default=0)):
         for group in groups:
-            if index < len(group):
-                selected.append(group[index])
-                if limit is not None and len(selected) == limit:
-                    return selected
+            if index >= len(group):
+                continue
+            line = group[index]
+            if line.text in seen_texts:
+                continue
+            seen_texts.add(line.text)
+            selected.append(line)
+            if limit is not None and len(selected) == limit:
+                return selected
     return selected
 
 
