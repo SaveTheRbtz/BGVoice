@@ -682,6 +682,10 @@ class PipelineReader:
                 direction=direction,
             )
         conditions = [sound_generation]
+        if query.character_resource_name is not None:
+            conditions.append(
+                col("character_resource_name") == lit(query.character_resource_name)
+            )
         if query.slot_id is not None:
             conditions.append(col("slot_id") == lit(query.slot_id))
         total, records = await records_page(

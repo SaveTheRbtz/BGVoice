@@ -4,11 +4,13 @@ import type { MouseEvent } from "react";
 import { INSTALLATION_NAME } from "./api";
 import { setExactFilter } from "./filters";
 
+export type DialogueLineKind = "npc" | "player" | "journal";
+
 export type AppRoute =
   | { name: "voices"; voiceName: string | null }
   | { name: "characters"; resourceName: string | null }
   | { name: "dialogues"; resourceName: string | null }
-  | { name: "dialogue-lines" }
+  | { name: "dialogue-lines"; lineKind: DialogueLineKind }
   | { name: "dialogue-transitions" }
   | { name: "character-sounds" }
   | { name: "races" }
@@ -41,10 +43,15 @@ const COLLECTION_ROUTES = {
 const SINGLE_ROUTES = {
   pipeline: { name: "pipeline" },
   "extraction-runs": { name: "extraction-runs" },
-  "dialogue-lines": { name: "dialogue-lines" },
   "dialogue-transitions": { name: "dialogue-transitions" },
   "character-sounds": { name: "character-sounds" },
 } satisfies Record<string, AppRoute>;
+
+const LINE_ROUTES = {
+  npc: { name: "dialogue-lines", lineKind: "npc" },
+  player: { name: "dialogue-lines", lineKind: "player" },
+  journal: { name: "dialogue-lines", lineKind: "journal" },
+} satisfies Record<DialogueLineKind, AppRoute>;
 
 const DEFINITION_ROUTES = {
   races: { name: "races" },
@@ -58,6 +65,9 @@ export function routeFromPath(pathname: string = window.location.pathname): AppR
   if (segments.length === 0) return COLLECTION_ROUTES.voices();
 
   const [collection, resource] = segments;
+  if (collection === "dialogue-lines" && segments.length <= 2) {
+    return LINE_ROUTES[(resource ?? "npc") as DialogueLineKind] ?? NOT_FOUND;
+  }
   const collectionRoute = COLLECTION_ROUTES[collection as keyof typeof COLLECTION_ROUTES];
   if (collectionRoute != null && segments.length <= 2) return collectionRoute(resource);
   if (segments.length === 1) return SINGLE_ROUTES[collection as keyof typeof SINGLE_ROUTES] ?? NOT_FOUND;
@@ -79,10 +89,19 @@ export function dialoguePath(resourceName?: string, search = ""): string {
   return `${resourcePath("dialogues", resourceName)}${search}`;
 }
 
-export function dialogueLinesPath(
-  filters: Readonly<Record<string, string | boolean>> = {},
-): string {
-  return filteredCollectionPath("/dialogue-lines", filters);
+export interface DialogueLinePathFilters {
+  line_kind?: DialogueLineKind;
+  dialogue_resource_name?: string;
+  source_kind?: string;
+  attributed?: boolean;
+  voice_id?: string;
+  directed?: boolean;
+  voiced?: boolean;
+}
+
+export function dialogueLinesPath(filters: Readonly<DialogueLinePathFilters> = {}): string {
+  const { line_kind: lineKind = "npc", ...queryFilters } = filters;
+  return filteredCollectionPath(`/dialogue-lines/${lineKind}`, queryFilters);
 }
 
 export function dialogueTransitionsPath(dialogueResourceName: string): string {
@@ -91,12 +110,19 @@ export function dialogueTransitionsPath(dialogueResourceName: string): string {
   });
 }
 
+export function characterSoundsPath(characterResourceName?: string): string {
+  return filteredCollectionPath("/character-sounds", {
+    character_resource_name: characterResourceName,
+  });
+}
+
 function filteredCollectionPath(
   pathname: string,
-  filters: Readonly<Record<string, string | boolean>>,
+  filters: Readonly<Record<string, string | number | boolean | undefined>>,
 ): string {
   let filter = "";
   for (const [field, value] of Object.entries(filters)) {
+    if (value === undefined) continue;
     filter = setExactFilter(filter, field, value);
   }
   const parameters = new URLSearchParams();

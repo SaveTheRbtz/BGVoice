@@ -308,6 +308,25 @@ def test_connect_filters_transitions_by_dialogue(
     assert {row["dialogueResref"] for row in transitions} == {"UNUSED"}
 
 
+def test_connect_filters_sounds_by_character(
+    shared_scenario_database: Path,
+) -> None:
+    with TestClient(create_app(shared_scenario_database)) as client:
+        response = _connect(
+            client,
+            "ListCharacterSounds",
+            {
+                "parent": _PARENT,
+                "filter": 'character_resource_name = "AERIE.CRE"',
+            },
+        )
+
+    assert response.status_code == 200
+    sounds = response.json()["characterSounds"]
+    assert sounds
+    assert {row["characterDisplayName"] for row in sounds} == {"Aerie"}
+
+
 @pytest.mark.parametrize(
     ("list_method", "response_field", "get_method"),
     [

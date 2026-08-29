@@ -1,241 +1,223 @@
-import { useState } from "react";
-
 import { listDialogueLines } from "./api";
 import {
-  BrowserHeading,
-  CursorPagination,
-  ErrorBanner,
-  RelevanceButton,
-  SearchBox,
+  BrowserScaffold,
   SelectFilter,
-  SortHeader,
   TextFilter,
 } from "./browser";
-import { filterValue } from "./filters";
+import type { FilterControls } from "./browser";
+import { setExactFilter } from "./filters";
 import { formatCount } from "./format";
 import type { DialogueLine, DirectedLine } from "./gen/bgvoice/v1/pipeline_pb";
-import { lineKindLabel, sourceKindLabel } from "./pipeline-labels";
-import { ResourceTitle } from "./resource-ui";
-import { dialoguePath, followLink, resourceId, voicePath } from "./routes";
+import { SourceBadge } from "./resource-ui";
+import { dialoguePath, followLink, voicePath } from "./routes";
+import type { DialogueLineKind } from "./routes";
 import { useBrowser } from "./use-browser";
 
 const SOURCE_FILTERS = ["override", "bif", "dlc"] as const;
 const BOOLEAN_FILTERS = ["true", "false"] as const;
 
-export function DialogueLineBrowser() {
-  const browser = useBrowser("", listDialogueLines);
-  const { query, result, loading } = browser;
-  const [expandedLine, setExpandedLine] = useState<string | null>(null);
+const LINE_PAGES = {
+  npc: {
+    eyebrow: "VOICE PRODUCTION",
+    title: "NPC lines",
+    description: "Review source dialogue, directed delivery, and generated audio.",
+    noun: "NPC lines",
+    placeholder: "Search NPC dialogue and resources…",
+  },
+  player: {
+    eyebrow: "DIALOGUE CORPUS",
+    title: "Player lines",
+    description: "Browse player responses with their exact state-machine location and context.",
+    noun: "player lines",
+    placeholder: "Search player responses and resources…",
+  },
+  journal: {
+    eyebrow: "QUEST JOURNAL",
+    title: "Journal entries",
+    description: "Browse quest-journal text with its originating dialogue and transition.",
+    noun: "journal entries",
+    placeholder: "Search journal text and resources…",
+  },
+} satisfies Record<DialogueLineKind, {
+  eyebrow: string;
+  title: string;
+  description: string;
+  noun: string;
+  placeholder: string;
+}>;
 
+const LINE_LOADERS = {
+  npc: lineLoader("npc"),
+  player: lineLoader("player"),
+  journal: lineLoader("journal"),
+} satisfies Record<DialogueLineKind, typeof listDialogueLines>;
+
+export function DialogueLineBrowser({ lineKind }: { lineKind: DialogueLineKind }) {
+  const browser = useBrowser("dialogue asc", LINE_LOADERS[lineKind]);
+  const page = LINE_PAGES[lineKind];
+  const { result, loading } = browser;
   return (
-    <section className="browser-card resource-page">
-      <BrowserHeading
-        eyebrow="VOICE WORKLOAD"
-        title="Dialogue lines"
-        description="Compare source text with its directed performance and generated audio."
-        loading={loading}
-        count={Number(result.totalSize)}
-        noun="lines"
-      />
-      {browser.error != null && <ErrorBanner message={browser.error} />}
-      <div className="toolbar">
-        <SearchBox
-          value={browser.search}
-          onChange={browser.setSearch}
-          placeholder="Search resolved text and dialogue resources…"
-          label="Search dialogue lines"
-        />
-        <RelevanceButton
-          visible={browser.search.trim().length > 0}
-          active={query.orderBy === ""}
-          onClick={browser.sortByRelevance}
-        />
+    <BrowserScaffold
+      browser={browser}
+      eyebrow={page.eyebrow}
+      title={page.title}
+      description={page.description}
+      noun={page.noun}
+      searchPlaceholder={page.placeholder}
+      renderFilters={(controls) => <LineFilters lineKind={lineKind} controls={controls} />}
+      className={`dialogue-line-browser ${lineKind}-line-browser`}
+    >
+      <div className={`dialogue-line-results ${loading ? "is-loading" : ""}`} aria-busy={loading}>
+        {result.items.map((line) => (
+          <DialogueLineItem key={line.name} line={line} production={lineKind === "npc"} />
+        ))}
+        {!loading && result.items.length === 0 && (
+          <div className="empty-state">No {page.noun} match this filter.</div>
+        )}
       </div>
-      <LineFilters browser={browser} />
-      <div className={`table-wrap line-table ${loading ? "is-loading" : ""}`} aria-busy={loading}>
-        <table>
-          <LineTableHead orderBy={query.orderBy} onSort={browser.sortBy} />
-          <tbody>
-            {result.items.map((line) => (
-              <DialogueLineRow
-                key={line.name}
-                line={line}
-                expanded={expandedLine === line.name}
-                onToggle={() => setExpandedLine((current) => current === line.name ? null : line.name)}
-              />
-            ))}
-            {!loading && result.items.length === 0 && (
-              <tr><td className="empty-state" colSpan={8}>No dialogue lines match this filter.</td></tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-      <CursorPagination
-        pageSize={query.pageSize}
-        visibleCount={result.items.length}
-        totalSize={Number(result.totalSize)}
-        loading={loading}
-        hasPrevious={browser.hasPreviousPage}
-        hasNext={result.nextPageToken !== ""}
-        label="Dialogue line pagination"
-        onPrevious={browser.previousPage}
-        onNext={browser.nextPage}
-        onPageSizeChange={browser.setPageSize}
-      />
-    </section>
+    </BrowserScaffold>
   );
 }
 
-function LineFilters({ browser }: {
-  browser: ReturnType<typeof useBrowser<DialogueLine>>;
+function lineLoader(lineKind: DialogueLineKind): typeof listDialogueLines {
+  return (query, signal) => listDialogueLines({
+    ...query,
+    filter: setExactFilter(query.filter ?? "", "line_kind", lineKind),
+  }, signal);
+}
+
+function LineFilters({ lineKind, controls }: {
+  lineKind: DialogueLineKind;
+  controls: FilterControls;
 }) {
-  const filter = browser.query.filter;
+  const { value, update } = controls;
   return (
-    <div className="filters">
-      <SelectFilter
-        label="Kind"
-        value={filterValue(filter, "line_kind") as "" | "npc" | "player" | "journal"}
-        values={["npc", "player", "journal"]}
-        labels={{ npc: "NPC response", player: "Player response", journal: "Journal" }}
-        onChange={(next) => browser.updateFilter("line_kind", next)}
-      />
+    <>
       <SelectFilter
         label="Source"
-        value={filterValue(filter, "source_kind") as "" | (typeof SOURCE_FILTERS)[number]}
+        value={value("source_kind") as "" | (typeof SOURCE_FILTERS)[number]}
         values={SOURCE_FILTERS}
-        onChange={(next) => browser.updateFilter("source_kind", next)}
+        onChange={(next) => update("source_kind", next)}
       />
       <SelectFilter
         label="Attribution"
-        value={filterValue(filter, "attributed") as "" | "true" | "false"}
+        value={value("attributed") as "" | "true" | "false"}
         values={BOOLEAN_FILTERS}
         labels={{ true: "Attributed", false: "Unattributed" }}
-        onChange={(next) => browser.updateFilter("attributed", next === "" ? "" : next === "true")}
+        onChange={(next) => update("attributed", next === "" ? "" : next === "true")}
       />
-      <TextFilter
-        label="Voice ID"
-        value={filterValue(filter, "voice_id")}
-        placeholder="imoen"
-        onChange={(next) => browser.updateFilter("voice_id", next)}
-      />
-      <SelectFilter
-        label="Direction"
-        value={filterValue(filter, "directed") as "" | "true" | "false"}
-        values={BOOLEAN_FILTERS}
-        labels={{ true: "Directed", false: "Not directed" }}
-        onChange={(next) => browser.updateFilter("directed", next === "" ? "" : next === "true")}
-      />
-      <SelectFilter
-        label="Audio"
-        value={filterValue(filter, "voiced") as "" | "true" | "false"}
-        values={BOOLEAN_FILTERS}
-        labels={{ true: "Generated", false: "Not generated" }}
-        onChange={(next) => browser.updateFilter("voiced", next === "" ? "" : next === "true")}
-      />
-      {filter !== "" && (
-        <button className="clear-filters" type="button" onClick={browser.reset}>Clear filters</button>
+      {lineKind === "npc" && (
+        <>
+          <TextFilter
+            label="Voice ID"
+            value={value("voice_id")}
+            placeholder="imoen"
+            onChange={(next) => update("voice_id", next)}
+          />
+          <SelectFilter
+            label="Direction"
+            value={value("directed") as "" | "true" | "false"}
+            values={BOOLEAN_FILTERS}
+            labels={{ true: "Directed", false: "Not directed" }}
+            onChange={(next) => update("directed", next === "" ? "" : next === "true")}
+          />
+          <SelectFilter
+            label="Audio"
+            value={value("voiced") as "" | "true" | "false"}
+            values={BOOLEAN_FILTERS}
+            labels={{ true: "Generated", false: "Not generated" }}
+            onChange={(next) => update("voiced", next === "" ? "" : next === "true")}
+          />
+        </>
       )}
-    </div>
+    </>
   );
 }
 
-function LineTableHead({ orderBy, onSort }: {
-  orderBy: string;
-  onSort: (field: string) => void;
-}) {
+function DialogueLineItem({ line, production }: { line: DialogueLine; production: boolean }) {
+  const dialogueHref = dialoguePath(line.dialogue);
   return (
-    <thead>
-      <tr>
-        <th>Resolved text</th>
-        <SortHeader label="Dialogue" orderBy="dialogue" activeOrderBy={orderBy} onSort={onSort} />
-        <SortHeader label="Kind" orderBy="line_kind" activeOrderBy={orderBy} onSort={onSort} />
-        <SortHeader label="Strref" orderBy="strref" activeOrderBy={orderBy} onSort={onSort} numeric />
-        <SortHeader label="State" orderBy="state_index" activeOrderBy={orderBy} onSort={onSort} numeric />
-        <SortHeader label="Transition" orderBy="transition_index" activeOrderBy={orderBy} onSort={onSort} numeric />
-        <th>Context</th>
-        <th className="numeric">Characters</th>
-      </tr>
-    </thead>
+    <article className={`dialogue-line-item ${production ? "production-line" : "corpus-line"}`}>
+      <header className="dialogue-line-meta">
+        <a href={dialogueHref} onClick={(event) => followLink(event, dialogueHref)}>
+          {line.dialogueResref}.DLG
+        </a>
+        <SourceBadge kind={line.sourceKind} />
+        <span>State {formatCount(line.stateIndex)}</span>
+        {line.transitionIndex != null && <span>Transition {formatCount(line.transitionIndex)}</span>}
+        <span>Strref {formatCount(line.strref)}</span>
+        <span>
+          {formatCount(line.characterCount)} {line.characterCount === 1 ? "character" : "characters"}
+        </span>
+      </header>
+      <div className="dialogue-line-body">
+        <section className="dialogue-source-text">
+          <h2>Source text</h2>
+          <ExpandableLineText value={line.text} />
+          <LineContext
+            tokens={line.tokens}
+            triggerIndex={line.stateTriggerIndex}
+            triggerText={line.stateTriggerText}
+          />
+        </section>
+        {production && <LineDirections directions={line.directions} />}
+      </div>
+    </article>
   );
 }
 
-function DialogueLineRow({ line, expanded, onToggle }: {
-  line: DialogueLine;
-  expanded: boolean;
-  onToggle: () => void;
-}) {
+function ExpandableLineText({ value }: { value: string | undefined }) {
+  if (value == null) return <p className="muted">Unresolved strref</p>;
+  if (value.length <= 240) return <p>{value}</p>;
   return (
-    <tr>
-      <td className="line-text">
-        {line.text == null ? <span className="muted">Unresolved strref</span> : (
-          <button
-            type="button"
-            className={`line-text-toggle ${expanded ? "is-expanded" : ""}`}
-            aria-expanded={expanded}
-            onClick={onToggle}
-          >
-            {line.text}
-          </button>
-        )}
-        <LineDirections directions={line.directions} />
-      </td>
-      <td>
-        <ResourceTitle
-          href={dialoguePath(line.dialogue)}
-          title={resourceId(line.dialogue)}
-          subtitle={sourceKindLabel(line.sourceKind)}
-        />
-      </td>
-      <td><span className="line-kind">{lineKindLabel(line.lineKind)}</span></td>
-      <td className="numeric mono">{line.strref}</td>
-      <td className="numeric">{line.stateIndex}</td>
-      <td className="numeric">{formatCount(line.transitionIndex)}</td>
-      <td>
-        <LineContext
-          tokens={line.tokens}
-          triggerIndex={line.stateTriggerIndex}
-          triggerText={line.stateTriggerText}
-        />
-      </td>
-      <td className="numeric">{formatCount(line.characterCount)}</td>
-    </tr>
+    <details className="expandable-copy">
+      <summary>{value}</summary>
+      <p>{value}</p>
+    </details>
   );
 }
 
 function LineDirections({ directions }: { directions: readonly DirectedLine[] }) {
-  if (directions.length === 0) return null;
   return (
-    <div className="line-directions" aria-label="Generated performances">
-      {directions.map((direction) => {
-        const result = directionResult(direction);
-        return (
-          <article className="line-direction" key={direction.id}>
-            <div className="line-direction-head">
-              <a
-                href={voicePath(direction.voice)}
-                onClick={(event) => followLink(event, voicePath(direction.voice))}
-              >
-                {direction.voiceDisplayName}
-              </a>
-              <span>{result.label}</span>
-            </div>
-            <p>{result.directedDialogue}</p>
-            {direction.audioUrl == null ? (
-              <small>Audio pending</small>
-            ) : (
-              <audio
-                controls
-                preload="none"
-                src={direction.audioUrl}
-                aria-label={result.audioLabel}
-              >
-                <a href={direction.audioUrl}>Download audio</a>
-              </audio>
-            )}
-          </article>
-        );
-      })}
-    </div>
+    <section className="generated-delivery">
+      <h2>Generated delivery</h2>
+      {directions.length === 0 ? (
+        <div className="delivery-empty">
+          <strong>Not directed</strong>
+          <span>No generated performance exists for this line.</span>
+        </div>
+      ) : (
+        <div className="line-directions">
+          {directions.map((direction) => (
+            <DirectionCard key={direction.id} direction={direction} />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function DirectionCard({ direction }: { direction: DirectedLine }) {
+  const result = directionResult(direction);
+  const href = voicePath(direction.voice);
+  return (
+    <article className="line-direction">
+      <div className="line-direction-head">
+        <a href={href} onClick={(event) => followLink(event, href)}>
+          {direction.voiceDisplayName}
+        </a>
+        <span>{result.label}</span>
+        <i className={direction.audioUrl == null ? "is-pending" : "is-ready"}>
+          {direction.audioUrl == null ? "Audio pending" : "Audio ready"}
+        </i>
+      </div>
+      <p>{result.directedDialogue}</p>
+      {direction.audioUrl != null && (
+        <audio controls preload="none" src={direction.audioUrl} aria-label={result.audioLabel}>
+          <a href={direction.audioUrl}>Download audio</a>
+        </audio>
+      )}
+    </article>
   );
 }
 
@@ -259,13 +241,7 @@ function directionResult(direction: DirectedLine): {
       };
     case undefined:
       throw new Error(`Directed line ${direction.id} has no result`);
-    default:
-      return assertNever(direction.result);
   }
-}
-
-function assertNever(value: never): never {
-  throw new Error(`Unexpected direction result: ${String(value)}`);
 }
 
 function LineContext({ tokens, triggerIndex, triggerText }: {
@@ -273,14 +249,12 @@ function LineContext({ tokens, triggerIndex, triggerText }: {
   triggerIndex: number | undefined;
   triggerText: string | undefined;
 }) {
-  if (tokens.length === 0 && triggerIndex == null && triggerText == null) {
-    return <span className="muted">—</span>;
-  }
   const context = countTokens(tokens);
+  if (context.length === 0 && triggerIndex == null && triggerText == null) return null;
   return (
     <div className="line-context">
       {context.length > 0 && (
-        <div className="definition-tags">
+        <div className="definition-tags" aria-label="Dialogue tokens">
           {context.map(([token, count]) => (
             <span key={token}>{token}{count > 1 && `×${count}`}</span>
           ))}
@@ -305,7 +279,7 @@ function StateTrigger({ index, text }: {
 }) {
   if (text != null) {
     return (
-      <details className="table-text-details script-text">
+      <details className="line-trigger">
         <summary>State trigger{index == null ? "" : ` ${index}`}</summary>
         <code>{text}</code>
       </details>

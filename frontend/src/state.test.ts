@@ -7,6 +7,7 @@ import {
 import { formatBytes, formatCount, formatDate, formatHex } from "./format";
 import {
   characterPath,
+  characterSoundsPath,
   dialogueLinesPath,
   dialoguePath,
   dialogueTransitionsPath,
@@ -27,7 +28,11 @@ describe("public URL state", () => {
       ["/voices/imoen", { name: "voices", voiceName: `${ROOT}/voices/imoen` }],
       ["/characters/aerie-cre-10f6d857", { name: "characters", resourceName: AERIE }],
       ["/dialogues/imoen2j-dlg-789f493a", { name: "dialogues", resourceName: IMOEN_DIALOGUE }],
-      ["/dialogue-lines", { name: "dialogue-lines" }],
+      ["/dialogue-lines", { name: "dialogue-lines", lineKind: "npc" }],
+      ["/dialogue-lines/npc", { name: "dialogue-lines", lineKind: "npc" }],
+      ["/dialogue-lines/player", { name: "dialogue-lines", lineKind: "player" }],
+      ["/dialogue-lines/journal", { name: "dialogue-lines", lineKind: "journal" }],
+      ["/dialogue-lines/unknown", { name: "not-found" }],
       ["/pipeline", { name: "pipeline" }],
       ["/extraction-runs", { name: "extraction-runs" }],
       ["/pipeline/unknown", { name: "not-found" }],
@@ -51,11 +56,19 @@ describe("public URL state", () => {
       dialogueLinesPath({ voice_id: "imoen", voiced: false }),
       "http://localhost",
     );
+    expect(lineUrl.pathname).toBe("/dialogue-lines/npc");
     expect(lineUrl.searchParams.get("filter")).toBe('voice_id = "imoen" AND voiced = false');
+
+    const journalUrl = new URL(dialogueLinesPath({ line_kind: "journal" }), "http://localhost");
+    expect(journalUrl.pathname).toBe("/dialogue-lines/journal");
+    expect(journalUrl.search).toBe("");
 
     const transitionUrl = new URL(dialogueTransitionsPath("IMOEN2J.DLG"), "http://localhost");
     expect(transitionUrl.searchParams.get("filter"))
       .toBe('dialogue_resource_name = "IMOEN2J.DLG"');
+
+    const soundsUrl = new URL(characterSoundsPath("IMOEN.CRE"), "http://localhost");
+    expect(soundsUrl.searchParams.get("filter")).toBe('character_resource_name = "IMOEN.CRE"');
   });
 
   it("round-trips shareable list state and keeps defaults compact", () => {

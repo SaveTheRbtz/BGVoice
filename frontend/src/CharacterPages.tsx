@@ -24,7 +24,13 @@ import {
   StatusPill,
   VoiceLink,
 } from "./resource-ui";
-import { characterPath, dialoguePath, followLink, resourceId } from "./routes";
+import {
+  characterPath,
+  characterSoundsPath,
+  dialoguePath,
+  followLink,
+  resourceId,
+} from "./routes";
 import { useResource } from "./use-resource";
 
 const SOURCE_FILTERS = ["override", "bif", "dlc"] as const;
@@ -259,6 +265,7 @@ function CharacterAbilities({ attributes }: { attributes: CharacterBaseAttribute
 
 function CharacterResourceDetails({ character }: { character: Character }) {
   const dialogueHref = character.directDialogue == null ? null : dialoguePath(character.directDialogue);
+  const soundsHref = characterSoundsPath(character.engineResourceName);
   const dialogueLabel = character.detail?.dialogResref == null
     ? character.directDialogue == null ? "—" : resourceId(character.directDialogue)
     : `${character.detail.dialogResref.toUpperCase()}.DLG`;
@@ -277,6 +284,14 @@ function CharacterResourceDetails({ character }: { character: Character }) {
           </dd>
         </div>
         <Data label="Biography sound" value={character.biography == null ? "—" : resourceId(character.biography)} />
+        <div>
+          <dt>Soundset</dt>
+          <dd>
+            <a href={soundsHref} onClick={(event) => followLink(event, soundsHref)}>
+              Browse resolved sounds
+            </a>
+          </dd>
+        </div>
         <Data label="Source" value={sourceKindLabel(character.source?.kind)} />
         <Data label="CRE version" value={character.detail?.creVersion || "—"} />
         <Data label="Object size" value={formatBytes(toNumber(character.serializedSize))} />

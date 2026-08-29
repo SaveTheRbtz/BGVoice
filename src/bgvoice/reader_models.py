@@ -191,6 +191,7 @@ class VoiceQuery(PageQuery):
 
 class SoundQuery(PageQuery):
     q: str | None = Field(default=None, max_length=300)
+    character_resource_name: str | None = Field(default=None, min_length=1, max_length=300)
     slot_id: int | None = Field(default=None, ge=0, le=0xFF)
     sort: SoundSort | None = None
     direction: SortDirection = "desc"

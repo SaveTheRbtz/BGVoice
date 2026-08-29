@@ -14,6 +14,7 @@ import {
   type Dialogue,
   DialogueSchema,
   type DialogueLine,
+  DialogueLineKind,
   DialogueLineSchema,
   type ExtractionRun,
   type Installation,
@@ -162,6 +163,13 @@ const dialogue = create(DialogueSchema, {
 const line = create(DialogueLineSchema, {
   name: "installations/bg2ee-eet/dialogueLines/imoen2j-dlg-0-0-ecdf1e0b",
   dialogue: "installations/bg2ee-eet/dialogues/imoen2j-dlg-789f493a",
+  dialogueResref: "IMOEN2J",
+  sourceKind: SourceKind.OVERRIDE,
+  lineKind: DialogueLineKind.NPC,
+  stateIndex: 42,
+  transitionIndex: 7,
+  strref: 18_421,
+  characterCount: 3,
   text: "Heya! It's me, Imoen!",
   tokens: ["PLAYER2", "CHARNAME", "DAY", "PLAYER1", "CHARNAME", "PLAYER2", "CHARNAME", "PLAYER1"],
   stateTriggerIndex: 23,
@@ -299,9 +307,9 @@ describe("application jobs", () => {
       screen.getAllByRole("link", { name: "Browse NPC lines" })[0]!.getAttribute("href") ?? "",
       window.location.origin,
     );
-    expect(npcUrl.searchParams.get("filter")).toBe(
-      'dialogue_resource_name = "IMOEN2J.DLG" AND line_kind = "npc"',
-    );
+    expect(npcUrl.pathname).toBe("/dialogue-lines/npc");
+    expect(npcUrl.searchParams.get("filter"))
+      .toBe('dialogue_resource_name = "IMOEN2J.DLG"');
     const transitionUrl = new URL(
       screen.getByRole("link", { name: "Browse transitions →" }).getAttribute("href") ?? "",
       window.location.origin,
@@ -328,27 +336,21 @@ describe("application jobs", () => {
 
     const href = (await screen.findByRole("link", { name: "All NPC lines" })).getAttribute("href");
     const url = new URL(href ?? "", window.location.origin);
-    expect(url.pathname).toBe("/dialogue-lines");
-    expect(url.searchParams.get("filter")).toBe(
-      'voice_id = "armored figure" AND line_kind = "npc"',
-    );
+    expect(url.pathname).toBe("/dialogue-lines/npc");
+    expect(url.searchParams.get("filter")).toBe('voice_id = "armored figure"');
   });
 
-  it("browses dialogue text with condensed, ordered context", async () => {
-    window.history.replaceState(null, "", "/dialogue-lines");
+  it("reviews NPC delivery and keeps line kinds as distinct workspaces", async () => {
+    window.history.replaceState(null, "", "/dialogue-lines/npc");
     const user = userEvent.setup();
     render(<App />);
 
-    const text = await screen.findByRole("button", { name: line.text });
-    expect(text.getAttribute("aria-expanded")).toBe("false");
-    await user.click(text);
-    expect(text.getAttribute("aria-expanded")).toBe("true");
-
-    const context = screen.getAllByRole("cell")
-      .find((cell) => cell.textContent?.startsWith("CHARNAME×3"));
-    expect(context?.textContent).toBe(
-      "CHARNAME×3PLAYER1×2PLAYER2×2DAYState trigger 23 · unresolved",
-    );
+    expect(await screen.findByRole("heading", { name: "NPC lines", level: 1 })).toBeTruthy();
+    expect(screen.getByText(line.text ?? "")).toBeTruthy();
+    const context = within(screen.getByLabelText("Dialogue tokens"));
+    expect(context.getAllByText(/./).map((token) => token.textContent)).toEqual([
+      "CHARNAME×3", "PLAYER1×2", "PLAYER2×2", "DAY",
+    ]);
     expect(screen.getByText("[brightly] Heya! It's me, Imoen!")).toBeTruthy();
     expect(screen.getByText("[narrate gently] The chamber falls silent.")).toBeTruthy();
     const audio = screen.getByLabelText("Audio sample for Imoen");
@@ -356,7 +358,15 @@ describe("application jobs", () => {
     expect(audio.getAttribute("src")).toBe(line.directions[0]?.audioUrl);
     expect(screen.getByLabelText("Narrator audio sample attributed to Imoen")).toBeTruthy();
     expect(api.listDialogueLines).toHaveBeenCalledWith(
-      expect.objectContaining({ filter: "", orderBy: "", pageSize: 25 }),
+      expect.objectContaining({ filter: 'line_kind = "npc"', orderBy: "dialogue asc", pageSize: 25 }),
+      expect.any(AbortSignal),
+    );
+
+    await user.click(screen.getAllByRole("link", { name: "Player lines" })[0]!);
+    expect(await screen.findByRole("heading", { name: "Player lines", level: 1 })).toBeTruthy();
+    expect(screen.queryByText("Voice ID")).toBeNull();
+    expect(api.listDialogueLines).toHaveBeenLastCalledWith(
+      expect.objectContaining({ filter: 'line_kind = "player"', orderBy: "dialogue asc" }),
       expect.any(AbortSignal),
     );
   });

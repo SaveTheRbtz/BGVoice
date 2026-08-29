@@ -190,7 +190,7 @@ function DialogueHeader({ dialogue }: { dialogue: Dialogue }) {
 }
 
 function GeneratedWorkPanel({ dialogue }: { dialogue: Dialogue }) {
-  const lineFilters = { dialogue_resource_name: dialogue.engineResourceName, line_kind: "npc" };
+  const lineFilters = { dialogue_resource_name: dialogue.engineResourceName };
   const allHref = dialogueLinesPath(lineFilters);
   const voicedHref = dialogueLinesPath({ ...lineFilters, voiced: true });
   const audio = Number(dialogue.generatedAudioCount);

@@ -517,6 +517,7 @@ class PipelineService(pipeline_connect.PipelineService):
         sort, direction = parse_order(request.order_by, SOUND_ORDER)
         query = SoundQuery(
             q=filters.search,
+            character_resource_name=filters.text("character_resource_name"),
             slot_id=filters.integer("slot_id"),
             sort=sort,
             direction=direction,

@@ -33,6 +33,19 @@ export interface TableBrowserProps<Row, Order extends string> {
   headingLevel?: 1 | 2;
 }
 
+export interface BrowserScaffoldProps<Row> {
+  browser: ReturnType<typeof useBrowser<Row>>;
+  eyebrow: string;
+  title: string;
+  description: string;
+  noun: string;
+  searchPlaceholder: string;
+  renderFilters?: (controls: FilterControls) => ReactNode;
+  className?: string;
+  headingLevel?: 1 | 2;
+  children: ReactNode;
+}
+
 export function TableBrowser<Row, Order extends string>({
   defaultOrderBy = "",
   loadPage,
@@ -50,44 +63,18 @@ export function TableBrowser<Row, Order extends string>({
 }: TableBrowserProps<Row, Order>) {
   const browser = useBrowser(defaultOrderBy, loadPage);
   const { query, result, loading } = browser;
-  const activeFilters = countFilters(query.filter);
-  const controls: FilterControls = {
-    value: (field) => filterValue(query.filter, field),
-    update: browser.updateFilter,
-  };
-
   return (
-    <section className={`browser-card resource-page ${className}`}>
-      <BrowserHeading
-        eyebrow={eyebrow}
-        title={title}
-        description={description}
-        loading={loading}
-        count={Number(result.totalSize)}
-        noun={noun}
-        headingLevel={headingLevel}
-      />
-      {browser.error != null && <ErrorBanner message={browser.error} />}
-      <div className="toolbar">
-        <SearchBox
-          value={browser.search}
-          onChange={browser.setSearch}
-          placeholder={searchPlaceholder}
-          label={`Full-text search ${noun}`}
-        />
-        <RelevanceButton
-          visible={browser.search.trim().length > 0}
-          active={query.orderBy === ""}
-          onClick={browser.sortByRelevance}
-        />
-      </div>
-      <BrowserFilters
-        title={title}
-        count={activeFilters}
-        controls={controls}
-        render={renderFilters}
-        onClear={browser.reset}
-      />
+    <BrowserScaffold
+      browser={browser}
+      eyebrow={eyebrow}
+      title={title}
+      description={description}
+      noun={noun}
+      searchPlaceholder={searchPlaceholder}
+      renderFilters={renderFilters}
+      className={className}
+      headingLevel={headingLevel}
+    >
       <div
         className={`table-wrap ${tableClassName} ${loading ? "is-loading" : ""}`}
         aria-busy={loading}
@@ -131,6 +118,62 @@ export function TableBrowser<Row, Order extends string>({
           </tbody>
         </table>
       </div>
+    </BrowserScaffold>
+  );
+}
+
+export function BrowserScaffold<Row>({
+  browser,
+  eyebrow,
+  title,
+  description,
+  noun,
+  searchPlaceholder,
+  renderFilters,
+  className = "",
+  headingLevel = 1,
+  children,
+}: BrowserScaffoldProps<Row>) {
+  const { query, result, loading } = browser;
+  const activeFilters = countFilters(query.filter);
+  const controls: FilterControls = {
+    value: (field) => filterValue(query.filter, field),
+    update: browser.updateFilter,
+  };
+
+  return (
+    <section className={`browser-card resource-page ${className}`}>
+      <BrowserHeading
+        eyebrow={eyebrow}
+        title={title}
+        description={description}
+        loading={loading}
+        count={Number(result.totalSize)}
+        noun={noun}
+        headingLevel={headingLevel}
+      />
+      {browser.error != null && <ErrorBanner message={browser.error} />}
+      <div className="toolbar">
+        <SearchBox
+          value={browser.search}
+          onChange={browser.setSearch}
+          placeholder={searchPlaceholder}
+          label={`Full-text search ${noun}`}
+        />
+        <RelevanceButton
+          visible={browser.search.trim().length > 0}
+          active={query.orderBy === ""}
+          onClick={browser.sortByRelevance}
+        />
+      </div>
+      <BrowserFilters
+        title={title}
+        count={activeFilters}
+        controls={controls}
+        render={renderFilters}
+        onClear={browser.reset}
+      />
+      {children}
       <CursorPagination
         pageSize={query.pageSize}
         visibleCount={result.items.length}

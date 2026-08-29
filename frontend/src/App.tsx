@@ -17,9 +17,10 @@ import {
 } from "./MetadataBrowser";
 import { PipelinePage } from "./PipelinePage";
 import { toNumber } from "./pipeline-labels";
-import { followLink, navigate, useRoute } from "./routes";
-import type { AppRoute } from "./routes";
-import { SoundBrowser, TransitionBrowser } from "./SourceBrowsers";
+import { dialogueLinesPath, followLink, navigate, useRoute } from "./routes";
+import type { AppRoute, DialogueLineKind } from "./routes";
+import { SoundBrowser } from "./SoundBrowser";
+import { TransitionBrowser } from "./TransitionBrowser";
 import { errorMessage } from "./use-browser";
 import { VoiceBrowser, VoiceDetailPage } from "./VoicePages";
 
@@ -28,6 +29,7 @@ interface NavigationLinkData {
   label: string;
   icon: string;
   routes: readonly AppRoute["name"][];
+  lineKind?: DialogueLineKind;
 }
 
 interface NavigationGroup {
@@ -44,7 +46,9 @@ const NAVIGATION: readonly NavigationGroup[] = [
     label: "Dialogue",
     links: [
       { href: "/dialogues", label: "Dialogues", icon: "D", routes: ["dialogues"] },
-      { href: "/dialogue-lines", label: "Lines", icon: "L", routes: ["dialogue-lines"] },
+      { href: dialogueLinesPath(), label: "NPC lines", icon: "N", routes: ["dialogue-lines"], lineKind: "npc" },
+      { href: dialogueLinesPath({ line_kind: "player" }), label: "Player lines", icon: "P", routes: ["dialogue-lines"], lineKind: "player" },
+      { href: dialogueLinesPath({ line_kind: "journal" }), label: "Journal", icon: "J", routes: ["dialogue-lines"], lineKind: "journal" },
       { href: "/dialogue-transitions", label: "Transitions", icon: "T", routes: ["dialogue-transitions"] },
     ],
   },
@@ -78,7 +82,6 @@ interface PageProps {
 }
 
 const STATIC_PAGES: Partial<Record<AppRoute["name"], ComponentType<PageProps>>> = {
-  "dialogue-lines": DialogueLineBrowser,
   "dialogue-transitions": TransitionBrowser,
   "character-sounds": SoundBrowser,
   "extraction-runs": ExtractionRunsPage,
@@ -164,7 +167,8 @@ function NavigationLink({ link, route, compact = false }: {
   route: AppRoute;
   compact?: boolean;
 }) {
-  const active = link.routes.includes(route.name);
+  const active = link.routes.includes(route.name)
+    && (link.lineKind == null || (route.name === "dialogue-lines" && route.lineKind === link.lineKind));
   return (
     <a
       className={active ? "is-active" : undefined}
@@ -208,6 +212,9 @@ function RouteContent({ route, installation }: { route: AppRoute; installation: 
   }
   if (route.name === "pipeline") {
     return <PipelinePage installation={installation} />;
+  }
+  if (route.name === "dialogue-lines") {
+    return <DialogueLineBrowser key={route.lineKind} lineKind={route.lineKind} />;
   }
   const Page = STATIC_PAGES[route.name];
   return Page == null ? <NotFound /> : <Page installation={installation} />;

@@ -249,7 +249,7 @@ function VoiceDetail({ voice }: { voice: Voice }) {
 }
 
 function VoiceLineLinks({ voice }: { voice: Voice }) {
-  const common = { voice_id: voice.voiceId, line_kind: "npc" };
+  const common = { voice_id: voice.voiceId };
   const links = [
     ["Review audio", dialogueLinesPath({ ...common, voiced: true })],
     ["Needs audio", dialogueLinesPath({ ...common, directed: true, voiced: false })],

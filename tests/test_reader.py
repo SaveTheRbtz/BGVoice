@@ -237,7 +237,14 @@ async def test_dialogue_line_voice_sound_and_transition_queries(
             )
         )
         voices = await reader.voices(VoiceQuery(page_size=10))
-        sounds = await reader.sounds(SoundQuery(q="fallen", slot_id=9, page_size=20))
+        sounds = await reader.sounds(
+            SoundQuery(
+                q="fallen",
+                character_resource_name="AERIE.CRE",
+                slot_id=9,
+                page_size=20,
+            )
+        )
         actions = await reader.transitions(
             TransitionQuery(
                 q="SetGlobal",
@@ -259,7 +266,11 @@ async def test_dialogue_line_voice_sound_and_transition_queries(
     assert tokenized.items[0].tokens == ["DAYANDMONTH"]
     assert (voices.total, voices.sort, voices.items[0].id) == (1, "npc_line_count", "aerie")
     assert (voices.items[0].npc_line_count, voices.items[0].dialogue_resrefs) == (2, ["AERIE"])
-    assert (sounds.total, sounds.sort) == (12, "relevance")
+    assert (sounds.total, sounds.sort, sounds.items[0].character_resource_name) == (
+        1,
+        "relevance",
+        "AERIE.CRE",
+    )
     assert (sounds.items[0].slot_symbols, sounds.items[0].slot_groups) == (
         ["ATTACK_VOICE"],
         ["BATTLE_CRIES"],
