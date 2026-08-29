@@ -6,3 +6,4 @@
   * while here, switch voice creation prompt to be xml-like to avoid confusing the prompt.
 * EEex script to read books aloud.
 * Create default voices for chars with < 20 lines for every gender/race combination.
+* Figure out ideal volume for the voiceovers.
