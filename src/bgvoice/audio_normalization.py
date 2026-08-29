@@ -38,7 +38,7 @@ async def normalize_existing_audio(
     try:
         loop = asyncio.get_running_loop()
         with ProcessPoolExecutor(max_workers=workers) as executor:
-            async for records in store.generated_audio_batches(workers * 2):
+            async for records in store.generated_audio_batches(workers * 20):
                 pending: list[GeneratedAudioRecord] = []
                 new_entries: list[tuple[str, str]] = []
                 for record in records:

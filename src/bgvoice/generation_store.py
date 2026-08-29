@@ -112,8 +112,14 @@ class GenerationStore:
         """Stream audio blobs without materializing the complete corpus."""
         assert batch_size > 0, "audio batch size must be positive"
         batches = await self._generated_audio.query().to_batches(max_batch_length=batch_size)
+        records: list[GeneratedAudioRecord] = []
         async for batch in batches:
-            yield [GeneratedAudioRecord.model_validate(row) for row in batch.to_pylist()]
+            records.extend(GeneratedAudioRecord.model_validate(row) for row in batch.to_pylist())
+            while len(records) >= batch_size:
+                yield records[:batch_size]
+                del records[:batch_size]
+        if records:
+            yield records
 
     async def generated_audio_identities(
         self,
