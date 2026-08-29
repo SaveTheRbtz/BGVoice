@@ -20,7 +20,7 @@ class PackageSummary(TypedDict):
     source_game: str
     generated_lines: int
     audio_files: int
-    dialogue_files: int
+    voice_catalogs: int
     audio_bytes: int
     weidu_files_parsed: int
     archive_files: int
@@ -35,7 +35,7 @@ def parse_mod(output: Path) -> int:
     files = [
         ("TP2", output / "setup-bgvoice.tp2"),
         ("TPA", output / "bgvoice" / "lib" / "install.tpa"),
-        *(("TPA", path) for path in sorted((output / "bgvoice" / "dialogue").glob("*.tpa"))),
+        *(("TPA", path) for path in sorted((output / "bgvoice" / "catalog").glob("*.tpa"))),
     ]
     workers = os.process_cpu_count()
     assert workers is not None, "Python could not determine the available CPU count"
@@ -96,7 +96,7 @@ def main() -> None:
         "source_game": exported.source_game,
         "generated_lines": exported.generated_lines,
         "audio_files": exported.audio_files,
-        "dialogue_files": exported.dialogue_files,
+        "voice_catalogs": exported.voice_catalogs,
         "audio_bytes": exported.audio_bytes,
         "weidu_files_parsed": parsed,
         "archive_files": archived,

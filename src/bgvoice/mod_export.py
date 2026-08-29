@@ -15,7 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from bgvoice.model_types import DialogueLineKind
 from bgvoice.reader import PipelineReader
-from bgvoice.storage_records import ExtractionRunRecord
+from bgvoice.storage_records import ExtractionRunRecord, VoiceResourceRecord
 
 _MOD_FOLDER = "bgvoice"
 _SETUP_EXE = "setup-bgvoice.exe"
@@ -33,7 +33,7 @@ class ModExportSummary(BaseModel):
     source_game: str = Field(min_length=1)
     generated_lines: int = Field(gt=0)
     audio_files: int = Field(gt=0)
-    dialogue_files: int = Field(gt=0)
+    voice_catalogs: int = Field(gt=0)
     audio_bytes: int = Field(gt=0)
 
 
@@ -59,7 +59,7 @@ class _AudioPayload(LanceModel):
 
 @dataclass(frozen=True, slots=True)
 class _ContentAsset:
-    dialogue_resource_name: str
+    voice_id: str
     run_id: str
     text: str
     recording_id: str
@@ -105,7 +105,7 @@ async def export_mod(
     assert version and "~" not in version, "mod version cannot be empty or contain '~'"
     reader = await PipelineReader.open(database)
     try:
-        recordings, lines, runs = await asyncio.gather(
+        recordings, lines, runs, attribution = await asyncio.gather(
             reader.generated_audio_table.query()
             .select(["id", "voice_id", "dialogue_line_id"])
             .to_pydantic(_ExportRecording),
@@ -122,11 +122,13 @@ async def export_mod(
             )
             .to_pydantic(_ExportLine),
             reader.runs_table.query().to_pydantic(ExtractionRunRecord),
+            reader.attribution_snapshot(),
         )
         assets, source_game = _content_assets(
             cast(list[_ExportRecording], recordings),
             cast(list[_ExportLine], lines),
             cast(list[ExtractionRunRecord], runs),
+            attribution.voices,
         )
         return await _write_mod(
             reader.generated_audio_table,
@@ -144,12 +146,23 @@ def _content_assets(
     recordings: list[_ExportRecording],
     lines: list[_ExportLine],
     runs: list[ExtractionRunRecord],
+    voices: list[VoiceResourceRecord],
 ) -> tuple[list[_ContentAsset], Path]:
     assert recordings, "pipeline database has no generated audio to export"
     wanted = {record.dialogue_line_id for record in recordings}
     by_id = {line.id: line for line in lines if line.id in wanted}
     missing = wanted - by_id.keys()
     assert not missing, f"generated audio references missing dialogue lines: {sorted(missing)[:5]}"
+
+    voices_by_id = {voice.voice_id: voice for voice in voices}
+    missing_voices = {record.voice_id for record in recordings} - voices_by_id.keys()
+    assert not missing_voices, (
+        f"generated audio references missing voices: {sorted(missing_voices)[:5]}"
+    )
+    for voice in voices_by_id.values():
+        assert voice.voice_id == voice.display_name.casefold(), (
+            f"voice id must be the normalized display name: {voice.voice_id!r}"
+        )
 
     candidates: list[tuple[_ExportLine, _ExportRecording]] = []
     for recording in recordings:
@@ -162,10 +175,10 @@ def _content_assets(
 
     candidates.sort(
         key=lambda candidate: (
-            candidate[0].dialogue_resource_name.casefold(),
-            candidate[0].text,
-            candidate[0].state_index,
             candidate[1].voice_id,
+            candidate[0].text,
+            candidate[0].dialogue_resource_name.casefold(),
+            candidate[0].state_index,
             candidate[1].id,
         )
     )
@@ -173,13 +186,13 @@ def _content_assets(
     content_keys: set[tuple[str, str]] = set()
     for line, recording in candidates:
         assert line.text is not None
-        key = (line.dialogue_resource_name.casefold(), line.text)
+        key = (recording.voice_id, line.text)
         if key in content_keys:
             continue
         content_keys.add(key)
         assets.append(
             _ContentAsset(
-                dialogue_resource_name=line.dialogue_resource_name,
+                voice_id=recording.voice_id,
                 run_id=line.run_id,
                 text=line.text,
                 recording_id=recording.id,
@@ -215,8 +228,7 @@ async def _write_mod(
 
     grouped: dict[str, list[_ContentAsset]] = defaultdict(list)
     for asset in assets:
-        grouped[asset.dialogue_resource_name].append(asset)
-    aliases = _dialogue_aliases(source_game)
+        grouped[asset.voice_id].append(asset)
 
     with tempfile.TemporaryDirectory(
         dir=destination.parent,
@@ -224,24 +236,20 @@ async def _write_mod(
     ) as temporary:
         root = Path(temporary) / destination.name
         audio = root / _MOD_FOLDER / "audio"
-        dialogues = root / _MOD_FOLDER / "dialogue"
+        catalogs = root / _MOD_FOLDER / "catalog"
         library = root / _MOD_FOLDER / "lib"
         audio.mkdir(parents=True)
-        dialogues.mkdir()
+        catalogs.mkdir()
         library.mkdir()
 
         shutil.copy2(installer, root / _SETUP_EXE)
         (root / _SETUP_TP2).write_text(_tp2(version), encoding="utf-8", newline="\n")
         (library / "install.tpa").write_text(_INSTALL_TPA, encoding="utf-8", newline="\n")
-        for index, (resource_name, rows) in enumerate(
+        for index, (voice_id, rows) in enumerate(
             sorted(grouped.items(), key=lambda item: item[0].casefold())
         ):
-            (dialogues / f"{index:06d}.tpa").write_text(
-                _dialogue_patch(
-                    (resource_name, *aliases.get(resource_name.casefold(), ())),
-                    rows,
-                    f"bgv_catalog_{index:06d}",
-                ),
+            (catalogs / f"{index:06d}.tpa").write_text(
+                _voice_catalog(voice_id, rows, f"{index:06d}"),
                 encoding="utf-8",
                 newline="\n",
             )
@@ -259,7 +267,7 @@ async def _write_mod(
         source_game=str(source_game),
         generated_lines=generated_lines,
         audio_files=len(assets),
-        dialogue_files=len(grouped),
+        voice_catalogs=len(grouped),
         audio_bytes=audio_bytes,
     )
 
@@ -318,51 +326,21 @@ def _publish_mod(root: Path, destination: Path) -> None:
     root.replace(destination)
 
 
-def _dialogue_aliases(source_game: Path) -> dict[str, tuple[str, ...]]:
-    """Read the source DLGs that EET_end merged into each final DLG."""
-    aliases: dict[str, set[str]] = {}
-    for source in sorted((source_game / "EET" / "temp" / "append" / "dlg").glob("*.d")):
-        with source.open(encoding="utf-8") as dialogue:
-            declaration = dialogue.readline().strip()
-        assert declaration.startswith("APPEND ~") and declaration.endswith("~"), (
-            f"unexpected EET dialogue merge declaration: {source}"
-        )
-        target = f"{declaration.removeprefix('APPEND ~').removesuffix('~')}.DLG"
-        aliases.setdefault(target.casefold(), set()).add(f"{source.stem}.DLG")
-    return {target: tuple(sorted(sources, key=str.casefold)) for target, sources in aliases.items()}
-
-
-def _dialogue_patch(
-    resource_names: tuple[str, ...],
+def _voice_catalog(
+    voice_id: str,
     assets: list[_ContentAsset],
     catalog: str,
 ) -> str:
     entries = "\n".join(
         f"OUTER_SPRINT bgv_key {_weidu_string(asset.text)}\n"
-        f'OUTER_SPRINT ${catalog}("%bgv_key%") ~{asset.sound_resref}~'
+        f'OUTER_SPRINT $bgv_recordings(~{catalog}~ "%bgv_key%") ~{asset.sound_resref}~\n'
+        "OUTER_SET bgv_packaged_recordings += 1"
         for asset in assets
     )
-    dialogues = " ".join(f"~{resource_name}~" for resource_name in resource_names)
-    return f"""{entries}
-
-ACTION_FOR_EACH bgv_dialogue IN {dialogues} BEGIN
-  COPY_EXISTING ~%bgv_dialogue%~ ~override~
-    READ_LONG 0x08 bgv_state_count
-    READ_LONG 0x0c bgv_state_table
-    FOR (bgv_state = 0; bgv_state < bgv_state_count; ++bgv_state) BEGIN
-      SET bgv_text_offset = bgv_state_table + bgv_state * 0x10
-      READ_STRREF bgv_text_offset bgv_text
-      PATCH_IF (VARIABLE_IS_SET ${catalog}(~%bgv_text%~)) BEGIN
-        TEXT_SPRINT bgv_sound ${catalog}(~%bgv_text%~)
-        LPF BGVOICE_INSTALL_LINE
-          INT_VAR text_offset = bgv_text_offset
-          STR_VAR sound = EVAL ~%bgv_sound%~
-        END
-      END
-    END
-  BUT_ONLY_IF_IT_CHANGES
-  IF_EXISTS
-END
+    return f"""OUTER_SPRINT bgv_voice {_weidu_string(voice_id)}
+OUTER_SPRINT $bgv_catalog_by_name("%bgv_voice%") ~{catalog}~
+OUTER_SET bgv_packaged_voices += 1
+{entries}
 """
 
 
@@ -374,7 +352,7 @@ def _weidu_string(value: str) -> str:
 def _readme(
     assets: list[_ContentAsset],
     generated_lines: int,
-    dialogue_count: int,
+    voice_catalog_count: int,
     audio_bytes: int,
     version: str,
 ) -> str:
@@ -383,7 +361,7 @@ def _readme(
 Version {version}.
 
 This export contains {len(assets):,} canonical recordings covering
-{generated_lines:,} generated NPC lines across {dialogue_count:,} DLG resources
+{generated_lines:,} generated NPC lines for {voice_catalog_count:,} character voices
 ({audio_bytes:,} bytes).
 
 ## Install
@@ -395,13 +373,15 @@ This export contains {len(assets):,} canonical recordings covering
 
 BGVoice replaces the audio on every matched dialogue occurrence.
 
-The installer matches the current game by DLG resource name and exact resolved
-English text. State numbering and TLK string references may differ from the source
-installation. Missing DLG resources and unmatched or changed text are skipped.
-Repeated identical text within one DLG shares one canonical recording. WeiDU
-manages backups and uninstallation. Installing before `EET_end` is preferred: the
-export also scans every source DLG that the source installation's `EET_end` merged.
-An already-finalized EET installation can instead install BGVoice directly. If you
+The installer discovers character dialogue ownership from the target game's CRE,
+CAMPAIGN, INTERDIA, and PDIALOG resources. It patches only an exact character-name
+and resolved-English-text intersection, so DLG names, state numbers, TLK string
+references, EET versions, and installed content mods may differ from the source.
+Missing characters, resources, and changed text are skipped. If one DLG/text could
+belong to different character voices, that occurrence is left unchanged rather than
+guessing. WeiDU prints aggregate coverage totals and manages backups and
+uninstallation. BGVoice works both before and after `EET_end`; installing before it
+lets `EET_end` carry patched source dialogue strings into its final merges. If you
 later change earlier mods, uninstall later components in reverse order and reinstall
 them in their original order.
 """
@@ -422,7 +402,64 @@ INCLUDE ~bgvoice/lib/install.tpa~
 """
 
 
-_INSTALL_TPA = r"""DEFINE_PATCH_FUNCTION BGVOICE_INSTALL_LINE
+_INSTALL_TPA = r"""DEFINE_PATCH_FUNCTION BGVOICE_PAD_2DA
+INT_VAR
+  columns = 0
+BEGIN
+  PRETTY_PRINT_2DA
+  SET bgv_line = 0
+  REPLACE_EVALUATE ~^.+$~ BEGIN
+    PATCH_IF bgv_line > 2 BEGIN
+      INNER_PATCH_SAVE MATCH0 ~%MATCH0%~ BEGIN
+        COUNT_REGEXP_INSTANCES ~[^ %TAB%%MNL%]+~ bgv_fields
+        FOR (bgv_column = bgv_fields; bgv_column < columns; ++bgv_column) BEGIN
+          REPLACE_TEXTUALLY ~$~ ~ ***~
+        END
+      END
+    END
+    SET bgv_line += 1
+  END ~%MATCH0%~
+END
+
+DEFINE_PATCH_FUNCTION BGVOICE_ADD_OWNER
+STR_VAR
+  dialogue = ~~
+  catalog = ~~
+RET_ARRAY
+  bgv_dialogue_owners
+BEGIN
+  TO_UPPER dialogue
+  PATCH_IF (NOT ~%dialogue%~ STRING_EQUAL_CASE ~~)
+        AND (NOT ~%dialogue%~ STRING_EQUAL_CASE ~NONE~)
+        AND (NOT ~%dialogue%~ STRING_EQUAL_CASE ~***~)
+        AND (FILE_EXISTS_IN_GAME ~%dialogue%.DLG~) BEGIN
+    TEXT_SPRINT $bgv_dialogue_owners(~%dialogue%~ ~%catalog%~) ~1~
+  END
+END
+
+DEFINE_PATCH_FUNCTION BGVOICE_ADD_DV_DIALOGUE
+STR_VAR
+  death_variable = ~~
+  dialogue = ~~
+RET_ARRAY
+  bgv_dialogue_owners
+BEGIN
+  TO_UPPER death_variable
+  PATCH_IF (~%death_variable%~ STRING_EQUAL_CASE ~IMOEN~)
+        OR (~%death_variable%~ STRING_EQUAL_CASE ~IMOEN_~) BEGIN
+    TEXT_SPRINT death_variable ~IMOEN2~
+  END
+  PATCH_PHP_EACH bgv_catalogs_by_dv AS bgv_owner => bgv_unused BEGIN
+    PATCH_IF ~%bgv_owner_0%~ STRING_EQUAL_CASE ~%death_variable%~ BEGIN
+      LPF BGVOICE_ADD_OWNER
+        STR_VAR dialogue = EVAL ~%dialogue%~ catalog = EVAL ~%bgv_owner_1%~
+        RET_ARRAY bgv_dialogue_owners
+      END
+    END
+  END
+END
+
+DEFINE_PATCH_FUNCTION BGVOICE_INSTALL_LINE
 INT_VAR
   text_offset = 0
 STR_VAR
@@ -431,12 +468,223 @@ BEGIN
   READ_STRREF text_offset bgv_male_text
   READ_STRREF_F text_offset bgv_female_text
   SAY text_offset ~%bgv_male_text%~ [%sound%] ~%bgv_female_text%~ [%sound%]
-  INNER_ACTION BEGIN
-    COPY ~bgvoice/audio/%sound%.wav~ ~override/%sound%.wav~
+END
+
+OUTER_SET bgv_packaged_voices = 0
+OUTER_SET bgv_packaged_recordings = 0
+OUTER_SET bgv_states_scanned = 0
+OUTER_SET bgv_exact_patches = 0
+OUTER_SET bgv_ambiguous_states = 0
+
+ACTION_BASH_FOR ~bgvoice/catalog~ ~.*\.tpa$~ BEGIN
+  ACTION_INCLUDE ~%BASH_FOR_FILESPEC%~
+END
+
+COPY_EXISTING_REGEXP GLOB ~.+\.CRE$~ ~override~
+  PATCH_IF SOURCE_SIZE >= 0x2d4 BEGIN
+    READ_ASCII 0x00 bgv_signature (4)
+    READ_ASCII 0x04 bgv_version (4)
+    PATCH_IF (~%bgv_signature%~ STRING_EQUAL_CASE ~CRE ~)
+          AND (~%bgv_version%~ STRING_EQUAL_CASE ~V1.0~) BEGIN
+      READ_LONG 0x0c bgv_name_strref
+      TEXT_SPRINT bgv_name ~~
+      PATCH_IF bgv_name_strref != 0xffffffff BEGIN
+        READ_STRREF 0x0c bgv_name
+      END
+      PATCH_IF ~%bgv_name%~ STRING_EQUAL_CASE ~~ BEGIN
+        READ_LONG 0x08 bgv_name_strref
+        PATCH_IF bgv_name_strref != 0xffffffff BEGIN
+          READ_STRREF 0x08 bgv_name
+        END
+      END
+      PATCH_IF ~%bgv_name%~ STRING_EQUAL_CASE ~~ BEGIN
+        TEXT_SPRINT bgv_name ~%SOURCE_RES%~
+      END
+      INNER_PATCH_SAVE bgv_name ~%bgv_name%~ BEGIN
+        REPLACE_TEXTUALLY CASE_INSENSITIVE EVALUATE_REGEXP ~^0x[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]~ ~~
+        REPLACE_TEXTUALLY CASE_SENSITIVE EVALUATE_REGEXP ~^-~ ~~
+        REPLACE_TEXTUALLY CASE_SENSITIVE EVALUATE_REGEXP ~^[ %TAB%]+~ ~~
+        REPLACE_TEXTUALLY CASE_SENSITIVE EVALUATE_REGEXP ~[ %TAB%]+$~ ~~
+      END
+      TO_LOWER bgv_name
+      PATCH_IF VARIABLE_IS_SET $bgv_catalog_by_name(~%bgv_name%~) BEGIN
+        TEXT_SPRINT bgv_catalog $bgv_catalog_by_name(~%bgv_name%~)
+        TEXT_SPRINT $bgv_target_names(~%bgv_name%~) ~1~
+        READ_ASCII 0x280 bgv_death_variable (32) NULL
+        READ_ASCII 0x2cc bgv_dialogue (8) NULL
+        TO_UPPER bgv_death_variable
+        PATCH_IF (~%bgv_death_variable%~ STRING_EQUAL_CASE ~IMOEN~)
+              OR (~%bgv_death_variable%~ STRING_EQUAL_CASE ~IMOEN_~) BEGIN
+          TEXT_SPRINT bgv_death_variable ~IMOEN2~
+        END
+        PATCH_IF (NOT ~%bgv_death_variable%~ STRING_EQUAL_CASE ~~)
+              AND (NOT ~%bgv_death_variable%~ STRING_EQUAL_CASE ~NONE~) BEGIN
+          TEXT_SPRINT $bgv_catalogs_by_dv(~%bgv_death_variable%~ ~%bgv_catalog%~) ~1~
+        END
+        LPF BGVOICE_ADD_OWNER
+          STR_VAR dialogue = EVAL ~%bgv_dialogue%~ catalog = EVAL ~%bgv_catalog%~
+          RET_ARRAY bgv_dialogue_owners
+        END
+      END
+    END
+  END
+BUT_ONLY
+
+COPY_EXISTING - ~CAMPAIGN.2DA~ ~.../bgvoice-campaign.2da~
+  READ_2DA_ENTRIES_NOW bgv_campaigns 32
+  FOR (bgv_row = 0; bgv_row < bgv_campaigns; ++bgv_row) BEGIN
+    READ_2DA_ENTRY_FORMER bgv_campaigns bgv_row 4 bgv_table
+    TO_UPPER bgv_table
+    PATCH_IF FILE_EXISTS_IN_GAME ~%bgv_table%.2DA~ BEGIN
+      TEXT_SPRINT $bgv_banter_tables(~%bgv_table%~) ~1~
+    END
+    READ_2DA_ENTRY_FORMER bgv_campaigns bgv_row 11 bgv_table
+    TO_UPPER bgv_table
+    PATCH_IF FILE_EXISTS_IN_GAME ~%bgv_table%.2DA~ BEGIN
+      TEXT_SPRINT $bgv_party_tables(~%bgv_table%~) ~1~
+    END
+  END
+
+ACTION_PHP_EACH bgv_banter_tables AS bgv_table => bgv_unused BEGIN
+  COPY_EXISTING - ~%bgv_table%.2DA~ ~.../bgvoice-banter.2da~
+    COUNT_2DA_COLS bgv_columns
+    LPF BGVOICE_PAD_2DA INT_VAR columns = bgv_columns END
+    COUNT_2DA_ROWS bgv_columns bgv_rows
+    FOR (bgv_row = 0; bgv_row < bgv_rows; ++bgv_row) BEGIN
+      READ_2DA_ENTRY bgv_row 0 bgv_columns bgv_death_variable
+      READ_2DA_ENTRY bgv_row 1 bgv_columns bgv_dialogue
+      LPF BGVOICE_ADD_DV_DIALOGUE
+        STR_VAR death_variable = EVAL ~%bgv_death_variable%~ dialogue = EVAL ~%bgv_dialogue%~
+        RET_ARRAY bgv_dialogue_owners
+      END
+      PATCH_IF bgv_columns > 2 BEGIN
+        READ_2DA_ENTRY bgv_row 2 bgv_columns bgv_dialogue
+        LPF BGVOICE_ADD_DV_DIALOGUE
+          STR_VAR death_variable = EVAL ~%bgv_death_variable%~ dialogue = EVAL ~%bgv_dialogue%~
+          RET_ARRAY bgv_dialogue_owners
+        END
+      END
+    END
+END
+
+ACTION_PHP_EACH bgv_party_tables AS bgv_table => bgv_unused BEGIN
+  COPY_EXISTING - ~%bgv_table%.2DA~ ~.../bgvoice-party.2da~
+    COUNT_2DA_COLS bgv_columns
+    LPF BGVOICE_PAD_2DA INT_VAR columns = bgv_columns END
+    COUNT_2DA_ROWS bgv_columns bgv_rows
+    FOR (bgv_row = 0; bgv_row < bgv_rows; ++bgv_row) BEGIN
+      READ_2DA_ENTRY bgv_row 0 bgv_columns bgv_death_variable
+      READ_2DA_ENTRY bgv_row 1 bgv_columns bgv_dialogue
+      LPF BGVOICE_ADD_DV_DIALOGUE
+        STR_VAR death_variable = EVAL ~%bgv_death_variable%~ dialogue = EVAL ~%bgv_dialogue%~
+        RET_ARRAY bgv_dialogue_owners
+      END
+      READ_2DA_ENTRY bgv_row 2 bgv_columns bgv_dialogue
+      LPF BGVOICE_ADD_DV_DIALOGUE
+        STR_VAR death_variable = EVAL ~%bgv_death_variable%~ dialogue = EVAL ~%bgv_dialogue%~
+        RET_ARRAY bgv_dialogue_owners
+      END
+      PATCH_IF bgv_columns > 5 BEGIN
+        READ_2DA_ENTRY bgv_row 4 bgv_columns bgv_dialogue
+        LPF BGVOICE_ADD_DV_DIALOGUE
+          STR_VAR death_variable = EVAL ~%bgv_death_variable%~ dialogue = EVAL ~%bgv_dialogue%~
+          RET_ARRAY bgv_dialogue_owners
+        END
+        READ_2DA_ENTRY bgv_row 5 bgv_columns bgv_dialogue
+        LPF BGVOICE_ADD_DV_DIALOGUE
+          STR_VAR death_variable = EVAL ~%bgv_death_variable%~ dialogue = EVAL ~%bgv_dialogue%~
+          RET_ARRAY bgv_dialogue_owners
+        END
+      END
+    END
+END
+
+// Target-version Imoen aliases that EET keeps outside CAMPAIGN's dialogue tables.
+ACTION_IF FILE_EXISTS ~EET_end/lib/tables.tph~ BEGIN
+  ACTION_INCLUDE ~EET_end/lib/tables.tph~
+  ACTION_PHP_EACH table_append_dlg AS bgv_source => bgv_unused BEGIN
+    ACTION_IF NOT ~%bgv_source_1%~ STRING_EQUAL_CASE ~~ BEGIN
+      ACTION_PHP_EACH bgv_dialogue_owners AS bgv_owner => bgv_owner_unused BEGIN
+        ACTION_IF ~%bgv_owner_0%~ STRING_EQUAL_CASE ~%bgv_source_1%~ BEGIN
+          OUTER_SPRINT $bgv_seed_owners(~%bgv_source%~ ~%bgv_owner_1%~) ~1~
+        END
+      END
+    END
+  END
+  ACTION_PHP_EACH bgv_seed_owners AS bgv_owner => bgv_owner_unused BEGIN
+    ACTION_IF FILE_EXISTS_IN_GAME ~%bgv_owner_0%.DLG~ BEGIN
+      OUTER_SPRINT $bgv_dialogue_owners(~%bgv_owner_0%~ ~%bgv_owner_1%~) ~1~
+    END
   END
 END
 
-ACTION_BASH_FOR ~bgvoice/dialogue~ ~.*\.tpa$~ BEGIN
-  ACTION_INCLUDE ~%BASH_FOR_FILESPEC%~
+OUTER_SET bgv_target_voice_count = 0
+ACTION_PHP_EACH bgv_target_names AS bgv_name => bgv_unused BEGIN
+  OUTER_SET bgv_target_voice_count += 1
 END
+
+OUTER_SET bgv_dialogue_count = 0
+ACTION_PHP_EACH bgv_dialogue_owners AS bgv_owner => bgv_owner_unused BEGIN
+  ACTION_IF NOT VARIABLE_IS_SET $bgv_dialogue_ids(~%bgv_owner_0%~) BEGIN
+    OUTER_SET bgv_dialogue_count += 1
+    OUTER_SPRINT $bgv_dialogue_ids(~%bgv_owner_0%~) ~%bgv_dialogue_count%~
+  END
+  OUTER_SPRINT bgv_dialogue_id $bgv_dialogue_ids(~%bgv_owner_0%~)
+  OUTER_SPRINT bgv_owner_array ~bgv_owners_%bgv_dialogue_id%~
+  OUTER_SPRINT $EVAL ~%bgv_owner_array%~(~%bgv_owner_1%~) ~1~
+END
+
+OUTER_SET bgv_shared_dialogues = 0
+ACTION_PHP_EACH bgv_dialogue_ids AS bgv_dialogue => bgv_dialogue_id BEGIN
+  OUTER_SPRINT bgv_owner_array ~bgv_owners_%bgv_dialogue_id%~
+  OUTER_SET bgv_owner_count = 0
+  ACTION_PHP_EACH ~%bgv_owner_array%~ AS bgv_catalog => bgv_owner_unused BEGIN
+    OUTER_SET bgv_owner_count += 1
+  END
+  ACTION_IF bgv_owner_count > 1 BEGIN
+    OUTER_SET bgv_shared_dialogues += 1
+  END
+
+  COPY_EXISTING ~%bgv_dialogue%.DLG~ ~override~
+    READ_LONG 0x08 bgv_state_count
+    READ_LONG 0x0c bgv_state_table
+    SET bgv_states_scanned += bgv_state_count
+    FOR (bgv_state = 0; bgv_state < bgv_state_count; ++bgv_state) BEGIN
+      SET bgv_text_offset = bgv_state_table + bgv_state * 0x10
+      READ_STRREF bgv_text_offset bgv_text
+      SET bgv_candidate_count = 0
+      TEXT_SPRINT bgv_candidate_sound ~~
+      PHP_EACH EVAL ~%bgv_owner_array%~ AS bgv_catalog => bgv_owner_unused BEGIN
+        PATCH_IF VARIABLE_IS_SET $bgv_recordings(~%bgv_catalog%~ ~%bgv_text%~) BEGIN
+          TEXT_SPRINT bgv_sound $bgv_recordings(~%bgv_catalog%~ ~%bgv_text%~)
+          PATCH_IF bgv_candidate_count = 0 BEGIN
+            TEXT_SPRINT bgv_candidate_sound ~%bgv_sound%~
+            SET bgv_candidate_count = 1
+          END ELSE PATCH_IF NOT ~%bgv_candidate_sound%~ STRING_EQUAL_CASE ~%bgv_sound%~ BEGIN
+            SET bgv_candidate_count = 2
+          END
+        END
+      END
+      PATCH_IF bgv_candidate_count = 1 BEGIN
+        LPF BGVOICE_INSTALL_LINE
+          INT_VAR text_offset = bgv_text_offset
+          STR_VAR sound = EVAL ~%bgv_candidate_sound%~
+        END
+        TEXT_SPRINT $bgv_used_recordings(~%bgv_candidate_sound%~) ~1~
+        SET bgv_exact_patches += 1
+      END ELSE PATCH_IF bgv_candidate_count > 1 BEGIN
+        SET bgv_ambiguous_states += 1
+      END
+    END
+  BUT_ONLY_IF_IT_CHANGES
+END
+
+OUTER_SET bgv_used_recording_count = 0
+ACTION_PHP_EACH bgv_used_recordings AS bgv_sound => bgv_unused BEGIN
+  COPY ~bgvoice/audio/%bgv_sound%.wav~ ~override/%bgv_sound%.wav~
+  OUTER_SET bgv_used_recording_count += 1
+END
+
+PRINT ~BGVoice coverage: %bgv_target_voice_count%/%bgv_packaged_voices% target voices; %bgv_dialogue_count% DLGs (%bgv_shared_dialogues% shared); %bgv_states_scanned% states scanned.~
+PRINT ~BGVoice installed %bgv_exact_patches% exact dialogue occurrences using %bgv_used_recording_count%/%bgv_packaged_recordings% recordings; skipped %bgv_ambiguous_states% ambiguous occurrences.~
 """

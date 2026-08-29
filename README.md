@@ -157,17 +157,20 @@ archive, verifies its CRCs, and prints its SHA-256. Release directories and arch
 choose new paths for each version. BGVoice replaces audio on every matched NPC dialogue occurrence.
 Ogg Vorbis bytes remain in the Enhanced Edition's expected `.wav` resource files.
 
-The mod is a content intersection rather than a snapshot patch. It opens every packaged DLG family
-that exists in the target game, scans its current states, and matches the exact resolved English
-text. DLG state numbers and TLK strrefs may differ; missing resources and unmatched text are simply
-skipped. Repeated `(DLG, text)` pairs share one deterministic canonical recording.
+The mod is a content intersection rather than a snapshot patch. At installation it discovers each
+packaged character name in the target game's CREs and follows that installation's effective
+CAMPAIGN, INTERDIA, and PDIALOG resources to its current DLGs. It then matches exact resolved
+English text. DLG names, state numbers, TLK strrefs, EET versions, and content-mod selections may
+differ; missing characters/resources and unmatched text are simply skipped. Repeated
+`(character name, text)` pairs share one deterministic canonical recording. If different character
+voices produce different candidates for one DLG state, BGVoice leaves it unchanged instead of
+guessing and reports the aggregate conflict count.
 
-Install BGVoice after all desired dialogue/content mods and preferably before `EET_end`. The
-exporter reads EET's actual generated merge files and makes each final-dialogue catalog scan its
-source JOIN dialogues too, so `EET_end` carries their sound-bearing TLK references into the merged
-dialogue. The same mod can be installed directly on an already-finalized EET installation. If you
-later change earlier mods, uninstall later components in reverse order and reinstall them in their
-original order. Export while `EET_end` is installed so its generated dialogue-family map is present.
+Install BGVoice after all desired dialogue/content mods. It works both before and after `EET_end`;
+installing it before `EET_end` lets the finalizer carry sound-bearing source strings through its
+dialogue merges. The package does not contain a merge map from the game that built it. If you later
+change earlier mods, uninstall later components in reverse order and reinstall them in their
+original order.
 
 The effective EET `TOKENTXT.2DA` currently has no rows, so there is nothing useful to persist from
 it. Runtime tokens found in DLG text are retained verbatim instead; the engine and calendar tables

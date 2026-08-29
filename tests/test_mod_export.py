@@ -6,12 +6,15 @@ from zipfile import ZipFile
 
 import pytest
 
+from bgvoice import mod_export
 from bgvoice.generation_store import GenerationStore
 from bgvoice.mod_export import create_archive, export_mod, sound_resref
+from bgvoice.model_types import DialogueLineKind, RunKind, RunStatus
 from bgvoice.storage_records import (
     DirectedLineRecord,
     ExtractionRunRecord,
     GeneratedAudioRecord,
+    VoiceResourceRecord,
 )
 from tests.scenarios import rows
 
@@ -69,10 +72,6 @@ async def test_export_builds_an_installable_weidu_mod_from_generated_audio(
     game_root.mkdir(parents=True, exist_ok=True)
     weidu = game_root / "setup-eet.exe"
     weidu.write_bytes(b"fake WeiDU executable")
-    merge = game_root / "EET" / "temp" / "append" / "dlg" / "AERIE25J.d"
-    merge.parent.mkdir(parents=True)
-    merge.write_text("APPEND ~AERIE~\n", encoding="utf-8")
-
     output = tmp_path / "bgvoice-mod"
     (output / "setup-bgvoice.exe").parent.mkdir(parents=True)
     (output / "setup-bgvoice.exe").write_bytes(b"old WeiDU")
@@ -87,7 +86,7 @@ async def test_export_builds_an_installable_weidu_mod_from_generated_audio(
     assert Path(summary.source_game) == game_root.resolve()
     assert summary.generated_lines == 2
     assert summary.audio_files == 2
-    assert summary.dialogue_files == 1
+    assert summary.voice_catalogs == 1
     assert summary.audio_bytes == sum(map(len, source_audio))
     assert not stale.exists()
     assert (output / "setup-bgvoice.exe").read_bytes() == weidu.read_bytes()
@@ -98,12 +97,13 @@ async def test_export_builds_an_installable_weidu_mod_from_generated_audio(
     readme = (output / "bgvoice" / "README.md").read_text(encoding="utf-8")
     assert "Version 0.9.0." in readme
 
-    dialogue_scripts = list((output / "bgvoice" / "dialogue").glob("*.tpa"))
-    assert [script.name for script in dialogue_scripts] == ["000000.tpa"]
-    dialogue_patch = dialogue_scripts[0].read_text(encoding="utf-8")
-    assert "AERIE.DLG" in dialogue_patch
-    assert "state_index" not in dialogue_patch
-    assert "source_strref" not in dialogue_patch
+    catalog_scripts = list((output / "bgvoice" / "catalog").glob("*.tpa"))
+    assert [script.name for script in catalog_scripts] == ["000000.tpa"]
+    voice_catalog = catalog_scripts[0].read_text(encoding="utf-8")
+    assert "OUTER_SPRINT bgv_voice ~~~~~aerie~~~~~" in voice_catalog
+    assert "AERIE.DLG" not in voice_catalog
+    assert "state_index" not in voice_catalog
+    assert "source_strref" not in voice_catalog
     audio_directory = output / "bgvoice" / "audio"
     for text, audio in (
         ("Hello.", source_audio[0]),
@@ -111,17 +111,29 @@ async def test_export_builds_an_installable_weidu_mod_from_generated_audio(
     ):
         match = re.search(
             rf"{re.escape(text)}~~~~~\s+"
-            rf'OUTER_SPRINT \$bgv_catalog_000000\("%bgv_key%"\) ~(BGV\w+)~',
-            dialogue_patch,
+            rf'OUTER_SPRINT \$bgv_recordings\(~000000~ "%bgv_key%"\) ~(BGV\w+)~',
+            voice_catalog,
         )
         assert match is not None
         assert (audio_directory / f"{match.group(1)}.wav").read_bytes() == audio
-    assert "READ_STRREF bgv_text_offset bgv_text" in dialogue_patch
-    assert "VARIABLE_IS_SET" in dialogue_patch
-    assert "VARIABLE_IS_IN_ARRAY" not in dialogue_patch
-    assert "ACTION_FOR_EACH bgv_dialogue IN ~AERIE.DLG~ ~AERIE25J.DLG~" in dialogue_patch
-    assert "COPY_EXISTING ~%bgv_dialogue%~" in dialogue_patch
-    assert "IF_EXISTS" in dialogue_patch
+    assert "READ_STRREF bgv_text_offset bgv_text" in installer_library
+    assert "COPY_EXISTING_REGEXP GLOB ~.+\\.CRE$~" in installer_library
+    assert "READ_STRREF 0x0c bgv_name" in installer_library
+    assert "READ_STRREF 0x08 bgv_name" in installer_library
+    assert "TEXT_SPRINT bgv_name ~%SOURCE_RES%~" in installer_library
+    assert "REPLACE_TEXTUALLY CASE_INSENSITIVE EVALUATE_REGEXP" in installer_library
+    assert "READ_ASCII 0x280 bgv_death_variable (32) NULL" in installer_library
+    assert "READ_ASCII 0x2cc bgv_dialogue (8) NULL" in installer_library
+    assert "~CAMPAIGN.2DA~" in installer_library
+    assert "bgv_row 4 bgv_table" in installer_library
+    assert "bgv_row 11 bgv_table" in installer_library
+    assert "LPF BGVOICE_PAD_2DA" in installer_library
+    assert "COUNT_2DA_ROWS bgv_columns" in installer_library
+    assert "RET_ARRAY bgv_dialogue_owners" in installer_library
+    assert "EET_end/lib/tables.tph" in installer_library
+    assert "bgv_candidate_count" in installer_library
+    assert "BGVoice coverage:" in installer_library
+    assert "EET/temp/append" not in installer_library
 
     setup = (output / "setup-bgvoice.tp2").read_text(encoding="utf-8").casefold()
     assert "version ~0.9.0~" in setup
@@ -131,7 +143,6 @@ async def test_export_builds_an_installable_weidu_mod_from_generated_audio(
     assert "subcomponent" not in setup
     assert "bgv_replace" not in setup
     assert "fill missing" not in setup
-    assert "patch_if" not in installer_library.casefold()
 
     output = tmp_path / "not-an-export"
     output.mkdir()
@@ -142,6 +153,80 @@ async def test_export_builds_an_installable_weidu_mod_from_generated_audio(
         await export_mod(scenario_database, output)
 
     assert important.read_text(encoding="utf-8") == "keep me"
+
+
+@pytest.mark.parametrize(
+    ("recording_voices", "expected"),
+    [
+        (("aerie", "aerie"), [("aerie", "recording-a")]),
+        (
+            ("aerie", "minsc"),
+            [("aerie", "recording-a"), ("minsc", "recording-b")],
+        ),
+    ],
+)
+def test_export_identity_is_voice_and_exact_text(
+    tmp_path: Path,
+    recording_voices: tuple[str, str],
+    expected: list[tuple[str, str]],
+) -> None:
+    game_root = tmp_path / "game"
+    game_root.mkdir()
+    run = ExtractionRunRecord(
+        id="dialogue-run",
+        run_kind=RunKind.DIALOGUES,
+        started_at="2026-08-27T12:00:00+00:00",
+        completed_at="2026-08-27T12:01:00+00:00",
+        game_root=str(game_root),
+        iecli_version="test",
+        status=RunStatus.COMPLETE,
+        resources_discovered=2,
+        details_attempted=2,
+        details_extracted=2,
+        failures=0,
+    )
+    lines = [
+        mod_export._ExportLine(
+            id=f"{resource}.DLG:npc:0:-",
+            run_id=run.id,
+            dialogue_resource_name=f"{resource}.DLG",
+            line_kind=DialogueLineKind.NPC,
+            state_index=0,
+            text="Hello.",
+        )
+        for resource in ("A", "B")
+    ]
+    recordings = [
+        mod_export._ExportRecording(
+            id=f"recording-{resource.casefold()}",
+            voice_id=voice_id,
+            dialogue_line_id=line.id,
+        )
+        for resource, voice_id, line in zip(
+            ("A", "B"),
+            recording_voices,
+            lines,
+            strict=True,
+        )
+    ]
+    voices = [
+        VoiceResourceRecord(
+            key=f"attribution:{voice_id}",
+            run_id="attribution",
+            voice_id=voice_id,
+            display_name=voice_id.title(),
+            prompt=f"Name: {voice_id.title()}",
+            variant_resource_names=[voice_id.upper()],
+            dialogue_resrefs=[],
+            search_text=voice_id,
+        )
+        for voice_id in sorted(set(recording_voices))
+    ]
+
+    assets, source_game = mod_export._content_assets(recordings, lines, [run], voices)
+
+    assert source_game == game_root.resolve()
+    assert [(asset.voice_id, asset.recording_id) for asset in assets] == expected
 
 
 def test_archive_contains_files_directly_at_its_root(tmp_path: Path) -> None:
