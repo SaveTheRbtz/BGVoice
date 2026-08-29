@@ -83,6 +83,18 @@ class GenerationStore:
     def close(self) -> None:
         self._connection.close()
 
+    async def optimize(self) -> None:
+        """Compact generation tables and remove superseded versions."""
+        async with self._write_lock:
+            for table in (
+                self._generated_voices,
+                self._directed_lines,
+                self._generated_audio,
+                self._tts_batches,
+                self._generation_failures,
+            ):
+                await table.optimize(cleanup_older_than=timedelta(0))
+
     async def generated_voices(
         self,
         voice_ids: Sequence[str] | None = None,

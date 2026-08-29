@@ -118,7 +118,8 @@ command resumes missing work.
 The numeric `--lines-per-voice` value is a maximum, so shorter voices simply exhaust their available
 lines. Use `--lines-per-voice all` to exhaust every non-empty NPC line attributed to each selected
 voice. Existing voices, directions, and recordings are reused; only missing work is sent to the
-external services.
+external services. Each successful run compacts its generation tables and removes superseded
+LanceDB versions before exiting, so routine generation does not require a separate vacuum step.
 
 Up to 75 voices are designed and directed concurrently. Line selection remains deterministic,
 up to 100 single-line OpenAI direction requests may run concurrently, and generation state is

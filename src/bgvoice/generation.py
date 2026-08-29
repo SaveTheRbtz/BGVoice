@@ -738,7 +738,7 @@ async def _run_generation(
         selected = {
             (workload.voice.voice_id, line.id) for workload in workloads for line in workload.lines
         }
-        return GenerationSummary(
+        summary = GenerationSummary(
             voices=len(workloads),
             selected_lines=len(selected),
             directed_lines=sum(
@@ -759,6 +759,8 @@ async def _run_generation(
                 for row in failures
             ),
         )
+        await store.optimize()
+        return summary
     finally:
         reader.close()
         store.close()

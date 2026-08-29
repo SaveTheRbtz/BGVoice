@@ -1,8 +1,10 @@
 """Behavioral tests for durable generation state."""
 
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
+from lancedb.table import AsyncTable
 from pydantic import ValidationError
 
 from bgvoice.generation_store import GenerationStore
@@ -173,6 +175,36 @@ async def test_generated_assets_round_trip_upsert_filter_and_delete(
         assert await store.failures() == [gorion_failure]
     finally:
         store.close()
+
+
+@pytest.mark.anyio
+async def test_optimize_vacuums_every_generation_table(
+    scenario_database: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    optimized: list[tuple[str, dict[str, object]]] = []
+
+    async def optimize(table: AsyncTable, **options: object) -> object:
+        optimized.append((table.name, options))
+        return object()
+
+    monkeypatch.setattr(AsyncTable, "optimize", optimize)
+    store = await GenerationStore.open(scenario_database)
+    try:
+        await store.optimize()
+    finally:
+        store.close()
+
+    assert optimized == [
+        (name, {"cleanup_older_than": timedelta(0)})
+        for name in (
+            "generated_voices",
+            "directed_lines",
+            "generated_audio",
+            "tts_batches",
+            "generation_failures",
+        )
+    ]
 
 
 @pytest.mark.anyio
