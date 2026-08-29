@@ -9,6 +9,8 @@ import type { ListQuery, ListResult } from "./api";
 import {
   AttributionStatus,
   type Character,
+  type CharacterClass,
+  CharacterClassSchema,
   CharacterSchema,
   DetailStatus,
   type Dialogue,
@@ -17,8 +19,15 @@ import {
   DialogueLineKind,
   DialogueLineSchema,
   type ExtractionRun,
+  type IdentifierDefinition,
+  IdentifierDefinitionSchema,
+  IdentifierKind,
   type Installation,
   InstallationSchema,
+  type Kit,
+  KitSchema,
+  type Race,
+  RaceSchema,
   type Voice,
   VoiceSchema,
   SourceKind,
@@ -44,6 +53,18 @@ const api = vi.hoisted(() => ({
   listExtractionRuns: vi.fn<
     (query: ListQuery, signal?: AbortSignal) => Promise<ListResult<ExtractionRun>>
   >(),
+  listRaces: vi.fn<
+    (query: ListQuery, signal?: AbortSignal) => Promise<ListResult<Race>>
+  >(),
+  listCharacterClasses: vi.fn<
+    (query: ListQuery, signal?: AbortSignal) => Promise<ListResult<CharacterClass>>
+  >(),
+  listKits: vi.fn<
+    (query: ListQuery, signal?: AbortSignal) => Promise<ListResult<Kit>>
+  >(),
+  listIdentifierDefinitions: vi.fn<
+    (query: ListQuery, signal?: AbortSignal) => Promise<ListResult<IdentifierDefinition>>
+  >(),
 }));
 
 vi.mock(import("./api"), async (importOriginal) => ({
@@ -57,6 +78,10 @@ vi.mock(import("./api"), async (importOriginal) => ({
   listDialogues: api.listDialogues,
   listDialogueLines: api.listDialogueLines,
   listExtractionRuns: api.listExtractionRuns,
+  listRaces: api.listRaces,
+  listCharacterClasses: api.listCharacterClasses,
+  listKits: api.listKits,
+  listIdentifierDefinitions: api.listIdentifierDefinitions,
 }));
 
 import App from "./App";
@@ -194,6 +219,73 @@ const line = create(DialogueLineSchema, {
   }],
 });
 
+const race = create(RaceSchema, {
+  name: "installations/bg2ee-eet/races/r-1-245bda1b",
+  raceId: 1,
+  symbols: ["HUMAN"],
+  displayName: "human",
+  texts: [{
+    sourceResource: "RACETEXT.2DA",
+    campaigns: ["SOA", "TOB"],
+    rowName: "HUMAN",
+    nameStrref: 7_193,
+    displayName: "human",
+    descriptionStrref: 9_550,
+    description: "Humans are adaptable and ambitious.",
+    biographyStrref: 21_023,
+    biography: "Raised in Candlekeep under Gorion's care.",
+  }],
+});
+
+const characterClass = create(CharacterClassSchema, {
+  name: "installations/bg2ee-eet/characterClasses/r-3-e17e7eb2",
+  classId: 3,
+  symbols: ["CLERIC"],
+  displayName: "Cleric",
+  texts: [{
+    sourceResource: "CLASTEXT.2DA",
+    campaigns: ["SOA", "TOB"],
+    rowName: "CLERIC",
+    classTextKitId: 16_384,
+    lowerNameStrref: 7_200,
+    lowerName: "cleric",
+    mixedNameStrref: 7_201,
+    mixedName: "Cleric",
+    descriptionStrref: 7_202,
+    description: "A divine spellcaster and armored healer.",
+    briefDescriptionStrref: 7_203,
+    briefDescription: "Divine spellcaster",
+    fallen: false,
+  }],
+});
+
+const kit = create(KitSchema, {
+  name: "installations/bg2ee-eet/kits/r-1-f4341954",
+  rowId: 1,
+  rowName: "BERSERKER",
+  sourceResource: "KITLIST.2DA",
+  lowerName: "berserker",
+  mixedName: "Berserker",
+  displayName: "Berserker",
+  helpText: "A warrior who channels a controlled battle rage.",
+  characterClass: characterClass.name,
+  classSymbols: ["FIGHTER", "FIGHTER_ALL"],
+  kitIdsValue: 0x4001,
+  kitSymbols: ["BERSERKER"],
+  abilitiesResref: "CLABFI02",
+  proficiencyColumn: 29,
+  unusableMask: 1,
+});
+
+const identifier = create(IdentifierDefinitionSchema, {
+  name: "installations/bg2ee-eet/identifierDefinitions/gender-1-ea93ad84",
+  kind: IdentifierKind.GENDER,
+  value: 1,
+  symbols: ["MALE"],
+  sourceResource: "GENDER.IDS",
+  displayName: "Male",
+});
+
 beforeEach(() => {
   vi.resetAllMocks();
   api.getInstallation.mockResolvedValue(installation);
@@ -205,6 +297,10 @@ beforeEach(() => {
   api.listDialogues.mockResolvedValue({ items: [dialogue], nextPageToken: "", totalSize: 1n });
   api.listDialogueLines.mockResolvedValue({ items: [line], nextPageToken: "", totalSize: 1n });
   api.listExtractionRuns.mockResolvedValue({ items: [], nextPageToken: "", totalSize: 0n });
+  api.listRaces.mockResolvedValue({ items: [], nextPageToken: "", totalSize: 0n });
+  api.listCharacterClasses.mockResolvedValue({ items: [], nextPageToken: "", totalSize: 0n });
+  api.listKits.mockResolvedValue({ items: [], nextPageToken: "", totalSize: 0n });
+  api.listIdentifierDefinitions.mockResolvedValue({ items: [], nextPageToken: "", totalSize: 0n });
 });
 
 afterEach(() => {
@@ -369,6 +465,62 @@ describe("application jobs", () => {
       expect.objectContaining({ filter: 'line_kind = "player"', orderBy: "dialogue asc" }),
       expect.any(AbortSignal),
     );
+  });
+
+  it("reads canonical definitions and their engine provenance", async () => {
+    api.listRaces.mockResolvedValue({ items: [race], nextPageToken: "", totalSize: 1n });
+    api.listCharacterClasses.mockResolvedValue({
+      items: [characterClass],
+      nextPageToken: "",
+      totalSize: 1n,
+    });
+    api.listKits.mockResolvedValue({ items: [kit], nextPageToken: "", totalSize: 1n });
+    api.listIdentifierDefinitions.mockResolvedValue({
+      items: [identifier],
+      nextPageToken: "",
+      totalSize: 1n,
+    });
+    window.history.replaceState(null, "", "/definitions/races");
+    const user = userEvent.setup();
+    render(<App />);
+
+    expect(await screen.findByRole("heading", { name: "Races", level: 1 })).toBeTruthy();
+    await user.selectOptions(screen.getByRole("combobox", { name: "Order" }), "display_name asc");
+    await waitFor(() => expect(api.listRaces).toHaveBeenLastCalledWith(
+      expect.objectContaining({ orderBy: "display_name asc" }),
+      expect.any(AbortSignal),
+    ));
+    await user.click(screen.getByText("human", { selector: ".definition-card-title strong" }));
+    expect(screen.getByText("Description · #9550")).toBeTruthy();
+    expect(screen.getByText("Raised in Candlekeep under Gorion's care.")).toBeTruthy();
+    expect(screen.getByText("RACETEXT.2DA")).toBeTruthy();
+
+    await user.click(screen.getAllByRole("link", { name: "Classes" })[0]!);
+    expect(await screen.findByRole("heading", { name: "Character classes", level: 1 }))
+      .toBeTruthy();
+    await user.click(screen.getByText("Cleric", { selector: ".definition-card-title strong" }));
+    expect(screen.getByText("CLASTEXT kit 16384")).toBeTruthy();
+    expect(screen.getByText("Not fallen", { selector: ".definition-tags span" })).toBeTruthy();
+    expect(screen.getByText("A divine spellcaster and armored healer.")).toBeTruthy();
+
+    await user.click(screen.getAllByRole("link", { name: "Kits" })[0]!);
+    expect(await screen.findByRole("heading", { name: "Kits", level: 1 })).toBeTruthy();
+    await user.click(screen.getByText("Berserker", { selector: ".definition-card-title strong" }));
+    expect(screen.getAllByText("FIGHTER · FIGHTER ALL").length).toBeGreaterThan(0);
+    expect(screen.getByText("A warrior who channels a controlled battle rage.")).toBeTruthy();
+    expect(screen.getByText("CLABFI02")).toBeTruthy();
+    expect(screen.getAllByText("0x00004001")).toHaveLength(2);
+    expect(screen.queryByText(characterClass.name)).toBeNull();
+
+    await user.click(screen.getAllByRole("link", { name: "Identifiers" })[0]!);
+    expect(await screen.findByRole("heading", { name: "Identifiers", level: 1 })).toBeTruthy();
+    expect(screen.getByText("0x00000001")).toBeTruthy();
+    expect(screen.getByText("GENDER.IDS")).toBeTruthy();
+    await user.selectOptions(screen.getByRole("combobox", { name: "Kind" }), "gender");
+    await waitFor(() => expect(api.listIdentifierDefinitions).toHaveBeenLastCalledWith(
+      expect.objectContaining({ filter: 'kind = "gender"' }),
+      expect.any(AbortSignal),
+    ));
   });
 
   it("summarizes the pipeline and opens extraction history on demand", async () => {

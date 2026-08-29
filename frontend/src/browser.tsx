@@ -235,7 +235,7 @@ export function BrowserHeading({
         <p>{description}</p>
       </div>
       <div className="result-count" aria-live="polite">
-        {loading ? "Loading…" : `${formatCount(count)} ${noun}`}
+        {loading ? "Loading…" : `${formatCount(count)} ${count === 1 ? "result" : noun}`}
       </div>
     </div>
   );

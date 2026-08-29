@@ -1,24 +1,31 @@
-import {
-  NumberFilter,
-  SelectFilter,
-  TableBrowser,
-  TextFilter,
-} from "./browser";
-import type { Column, TableBrowserProps } from "./browser";
+import { Fragment } from "react";
+import type { ReactNode } from "react";
+
 import {
   listCharacterClasses,
   listIdentifierDefinitions,
   listKits,
   listRaces,
 } from "./api";
+import {
+  BrowserScaffold,
+  NumberFilter,
+  SelectFilter,
+  TableBrowser,
+  TextFilter,
+} from "./browser";
+import type { Column, FilterControls } from "./browser";
 import { formatCount, formatHex } from "./format";
 import { IdentifierKind } from "./gen/bgvoice/v1/pipeline_pb";
 import type {
   CharacterClass,
+  CharacterClassText,
   IdentifierDefinition,
   Kit,
   Race,
+  RaceText,
 } from "./gen/bgvoice/v1/pipeline_pb";
+import { useBrowser } from "./use-browser";
 
 const BOOLEAN_FILTERS = ["true", "false"] as const;
 const IDENTIFIER_KINDS = [
@@ -31,142 +38,36 @@ const IDENTIFIER_KINDS = [
   "sound_slot",
 ] as const;
 
-type RaceOrder = "race_id" | "display_name";
-type ClassOrder = "class_id" | "display_name";
-type KitOrder = "row_id" | "display_name" | "character_class";
 type IdentifierOrder = "kind" | "value" | "display_name" | "source_resource";
 
-const RACE_COLUMNS = [
-  {
-    label: "ID",
-    orderBy: "race_id",
-    numeric: true,
-    render: (race) => <span className="mono">{race.raceId}</span>,
-  },
-  {
-    label: "Race",
-    orderBy: "display_name",
-    render: (race) => <DefinitionName name={race.displayName} symbols={race.symbols} />,
-  },
-  {
-    label: "Campaign text",
-    render: (race) => (
-      <TextCollection
-        items={race.texts.map((text) => ({
-          title: text.rowName ?? text.sourceResource,
-          meta: [...text.campaigns, text.sourceResource],
-          fields: [
-            ["Name", text.displayName, text.nameStrref],
-            ["Uppercase", text.uppercaseName, text.uppercaseNameStrref],
-            ["Description", text.description, text.descriptionStrref],
-            ["Biography", text.biography, text.biographyStrref],
-          ],
-        }))}
-      />
-    ),
-  },
-] satisfies readonly Column<Race, RaceOrder>[];
+interface OrderOption {
+  value: string;
+  label: string;
+}
 
-const CLASS_COLUMNS = [
-  {
-    label: "ID",
-    orderBy: "class_id",
-    numeric: true,
-    render: (characterClass) => <span className="mono">{characterClass.classId}</span>,
-  },
-  {
-    label: "Class",
-    orderBy: "display_name",
-    render: (characterClass) => (
-      <DefinitionName name={characterClass.displayName} symbols={characterClass.symbols} />
-    ),
-  },
-  {
-    label: "Campaign text",
-    render: (characterClass) => (
-      <TextCollection
-        items={characterClass.texts.map((text) => ({
-          title: text.rowName ?? text.sourceResource,
-          meta: [...text.campaigns, text.sourceResource],
-          fields: [
-            ["Lower name", text.lowerName, text.lowerNameStrref],
-            ["Mixed name", text.mixedName, text.mixedNameStrref],
-            ["Description", text.description, text.descriptionStrref],
-            ["Brief description", text.briefDescription, text.briefDescriptionStrref],
-            ["Biography", text.biography, text.biographyStrref],
-            ["Fallen notice", text.fallenNotice, text.fallenNoticeStrref],
-          ],
-        }))}
-      />
-    ),
-  },
-] satisfies readonly Column<CharacterClass, ClassOrder>[];
+const RACE_ORDERS = [
+  { value: "race_id asc", label: "Engine ID" },
+  { value: "display_name asc", label: "Name" },
+] satisfies readonly OrderOption[];
 
-const KIT_COLUMNS = [
-  {
-    label: "Row",
-    orderBy: "row_id",
-    numeric: true,
-    render: (kit) => <span className="mono">{kit.rowId}</span>,
-  },
-  {
-    label: "Kit",
-    orderBy: "display_name",
-    render: (kit) => <DefinitionName name={kit.displayName} symbols={kit.kitSymbols} />,
-  },
-  {
-    label: "Class",
-    orderBy: "character_class",
-    render: (kit) => (
-      <div className="definition-name">
-        <strong>{kit.classSymbols[0]?.replaceAll("_", " ") ?? "Unassigned"}</strong>
-        {kit.characterClass != null && <span className="mono">{kit.characterClass}</span>}
-      </div>
-    ),
-  },
-  {
-    label: "KITIDS",
-    numeric: true,
-    render: (kit) => (
-      <span className="mono">
-        {kit.kitIdsValue == null ? "—" : formatHex(kit.kitIdsValue)}
-      </span>
-    ),
-  },
-  {
-    label: "Source",
-    render: (kit) => (
-      <div className="definition-name">
-        <span className="mono">{kit.sourceResource}</span>
-        <span>{kit.rowName}</span>
-      </div>
-    ),
-  },
-  {
-    label: "Details",
-    render: (kit) => (
-      <TextCollection
-        items={[{
-          title: kit.displayName,
-          meta: [kit.abilitiesResref ?? "No ability table"],
-          fields: [
-            ["Lower name", kit.lowerName],
-            ["Mixed name", kit.mixedName],
-            ["Help", kit.helpText],
-            ["Proficiency column", kit.proficiencyColumn == null ? undefined : String(kit.proficiencyColumn)],
-            ["Unusable mask", kit.unusableMask == null ? undefined : formatHex(kit.unusableMask)],
-          ],
-        }]}
-      />
-    ),
-  },
-] satisfies readonly Column<Kit, KitOrder>[];
+const CLASS_ORDERS = [
+  { value: "class_id asc", label: "Engine ID" },
+  { value: "display_name asc", label: "Name" },
+] satisfies readonly OrderOption[];
+
+const KIT_ORDERS = [
+  { value: "row_id asc", label: "KITLIST row" },
+  { value: "display_name asc", label: "Name" },
+  { value: "character_class asc", label: "Class" },
+] satisfies readonly OrderOption[];
 
 const IDENTIFIER_COLUMNS = [
   {
     label: "Kind",
     orderBy: "kind",
-    render: (definition) => <span className="identifier-kind">{identifierKindLabel(definition.kind)}</span>,
+    render: (definition) => (
+      <span className="identifier-kind">{identifierKindLabel(definition.kind)}</span>
+    ),
   },
   {
     label: "Value",
@@ -182,7 +83,10 @@ const IDENTIFIER_COLUMNS = [
     label: "Definition",
     orderBy: "display_name",
     render: (definition) => (
-      <DefinitionName name={definition.displayName} symbols={definition.symbols} />
+      <span className="identifier-definition">
+        <strong>{definition.displayName}</strong>
+        <span className="mono">{definition.symbols.join(" · ")}</span>
+      </span>
     ),
   },
   {
@@ -193,167 +97,419 @@ const IDENTIFIER_COLUMNS = [
 ] satisfies readonly Column<IdentifierDefinition, IdentifierOrder>[];
 
 export function RaceBrowser() {
+  const browser = useBrowser("race_id asc", listRaces);
   return (
-    <MetadataTable
-      defaultOrderBy="race_id asc"
-      loadPage={listRaces}
-      columns={RACE_COLUMNS}
-      eyebrow="ENGINE DEFINITIONS"
+    <DefinitionCatalog
+      browser={browser}
       title="Races"
       description="Canonical RACE.IDS values with every campaign-specific name, description, and biography."
       noun="races"
       searchPlaceholder="Search race symbols, names, and descriptions…"
-      renderFilters={({ value, update }) => (
-        <TextFilter
-          label="Campaign"
-          value={value("campaign")}
-          placeholder="soa"
-          onChange={(next) => update("campaign", next)}
-        />
-      )}
+      orderOptions={RACE_ORDERS}
+      renderFilters={RaceFilters}
+      renderItem={(race) => <RaceDefinition race={race} />}
     />
   );
 }
 
 export function ClassBrowser() {
+  const browser = useBrowser("class_id asc", listCharacterClasses);
   return (
-    <MetadataTable
-      defaultOrderBy="class_id asc"
-      loadPage={listCharacterClasses}
-      columns={CLASS_COLUMNS}
-      eyebrow="ENGINE DEFINITIONS"
+    <DefinitionCatalog
+      browser={browser}
       title="Character classes"
-      description="CLASS.IDS definitions joined to all localized CLASTEXT variants."
+      description="CLASS.IDS definitions joined to every localized CLASTEXT variant."
       noun="classes"
       searchPlaceholder="Search class symbols, names, and descriptions…"
-      renderFilters={({ value, update }) => (
-        <>
-          <TextFilter
-            label="Campaign"
-            value={value("campaign")}
-            placeholder="soa"
-            onChange={(next) => update("campaign", next)}
-          />
-          <NumberFilter
-            label="Class ID"
-            value={value("class_id")}
-            onChange={(next) => update("class_id", next)}
-          />
-          <SelectFilter
-            label="Fallen"
-            value={value("fallen") as "" | "true" | "false"}
-            values={BOOLEAN_FILTERS}
-            labels={{ true: "Fallen", false: "Not fallen" }}
-            onChange={(next) => update("fallen", next === "" ? "" : next === "true")}
-          />
-        </>
-      )}
+      orderOptions={CLASS_ORDERS}
+      renderFilters={ClassFilters}
+      renderItem={(characterClass) => <ClassDefinition characterClass={characterClass} />}
     />
   );
 }
 
 export function KitBrowser() {
+  const browser = useBrowser("row_id asc", listKits);
   return (
-    <MetadataTable
-      defaultOrderBy="row_id asc"
-      loadPage={listKits}
-      columns={KIT_COLUMNS}
-      eyebrow="ENGINE DEFINITIONS"
+    <DefinitionCatalog
+      browser={browser}
       title="Kits"
-      description="KITLIST rows joined to their class and KIT.IDS symbols."
+      description="KITLIST rows joined to their owning class and KIT.IDS symbols."
       noun="kits"
       searchPlaceholder="Search kit names, symbols, and ability tables…"
-      renderFilters={({ value, update }) => (
-        <NumberFilter
-          label="Class ID"
-          value={value("class_id")}
-          onChange={(next) => update("class_id", next)}
-        />
-      )}
+      orderOptions={KIT_ORDERS}
+      renderFilters={KitFilters}
+      renderItem={(kit) => <KitDefinition kit={kit} />}
     />
   );
 }
 
 export function IdentifierBrowser() {
   return (
-    <MetadataTable
+    <TableBrowser
       defaultOrderBy="kind asc"
       loadPage={listIdentifierDefinitions}
       columns={IDENTIFIER_COLUMNS}
+      rowKey={(definition) => definition.name}
       eyebrow="ENGINE DEFINITIONS"
-      title="Identifier definitions"
-      description="Readable IDS values used by extracted CRE metadata."
-      noun="definitions"
-      searchPlaceholder="Search symbols and source resources…"
-      renderFilters={({ value, update }) => (
-        <SelectFilter
-          label="Kind"
-          value={value("kind") as "" | (typeof IDENTIFIER_KINDS)[number]}
-          values={IDENTIFIER_KINDS}
-          labels={{ enemy_ally: "Enemy / ally", sound_slot: "Sound slot" }}
-          onChange={(next) => update("kind", next)}
-        />
-      )}
+      title="Identifiers"
+      description="Look up readable IDS values used by extracted CRE metadata."
+      noun="identifiers"
+      searchPlaceholder="Search symbols, values, and source resources…"
+      renderFilters={IdentifierFilters}
+      tableClassName="identifier-table"
     />
   );
 }
 
-function MetadataTable<Row extends { name: string }, Order extends string>(
-  props: Omit<TableBrowserProps<Row, Order>, "rowKey" | "className" | "tableClassName">,
-) {
-  return (
-    <TableBrowser
-      {...props}
-      rowKey={(row) => row.name}
-      className="metadata-browser"
-      tableClassName="metadata-table"
-    />
-  );
-}
-
-function DefinitionName({ name, symbols }: { name: string; symbols: readonly string[] }) {
-  return (
-    <div className="definition-name">
-      <strong>{name}</strong>
-      {symbols.length > 0 && <span className="mono">{symbols.join(", ")}</span>}
-    </div>
-  );
-}
-
-interface TextItem {
+function DefinitionCatalog<Row extends { name: string }>({
+  browser,
+  title,
+  description,
+  noun,
+  searchPlaceholder,
+  orderOptions,
+  renderFilters,
+  renderItem,
+}: {
+  browser: ReturnType<typeof useBrowser<Row>>;
   title: string;
-  meta: readonly string[];
-  fields: ReadonlyArray<readonly [string, string | undefined, (number | undefined)?]>;
+  description: string;
+  noun: string;
+  searchPlaceholder: string;
+  orderOptions: readonly OrderOption[];
+  renderFilters: (controls: FilterControls) => ReactNode;
+  renderItem: (row: Row) => ReactNode;
+}) {
+  const { result, loading } = browser;
+  return (
+    <BrowserScaffold
+      browser={browser}
+      eyebrow="ENGINE DEFINITIONS"
+      title={title}
+      description={description}
+      noun={noun}
+      searchPlaceholder={searchPlaceholder}
+      renderFilters={(controls) => (
+        <>
+          {renderFilters(controls)}
+          <DefinitionOrder
+            value={browser.query.orderBy}
+            options={orderOptions}
+            onChange={browser.setOrderBy}
+          />
+        </>
+      )}
+      className="definition-browser"
+    >
+      <div className={`definition-list ${loading ? "is-loading" : ""}`} aria-busy={loading}>
+        {result.items.map((row) => (
+          <Fragment key={row.name}>{renderItem(row)}</Fragment>
+        ))}
+        {!loading && result.items.length === 0 && (
+          <div className="empty-state">No {noun} match this filter.</div>
+        )}
+      </div>
+    </BrowserScaffold>
+  );
 }
 
-function TextCollection({ items }: { items: readonly TextItem[] }) {
-  if (items.length === 0) return <span className="muted">No localized text</span>;
+function DefinitionOrder({
+  value,
+  options,
+  onChange,
+}: {
+  value: string;
+  options: readonly OrderOption[];
+  onChange: (value: string) => void;
+}) {
   return (
-    <details className="metadata-details">
-      <summary>Read {formatCount(items.length)} {items.length === 1 ? "entry" : "entries"}</summary>
-      <div className="metadata-text-list">
-        {items.map((item, index) => (
-          <section key={`${item.title}:${index}`}>
-            <h3>{item.title}</h3>
-            <Tags values={item.meta} />
-            <dl>
-              {item.fields
-                .filter(([, value, strref]) => value != null || strref != null)
-                .map(([label, value, strref]) => (
-                  <div key={label}>
-                    <dt>{label}{strref == null ? "" : ` · #${strref}`}</dt>
-                    <dd>{value ?? <span className="muted">Unresolved</span>}</dd>
-                  </div>
-                ))}
-            </dl>
-          </section>
+    <label className="filter">
+      <span>Order</span>
+      <select value={value} onChange={(event) => onChange(event.currentTarget.value)}>
+        {value === "" && <option value="">Relevance</option>}
+        {options.map((option) => (
+          <option key={option.value} value={option.value}>{option.label}</option>
         ))}
+      </select>
+    </label>
+  );
+}
+
+function RaceFilters({ value, update }: FilterControls) {
+  return (
+    <TextFilter
+      label="Campaign text"
+      value={value("campaign")}
+      placeholder="soa"
+      onChange={(next) => update("campaign", next)}
+    />
+  );
+}
+
+function ClassFilters({ value, update }: FilterControls) {
+  return (
+    <>
+      <TextFilter
+        label="Campaign text"
+        value={value("campaign")}
+        placeholder="soa"
+        onChange={(next) => update("campaign", next)}
+      />
+      <NumberFilter
+        label="Class ID"
+        value={value("class_id")}
+        onChange={(next) => update("class_id", next)}
+      />
+      <SelectFilter
+        label="Text variant"
+        value={value("fallen") as "" | "true" | "false"}
+        values={BOOLEAN_FILTERS}
+        labels={{ true: "Fallen", false: "Not fallen" }}
+        onChange={(next) => update("fallen", next === "" ? "" : next === "true")}
+      />
+    </>
+  );
+}
+
+function KitFilters({ value, update }: FilterControls) {
+  return (
+    <NumberFilter
+      label="Class ID"
+      value={value("class_id")}
+      onChange={(next) => update("class_id", next)}
+    />
+  );
+}
+
+function IdentifierFilters({ value, update }: FilterControls) {
+  return (
+    <SelectFilter
+      label="Kind"
+      value={value("kind") as "" | (typeof IDENTIFIER_KINDS)[number]}
+      values={IDENTIFIER_KINDS}
+      labels={{ enemy_ally: "Enemy / ally", sound_slot: "Sound slot" }}
+      onChange={(next) => update("kind", next)}
+    />
+  );
+}
+
+function RaceDefinition({ race }: { race: Race }) {
+  return (
+    <DefinitionCard
+      id={String(race.raceId)}
+      name={race.displayName}
+      symbols={race.symbols}
+      aside={variantLabel(race.texts.length)}
+    >
+      {race.texts.length > 0 ? (
+        <div className="definition-variants">
+          {race.texts.map((text) => (
+            <RaceTextVariant
+              key={`${text.sourceResource}:${text.rowName}`}
+              text={text}
+            />
+          ))}
+        </div>
+      ) : undefined}
+    </DefinitionCard>
+  );
+}
+
+function RaceTextVariant({ text }: { text: RaceText }) {
+  return (
+    <section className="definition-variant">
+      <VariantHeader title={text.rowName} tags={[...text.campaigns, text.sourceResource]} />
+      <dl className="definition-fields">
+        <DefinitionField label="Name" value={text.displayName} strref={text.nameStrref} />
+        <DefinitionField
+          label="Uppercase name"
+          value={text.uppercaseName}
+          strref={text.uppercaseNameStrref}
+        />
+        <DefinitionField
+          label="Description"
+          value={text.description}
+          strref={text.descriptionStrref}
+        />
+        <DefinitionField
+          label="Biography"
+          value={text.biography}
+          strref={text.biographyStrref}
+        />
+      </dl>
+    </section>
+  );
+}
+
+function ClassDefinition({ characterClass }: { characterClass: CharacterClass }) {
+  return (
+    <DefinitionCard
+      id={String(characterClass.classId)}
+      name={characterClass.displayName}
+      symbols={characterClass.symbols}
+      aside={variantLabel(characterClass.texts.length)}
+    >
+      {characterClass.texts.length > 0 ? (
+        <div className="definition-variants">
+          {characterClass.texts.map((text) => (
+            <ClassTextVariant
+              key={`${text.sourceResource}:${text.rowName}:${text.classTextKitId}`}
+              text={text}
+            />
+          ))}
+        </div>
+      ) : undefined}
+    </DefinitionCard>
+  );
+}
+
+function ClassTextVariant({ text }: { text: CharacterClassText }) {
+  return (
+    <section className="definition-variant">
+      <VariantHeader
+        title={text.rowName}
+        tags={[
+          ...text.campaigns,
+          text.sourceResource,
+          `CLASTEXT kit ${text.classTextKitId}`,
+          text.fallen ? "Fallen" : "Not fallen",
+        ]}
+      />
+      <dl className="definition-fields">
+        <DefinitionField label="Lower name" value={text.lowerName} strref={text.lowerNameStrref} />
+        <DefinitionField label="Mixed name" value={text.mixedName} strref={text.mixedNameStrref} />
+        <DefinitionField
+          label="Description"
+          value={text.description}
+          strref={text.descriptionStrref}
+        />
+        <DefinitionField
+          label="Brief description"
+          value={text.briefDescription}
+          strref={text.briefDescriptionStrref}
+        />
+        <DefinitionField
+          label="Biography"
+          value={text.biography}
+          strref={text.biographyStrref}
+        />
+        <DefinitionField
+          label="Fallen notice"
+          value={text.fallenNotice}
+          strref={text.fallenNoticeStrref}
+        />
+      </dl>
+    </section>
+  );
+}
+
+function KitDefinition({ kit }: { kit: Kit }) {
+  const className = kit.classSymbols.length === 0
+    ? "Unassigned"
+    : kit.classSymbols.map((symbol) => symbol.replaceAll("_", " ")).join(" · ");
+  return (
+    <DefinitionCard
+      id={String(kit.rowId)}
+      name={kit.displayName}
+      symbols={kit.kitSymbols}
+      aside={(
+        <>
+          <strong>{className}</strong>
+          <span>{kit.kitIdsValue == null ? "No KITIDS" : formatHex(kit.kitIdsValue)}</span>
+        </>
+      )}
+    >
+      <div className="kit-definition-grid">
+        <section className="definition-variant">
+          <VariantHeader title="Player-facing text" tags={[]} />
+          <dl className="definition-fields">
+            <DefinitionField label="Lower name" value={kit.lowerName} />
+            <DefinitionField label="Mixed name" value={kit.mixedName} />
+            <DefinitionField label="Help" value={kit.helpText} />
+          </dl>
+        </section>
+        <section className="definition-variant">
+          <VariantHeader title="Engine linkage" tags={[kit.sourceResource]} />
+          <dl className="definition-fields definition-engine-fields">
+            <DefinitionField label="KITLIST row" value={kit.rowName} />
+            <DefinitionField label="Class" value={className} />
+            <DefinitionField
+              label="KITIDS value"
+              value={kit.kitIdsValue == null ? undefined : formatHex(kit.kitIdsValue)}
+            />
+            <DefinitionField label="Abilities table" value={kit.abilitiesResref} />
+            <DefinitionField
+              label="Proficiency column"
+              value={kit.proficiencyColumn == null ? undefined : String(kit.proficiencyColumn)}
+            />
+            <DefinitionField
+              label="Unusable mask"
+              value={kit.unusableMask == null ? undefined : formatHex(kit.unusableMask)}
+            />
+          </dl>
+        </section>
       </div>
+    </DefinitionCard>
+  );
+}
+
+function DefinitionCard({ id, name, symbols, aside, children }: {
+  id: string;
+  name: string;
+  symbols: readonly string[];
+  aside: ReactNode;
+  children?: ReactNode;
+}) {
+  const summary = (
+    <>
+      <span className="definition-card-id mono">{id}</span>
+      <span className="definition-card-title">
+        <strong>{name}</strong>
+        <span className="mono">{symbols.join(" · ") || "No IDS symbol"}</span>
+      </span>
+      <span className="definition-card-aside">{aside}</span>
+    </>
+  );
+  if (children == null) {
+    return (
+      <article className="definition-card is-empty">
+        <div className="definition-card-summary">{summary}</div>
+      </article>
+    );
+  }
+  return (
+    <details className="definition-card">
+      <summary>{summary}</summary>
+      <div className="definition-card-body">{children}</div>
     </details>
   );
 }
 
-function Tags({ values }: { values: readonly string[] }) {
+function VariantHeader({ title, tags }: { title: string; tags: readonly string[] }) {
+  return (
+    <header className="definition-variant-head">
+      <h3>{title}</h3>
+      <DefinitionTags values={tags} />
+    </header>
+  );
+}
+
+function DefinitionField({ label, value, strref }: {
+  label: string;
+  value: string | undefined;
+  strref?: number;
+}) {
+  if (value == null && strref == null) return null;
+  return (
+    <div>
+      <dt>{label}{strref == null ? "" : ` · #${strref}`}</dt>
+      <dd>{value ?? <span className="muted">Unresolved</span>}</dd>
+    </div>
+  );
+}
+
+function DefinitionTags({ values }: { values: readonly string[] }) {
   const unique = [...new Set(values.filter(Boolean))];
   if (unique.length === 0) return null;
   return (
@@ -361,6 +517,12 @@ function Tags({ values }: { values: readonly string[] }) {
       {unique.map((value) => <span key={value}>{value}</span>)}
     </div>
   );
+}
+
+function variantLabel(count: number): string {
+  return count === 0
+    ? "No localized text"
+    : `${formatCount(count)} text ${count === 1 ? "variant" : "variants"}`;
 }
 
 function identifierKindLabel(value: IdentifierKind): string {
