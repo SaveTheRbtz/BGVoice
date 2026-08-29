@@ -7,8 +7,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ListQuery, ListResult } from "./api";
 import {
+  AttributionStatus,
   type Character,
   CharacterSchema,
+  DetailStatus,
   type DialogueLine,
   DialogueLineSchema,
   type ExtractionRun,
@@ -16,12 +18,16 @@ import {
   InstallationSchema,
   type Voice,
   VoiceSchema,
+  SourceKind,
 } from "./gen/bgvoice/v1/pipeline_pb";
 
 const api = vi.hoisted(() => ({
   getInstallation: vi.fn<(signal?: AbortSignal) => Promise<Installation>>(),
   getVoice: vi.fn<(name: string, signal?: AbortSignal) => Promise<Voice>>(),
   getCharacter: vi.fn<(name: string, signal?: AbortSignal) => Promise<Character>>(),
+  listCharacters: vi.fn<
+    (query: ListQuery, signal?: AbortSignal) => Promise<ListResult<Character>>
+  >(),
   listVoices: vi.fn<
     (query: ListQuery, signal?: AbortSignal) => Promise<ListResult<Voice>>
   >(),
@@ -38,6 +44,7 @@ vi.mock(import("./api"), async (importOriginal) => ({
   getInstallation: api.getInstallation,
   getVoice: api.getVoice,
   getCharacter: api.getCharacter,
+  listCharacters: api.listCharacters,
   listVoices: api.listVoices,
   listDialogueLines: api.listDialogueLines,
   listExtractionRuns: api.listExtractionRuns,
@@ -88,6 +95,39 @@ const character = create(CharacterSchema, {
   resref: "IMOEN",
   displayName: "Imoen",
   voice: voice.name,
+  source: { kind: SourceKind.OVERRIDE, path: "D:\\Games\\BG\\BG2EE-EET\\override\\imoen.cre" },
+  extraction: { status: DetailStatus.COMPLETE },
+  attributionStatus: AttributionStatus.PARTIAL_MATCH,
+  serializedSize: 6042n,
+  dialogue: {
+    declaredDialogueCount: 7,
+    resolvedDialogueCount: 5,
+    npcLineCount: 7563n,
+    playerLineCount: 5009n,
+    stateCount: 7563n,
+    transitionCount: 17309n,
+  },
+  detail: {
+    dialogResref: "imoen",
+    genderLabel: "Female",
+    raceLabel: "Human",
+    classLabel: "Thief",
+    alignmentLabel: "Neutral Good",
+    kitIdsValue: 16384,
+    kitLabel: "Trueclass",
+    creKitValue: 0x40000000,
+    baseAttributes: {
+      strength: 9,
+      intelligence: 17,
+      wisdom: 11,
+      dexterity: 18,
+      constitution: 16,
+      charisma: 16,
+    },
+    creVersion: "V1.0",
+  },
+  directDialogue: "installations/bg2ee-eet/dialogues/imoen-dlg-dc9ebab9",
+  biography: "installations/bg2ee-eet/characterSounds/imoen-cre-74-bb456c9b",
 });
 
 const line = create(DialogueLineSchema, {
@@ -123,6 +163,7 @@ beforeEach(() => {
   api.listVoices.mockResolvedValue({ items: [], nextPageToken: "", totalSize: 1n });
   api.getVoice.mockResolvedValue(voice);
   api.getCharacter.mockResolvedValue(character);
+  api.listCharacters.mockResolvedValue({ items: [character], nextPageToken: "", totalSize: 1n });
   api.listDialogueLines.mockResolvedValue({ items: [line], nextPageToken: "", totalSize: 1n });
   api.listExtractionRuns.mockResolvedValue({ items: [], nextPageToken: "", totalSize: 0n });
 });
@@ -172,6 +213,28 @@ describe("application jobs", () => {
     await waitFor(() => expect(window.location.pathname).toBe("/characters/imoen-cre-3768424f"));
     expect(await screen.findByRole("heading", { name: "Imoen", level: 1 })).toBeTruthy();
     expect(api.getCharacter).toHaveBeenCalledWith(character.name, expect.any(AbortSignal));
+  });
+
+  it("browses exact CRE variants and preserves the collection query", async () => {
+    window.history.replaceState(null, "", "/characters?page_size=50");
+    const user = userEvent.setup();
+    render(<App />);
+
+    const link = await screen.findByRole("link", { name: "Imoen, IMOEN.CRE" });
+    expect(link.getAttribute("href")).toBe("/characters/imoen-cre-3768424f?page_size=50");
+    expect(screen.queryByRole("spinbutton", { name: "Gender ID" })).toBeNull();
+    expect(api.listCharacters).toHaveBeenCalledWith(
+      expect.objectContaining({ orderBy: "npc_line_count desc", pageSize: 50 }),
+      expect.any(AbortSignal),
+    );
+
+    await user.click(link);
+    expect(await screen.findByRole("heading", { name: "Imoen", level: 1 })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Back to characters" }).getAttribute("href"))
+      .toBe("/characters?page_size=50");
+    const workload = within(screen.getByLabelText("Character dialogue workload"));
+    expect(workload.getAllByText("7,563")).toHaveLength(2);
+    expect(workload.getByText("5 of 7")).toBeTruthy();
   });
 
   it("filters dialogue lines by canonical voice identity", async () => {

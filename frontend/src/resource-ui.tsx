@@ -10,7 +10,12 @@ export function ResourceTitle({ href, title, subtitle }: {
   subtitle: string;
 }) {
   return (
-    <a className="resource-title" href={href} onClick={(event) => followLink(event, href)}>
+    <a
+      className="resource-title"
+      href={href}
+      aria-label={`${title}, ${subtitle}`}
+      onClick={(event) => followLink(event, href)}
+    >
       <strong>{title}</strong>
       <span className="mono">{subtitle}</span>
     </a>
@@ -27,12 +32,13 @@ export function VoiceLink({ voice }: { voice: string | undefined }) {
   );
 }
 
-export function ResourceAvatar({ portrait, label }: {
+export function ResourceAvatar({ portrait, label, size = "large" }: {
   portrait: string | undefined;
   label: string;
+  size?: "small" | "large";
 }) {
   return (
-    <span className="resource-avatar" aria-label={`${label} portrait`}>
+    <span className={`resource-avatar resource-avatar-${size}`} aria-label={`${label} portrait`}>
       <span aria-hidden="true">{label.charAt(0).toUpperCase()}</span>
       {portrait != null && (
         <img
@@ -41,19 +47,6 @@ export function ResourceAvatar({ portrait, label }: {
           onError={(event) => { event.currentTarget.hidden = true; }}
         />
       )}
-    </span>
-  );
-}
-
-export function DefinitionValue({ label, id, secondary = false }: {
-  label: string | undefined;
-  id: number | undefined;
-  secondary?: boolean;
-}) {
-  return (
-    <span className={`resolved-value ${secondary ? "is-secondary" : ""}`}>
-      <strong>{label ?? "Unresolved"}</strong>
-      <span className="mono">ID {formatCount(id)}</span>
     </span>
   );
 }
@@ -69,20 +62,6 @@ export function StatusPill({ value }: { value: string }) {
 
 export function Data({ label, value }: { label: string; value: string | number }) {
   return <div><dt>{label}</dt><dd>{value}</dd></div>;
-}
-
-export function ResourceData({ label, name, path }: {
-  label: string;
-  name: string;
-  path: (name: string) => string;
-}) {
-  const href = path(name);
-  return (
-    <div>
-      <dt>{label}</dt>
-      <dd><a href={href} onClick={(event) => followLink(event, href)}>{resourceId(name)}</a></dd>
-    </div>
-  );
 }
 
 export function Metric({ label, value }: { label: string; value: number | undefined }) {

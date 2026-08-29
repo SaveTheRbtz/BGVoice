@@ -75,8 +75,8 @@ export function voicePath(id?: string, search = ""): string {
   return `${resourcePath("voices", id)}${search}`;
 }
 
-export function characterPath(resourceName?: string): string {
-  return resourcePath("characters", resourceName);
+export function characterPath(resourceName?: string, search = ""): string {
+  return `${resourcePath("characters", resourceName)}${search}`;
 }
 
 export function dialoguePath(resourceName?: string): string {

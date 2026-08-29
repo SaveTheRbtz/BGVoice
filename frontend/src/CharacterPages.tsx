@@ -1,11 +1,15 @@
 import { getCharacter, listCharacters } from "./api";
-import { ErrorBanner, NumberFilter, SelectFilter, TableBrowser } from "./browser";
+import { ErrorBanner, SelectFilter, TableBrowser } from "./browser";
 import type { Column, FilterControls } from "./browser";
 import { formatBytes, formatCount, formatHex } from "./format";
-import { AttributionStatus, type Character } from "./gen/bgvoice/v1/pipeline_pb";
+import {
+  AttributionStatus,
+  type Character,
+  type CharacterBaseAttributes,
+  type CharacterDetail,
+} from "./gen/bgvoice/v1/pipeline_pb";
 import {
   attributionStatusLabel,
-  definitionText,
   detailStatusLabel,
   formatTimestamp,
   sourceKindLabel,
@@ -13,10 +17,8 @@ import {
 } from "./pipeline-labels";
 import {
   Data,
-  DefinitionValue,
   Metric,
   ResourceAvatar,
-  ResourceData,
   ResourceTitle,
   SourceBadge,
   StatusPill,
@@ -35,130 +37,76 @@ const ATTRIBUTION_FILTERS = [
   "character_unavailable",
 ] as const;
 
-type CharacterOrder =
-  | "display_name"
-  | "engine_resource_name"
-  | "source_kind"
-  | "serialized_size"
-  | "dialogue_line_count"
-  | "npc_line_count"
-  | "player_line_count"
-  | "state_count"
-  | "transition_count";
+type CharacterOrder = "display_name" | "source_kind" | "npc_line_count";
 
 const CHARACTER_COLUMNS = [
   {
     label: "Character",
     orderBy: "display_name",
     render: (character) => (
-      <ResourceTitle
-        href={characterPath(character.name)}
-        title={character.displayName}
-        subtitle={character.engineResourceName}
-      />
+      <div className="character-list-identity">
+        <ResourceAvatar portrait={character.portrait} label={character.displayName} size="small" />
+        <ResourceTitle
+          href={characterPath(character.name, window.location.search)}
+          title={character.displayName}
+          subtitle={character.engineResourceName}
+        />
+      </div>
     ),
   },
   { label: "Voice", render: (character) => <VoiceLink voice={character.voice} /> },
   {
-    label: "Source",
-    orderBy: "source_kind",
-    render: (character) => <SourceBadge kind={character.source?.kind} />,
+    label: "Profile",
+    render: (character) => {
+      const detail = character.detail;
+      return (
+        <span className="character-list-profile">
+          <strong>{detail?.genderLabel || "Unresolved"} · {detail?.raceLabel || "Unresolved"}</strong>
+          <span>{detail?.classLabel || "Unresolved"}{detail?.kitLabel == null ? "" : ` · ${detail.kitLabel}`}</span>
+        </span>
+      );
+    },
   },
   {
-    label: "Gender",
-    render: (character) => (
-      <DefinitionValue label={character.detail?.genderLabel} id={character.detail?.genderId} />
-    ),
-  },
-  {
-    label: "Race",
-    render: (character) => (
-      <DefinitionValue label={character.detail?.raceLabel} id={character.detail?.raceId} />
-    ),
-  },
-  {
-    label: "Class / kit",
-    render: (character) => <CharacterClass character={character} />,
-  },
-  {
-    label: "DLGs",
-    numeric: true,
-    render: (character) => (
-      <strong>
-        {formatCount(character.dialogue?.resolvedDialogueCount)} / {formatCount(character.dialogue?.declaredDialogueCount)}
-      </strong>
-    ),
-  },
-  {
-    label: "NPC lines",
+    label: "Dialogue",
     orderBy: "npc_line_count",
-    numeric: true,
-    render: (character) => formatCount(toNumber(character.dialogue?.npcLineCount)),
+    render: (character) => (
+      <span className="character-dialogue-workload">
+        <strong>{formatCount(toNumber(character.dialogue?.npcLineCount))} NPC occurrences</strong>
+        <span>
+          {formatCount(character.dialogue?.resolvedDialogueCount)} of {formatCount(character.dialogue?.declaredDialogueCount)} DLGs resolved
+        </span>
+      </span>
+    ),
   },
   {
-    label: "Player",
-    orderBy: "player_line_count",
-    numeric: true,
-    render: (character) => formatCount(toNumber(character.dialogue?.playerLineCount)),
-  },
-  {
-    label: "States",
-    orderBy: "state_count",
-    numeric: true,
-    render: (character) => formatCount(toNumber(character.dialogue?.stateCount)),
-  },
-  {
-    label: "Transitions",
-    orderBy: "transition_count",
-    numeric: true,
-    render: (character) => formatCount(toNumber(character.dialogue?.transitionCount)),
-  },
-  {
-    label: "Object size",
-    orderBy: "serialized_size",
-    numeric: true,
-    render: (character) => <span className="mono">{formatBytes(toNumber(character.serializedSize))}</span>,
-  },
-  {
-    label: "Status",
-    render: (character) => <CharacterStatus character={character} />,
+    label: "Provenance",
+    orderBy: "source_kind",
+    render: (character) => (
+      <div className="character-provenance">
+        <SourceBadge kind={character.source?.kind} />
+        <StatusPill value={characterStatus(character)} />
+      </div>
+    ),
   },
 ] satisfies readonly Column<Character, CharacterOrder>[];
 
 export function CharacterBrowser() {
   return (
     <TableBrowser
+      defaultOrderBy="npc_line_count desc"
       loadPage={listCharacters}
       columns={CHARACTER_COLUMNS}
       rowKey={(character) => character.name}
       eyebrow="SOURCE DATA"
       title="Characters"
-      description="Every effective CRE resource, linked to the canonical voice it contributes to."
+      description="Browse effective CRE variants, their canonical voices, profiles, and dialogue attribution."
       noun="characters"
-      searchPlaceholder="Search names, resources, variables, and scripts…"
+      searchPlaceholder="Search names, CRE resources, variables, and scripts…"
       renderFilters={CharacterFilters}
       tableClassName="character-table"
     />
   );
-}
-
-function CharacterClass({ character }: { character: Character }) {
-  const detail = character.detail;
-  return (
-    <div className="stacked-values">
-      <DefinitionValue label={detail?.classLabel} id={detail?.classId} />
-      {detail?.kitIdsValue != null && (
-        <DefinitionValue label={detail.kitLabel} id={detail.kitIdsValue} secondary />
-      )}
-    </div>
-  );
-}
-
-function CharacterStatus({ character }: { character: Character }) {
-  const value = character.attributionStatus === AttributionStatus.UNSPECIFIED
-    ? detailStatusLabel(character.extraction?.status)
-    : attributionStatusLabel(character.attributionStatus);
-  return <StatusPill value={value} />;
 }
 
 function CharacterFilters({ value, update }: FilterControls) {
@@ -188,25 +136,30 @@ function CharacterFilters({ value, update }: FilterControls) {
         }}
         onChange={(next) => update("attribution_status", next)}
       />
-      <NumberFilter label="Gender ID" value={value("gender_id")} onChange={(next) => update("gender_id", next)} />
-      <NumberFilter label="Race ID" value={value("race_id")} onChange={(next) => update("race_id", next)} />
-      <NumberFilter label="Class ID" value={value("class_id")} onChange={(next) => update("class_id", next)} />
     </>
   );
 }
 
+function characterStatus(character: Character): string {
+  return character.attributionStatus === AttributionStatus.UNSPECIFIED
+    ? detailStatusLabel(character.extraction?.status)
+    : attributionStatusLabel(character.attributionStatus);
+}
+
 export function CharacterDetailPage({ name }: { name: string }) {
   const resource = useResource(name, getCharacter);
-  const href = "/characters";
+  const href = characterPath(undefined, window.location.search);
   return (
-    <section className="detail-page">
-      <a className="back-link" href={href} onClick={(event) => followLink(event, href)}>← Characters</a>
+    <article className="detail-page character-detail-page">
+      <a className="back-link" href={href} onClick={(event) => followLink(event, href)}>
+        <span aria-hidden="true">←</span> Back to characters
+      </a>
       {resource.error != null && <ErrorBanner message={resource.error} />}
       {resource.value == null && resource.error == null && (
-        <div className="detail-loading">Loading character…</div>
+        <p className="detail-loading">Loading character…</p>
       )}
       {resource.value != null && <CharacterDetail character={resource.value} />}
-    </section>
+    </article>
   );
 }
 
@@ -214,118 +167,140 @@ function CharacterDetail({ character }: { character: Character }) {
   return (
     <>
       <CharacterHeader character={character} />
-      <div className="detail-columns">
-        <CharacterOverview character={character} />
-        <CharacterWorkload character={character} />
-        <CharacterClassification character={character} />
-        <CharacterAttributes character={character} />
+      <CharacterWorkload character={character} />
+      <div className="character-detail-grid">
+        <CharacterVoiceProfile character={character} />
+        <CharacterResourceDetails character={character} />
       </div>
-      <section className="detail-card source-card">
-        <h2>Source path</h2>
-        <code>{character.source?.path ?? "—"}</code>
-      </section>
+      <CharacterTechnicalSource character={character} />
     </>
   );
 }
 
 function CharacterHeader({ character }: { character: Character }) {
-  const label = character.displayName;
   return (
     <header className="character-profile">
-      <ResourceAvatar portrait={character.portrait} label={label} />
-      <div>
+      <ResourceAvatar portrait={character.portrait} label={character.displayName} />
+      <div className="character-profile-copy">
         <p className="eyebrow">CHARACTER RESOURCE</p>
-        <h1>{label}</h1>
-        <span className="resource-name">{character.name}</span>
-        <VoiceLink voice={character.voice} />
+        <h1>{character.displayName}</h1>
+        <span className="resource-name">
+          {character.engineResourceName} · {resourceId(character.name)}
+        </span>
+        <div className="character-profile-links">
+          <span>Voice <VoiceLink voice={character.voice} /></span>
+          <SourceBadge kind={character.source?.kind} />
+          <StatusPill value={characterStatus(character)} />
+        </div>
       </div>
     </header>
-  );
-}
-
-function CharacterOverview({ character }: { character: Character }) {
-  return (
-    <section className="detail-card">
-      <h2>Overview</h2>
-      <dl>
-        <Data label="Engine resource" value={character.engineResourceName} />
-        {character.directDialogue != null && (
-          <ResourceData label="Direct dialogue" name={character.directDialogue} path={dialoguePath} />
-        )}
-        <Data label="Source" value={sourceKindLabel(character.source?.kind)} />
-        <Data label="Biography sound" value={character.biography == null ? "—" : resourceId(character.biography)} />
-        <Data label="CRE version" value={character.detail?.creVersion ?? "—"} />
-        <Data label="Object size" value={formatBytes(toNumber(character.serializedSize))} />
-        <Data label="Updated" value={formatTimestamp(character.extraction?.updatedAt)} />
-      </dl>
-    </section>
   );
 }
 
 function CharacterWorkload({ character }: { character: Character }) {
   const dialogue = character.dialogue;
   return (
-    <section className="detail-card">
-      <h2>Dialogue workload</h2>
-      <div className="metric-grid">
-        <Metric label="NPC lines" value={toNumber(dialogue?.npcLineCount)} />
-        <Metric label="Player lines" value={toNumber(dialogue?.playerLineCount)} />
-        <Metric label="States" value={toNumber(dialogue?.stateCount)} />
-        <Metric label="Transitions" value={toNumber(dialogue?.transitionCount)} />
+    <div className="character-metrics" aria-label="Character dialogue workload">
+      <CharacterMetric label="NPC lines" value={formatCount(toNumber(dialogue?.npcLineCount))} />
+      <CharacterMetric label="Player lines" value={formatCount(toNumber(dialogue?.playerLineCount))} />
+      <CharacterMetric
+        label="DLGs resolved"
+        value={`${formatCount(dialogue?.resolvedDialogueCount)} of ${formatCount(dialogue?.declaredDialogueCount)}`}
+      />
+      <CharacterMetric label="States" value={formatCount(toNumber(dialogue?.stateCount))} />
+      <CharacterMetric label="Transitions" value={formatCount(toNumber(dialogue?.transitionCount))} />
+    </div>
+  );
+}
+
+function CharacterMetric({ label, value }: { label: string; value: string }) {
+  return <div><strong>{value}</strong><span>{label}</span></div>;
+}
+
+function CharacterVoiceProfile({ character }: { character: Character }) {
+  return (
+    <section className="detail-card character-voice-profile">
+      <h2>Voice profile</h2>
+      <div className="character-voice-profile-grid">
+        <CharacterDefinitions detail={character.detail} />
+        <CharacterAbilities attributes={character.detail?.baseAttributes} />
       </div>
     </section>
   );
 }
 
-function CharacterClassification({ character }: { character: Character }) {
-  const {
-    genderLabel,
-    genderId,
-    raceLabel,
-    raceId,
-    classLabel,
-    classId,
-    alignmentLabel,
-    alignmentId,
-    kitLabel,
-    kitIdsValue,
-    creKitValue,
-  } = character.detail ?? {};
+function CharacterDefinitions({ detail }: { detail: CharacterDetail | undefined }) {
   return (
-    <section className="detail-card">
-      <h2>Classification</h2>
+    <dl>
+      <Data label="Gender" value={detail?.genderLabel || "Unresolved"} />
+      <Data label="Race" value={detail?.raceLabel || "Unresolved"} />
+      <Data label="Class" value={detail?.classLabel || "Unresolved"} />
+      <Data label="Kit" value={detail?.kitLabel ?? "No kit"} />
+      <Data label="Alignment" value={detail?.alignmentLabel || "Unresolved"} />
+    </dl>
+  );
+}
+
+function CharacterAbilities({ attributes }: { attributes: CharacterBaseAttributes | undefined }) {
+  return (
+    <div className="character-abilities">
+      <h3>Ability scores</h3>
+      <div className="metric-grid">
+        <Metric label="Strength" value={attributes?.strength} />
+        <Metric label="Intelligence" value={attributes?.intelligence} />
+        <Metric label="Wisdom" value={attributes?.wisdom} />
+        <Metric label="Dexterity" value={attributes?.dexterity} />
+        <Metric label="Constitution" value={attributes?.constitution} />
+        <Metric label="Charisma" value={attributes?.charisma} />
+      </div>
+    </div>
+  );
+}
+
+function CharacterResourceDetails({ character }: { character: Character }) {
+  const dialogueHref = character.directDialogue == null ? null : dialoguePath(character.directDialogue);
+  const dialogueLabel = character.detail?.dialogResref == null
+    ? character.directDialogue == null ? "—" : resourceId(character.directDialogue)
+    : `${character.detail.dialogResref.toUpperCase()}.DLG`;
+  return (
+    <section className="detail-card character-resource-details">
+      <h2>Resource details</h2>
       <dl>
-        <Data label="Gender" value={definitionText(genderLabel, genderId)} />
-        <Data label="Race" value={definitionText(raceLabel, raceId)} />
-        <Data label="Class" value={definitionText(classLabel, classId)} />
-        <Data label="Alignment" value={definitionText(alignmentLabel, alignmentId)} />
-        <Data label="Kit" value={definitionText(kitLabel, kitIdsValue)} />
-        <Data label="Raw CRE kit" value={creKitValue == null ? "—" : formatHex(creKitValue)} />
+        <div>
+          <dt>Direct dialogue</dt>
+          <dd>
+            {dialogueHref == null ? "—" : (
+              <a href={dialogueHref} onClick={(event) => followLink(event, dialogueHref)}>
+                {dialogueLabel}
+              </a>
+            )}
+          </dd>
+        </div>
+        <Data label="Biography sound" value={character.biography == null ? "—" : resourceId(character.biography)} />
+        <Data label="Source" value={sourceKindLabel(character.source?.kind)} />
+        <Data label="CRE version" value={character.detail?.creVersion || "—"} />
+        <Data label="Object size" value={formatBytes(toNumber(character.serializedSize))} />
+        <Data label="Updated" value={formatTimestamp(character.extraction?.updatedAt)} />
+        {character.extraction?.error != null && (
+          <Data label="Extraction error" value={character.extraction.error} />
+        )}
       </dl>
     </section>
   );
 }
 
-function CharacterAttributes({ character }: { character: Character }) {
-  const {
-    strength,
-    intelligence,
-    wisdom,
-    dexterity,
-    constitution,
-    charisma,
-  } = character.detail?.baseAttributes ?? {};
+function CharacterTechnicalSource({ character }: { character: Character }) {
   return (
-    <section className="detail-card">
-      <h2>Voice signals</h2>
-      <div className="metric-grid">
-        <Metric label="Strength" value={strength} />
-        <Metric label="Intelligence" value={intelligence} />
-        <Metric label="Wisdom" value={wisdom} />
-        <Metric label="Dexterity" value={dexterity} />
-        <Metric label="Constitution" value={constitution} />
-        <Metric label="Charisma" value={charisma} />
-      </div>
-    </section>
+    <details className="technical-source">
+      <summary>Technical source</summary>
+      <dl>
+        <Data label="Canonical resource" value={resourceId(character.name)} />
+        <Data
+          label="Raw CRE kit"
+          value={character.detail == null ? "—" : formatHex(character.detail.creKitValue)}
+        />
+      </dl>
+      <code>{character.source?.path ?? "—"}</code>
+    </details>
   );
 }
