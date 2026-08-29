@@ -667,53 +667,53 @@ async def _direct_workload(
     metadata, _biography = _metadata_and_biography(workload.voice.prompt)
 
     async def direct(line: DialogueLineRecord) -> DirectedLineRecord | None:
-        source = DirectionSource(
-            display_name=workload.voice.display_name,
-            metadata=metadata,
-            text=cast(str, line.text),
-            dialogue_history=dialogue_history(history_index, line),
-        )
-
-        async def request(model: str) -> DirectionPlan:
-            async with openai_capacity:
-                return await create_direction(
-                    openai,
-                    source,
-                    model=model,
-                )
-
         try:
-            plan = await request(DIRECTION_MODEL)
-        except Exception:
-            try:
-                plan = await request(DIRECTION_FALLBACK_MODEL)
-            except Exception as error:
-                await _record_failures(
-                    store,
-                    GenerationFailureStage.DIALOGUE_DIRECTION,
-                    workload.voice.voice_id,
-                    [line.id],
-                    error,
-                )
-                return None
+            source = DirectionSource(
+                display_name=workload.voice.display_name,
+                metadata=metadata,
+                text=cast(str, line.text),
+                dialogue_history=dialogue_history(history_index, line),
+            )
 
-        result = plan.result
-        return DirectedLineRecord(
-            id=DirectedLineRecord.id_for(workload.voice.voice_id, line.id),
-            voice_id=workload.voice.voice_id,
-            dialogue_line_id=line.id,
-            character=(
-                CharacterDirection(directed_dialogue=result.directed_dialogue)
-                if result.speaker == "character"
-                else None
-            ),
-            narrator=(
-                NarratorDirection(directed_dialogue=result.directed_dialogue)
-                if result.speaker == "narrator"
-                else None
-            ),
-            created_at=utc_now().isoformat(),
-        )
+            async def request(model: str) -> DirectionPlan:
+                async with openai_capacity:
+                    return await create_direction(
+                        openai,
+                        source,
+                        model=model,
+                    )
+
+            try:
+                plan = await request(DIRECTION_MODEL)
+            except Exception:
+                plan = await request(DIRECTION_FALLBACK_MODEL)
+
+            result = plan.result
+            return DirectedLineRecord(
+                id=DirectedLineRecord.id_for(workload.voice.voice_id, line.id),
+                voice_id=workload.voice.voice_id,
+                dialogue_line_id=line.id,
+                character=(
+                    CharacterDirection(directed_dialogue=result.directed_dialogue)
+                    if result.speaker == "character"
+                    else None
+                ),
+                narrator=(
+                    NarratorDirection(directed_dialogue=result.directed_dialogue)
+                    if result.speaker == "narrator"
+                    else None
+                ),
+                created_at=utc_now().isoformat(),
+            )
+        except Exception as error:
+            await _record_failures(
+                store,
+                GenerationFailureStage.DIALOGUE_DIRECTION,
+                workload.voice.voice_id,
+                [line.id],
+                error,
+            )
+            return None
 
     for start in range(0, len(missing), DIRECTION_WRITE_BATCH_SIZE):
         results = await _wait_for_all(

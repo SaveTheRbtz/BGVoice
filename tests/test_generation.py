@@ -205,6 +205,60 @@ async def test_directions_continue_skip_persisted_and_clear_failures(
     assert recovered_failures == []
 
 
+@pytest.mark.anyio
+async def test_unprocessable_direction_input_is_recorded_and_skipped(
+    scenario_database: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reader = await PipelineReader.open(scenario_database)
+    store = await GenerationStore.open(scenario_database)
+    try:
+        selected = (await load_workloads(reader, ["Aerie"], 2))[0]
+        invalid = selected.lines[0].model_copy(update={"text": "x" * 2001})
+        workload = generation_module.VoiceWorkload(
+            voice=selected.voice,
+            lines=(invalid, selected.lines[1]),
+            ability_scores=selected.ability_scores,
+            portrait_png=selected.portrait_png,
+        )
+        history = await DialogueHistoryIndex.load(reader)
+        requests: list[str] = []
+
+        async def direct_line(
+            _client: object,
+            source: DirectionSource,
+            *,
+            model: str,
+        ) -> DirectionPlan:
+            requests.append(source.text)
+            return DirectionPlan(
+                result=CharacterDirectedDialogue(
+                    speaker="character",
+                    directed_dialogue="[speak clearly] Ready.",
+                )
+            )
+
+        monkeypatch.setattr(generation_module, "create_direction", direct_line)
+        await generation_module._direct_workload(
+            cast(Any, object()),
+            store,
+            workload,
+            history,
+            asyncio.Semaphore(100),
+        )
+        directions = await store.directed_lines([workload.voice.voice_id])
+        failures = await store.failures([workload.voice.voice_id])
+    finally:
+        reader.close()
+        store.close()
+
+    assert requests == [workload.lines[1].text]
+    assert [row.dialogue_line_id for row in directions] == [workload.lines[1].id]
+    assert [(row.dialogue_line_id, row.error_type) for row in failures] == [
+        (workload.lines[0].id, "ValidationError")
+    ]
+
+
 class _FakeHttp:
     async def __aenter__(self) -> Self:
         return self
