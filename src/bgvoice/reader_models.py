@@ -198,6 +198,7 @@ class SoundQuery(PageQuery):
 
 class TransitionQuery(PageQuery):
     q: str | None = Field(default=None, max_length=500)
+    dialogue_resource_name: str | None = Field(default=None, min_length=1, max_length=300)
     terminates_dialog: bool | None = None
     sort: TransitionSort | None = None
     direction: SortDirection = "asc"

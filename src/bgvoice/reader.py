@@ -748,6 +748,8 @@ class PipelineReader:
                 sort=sort,
                 direction=direction,
             )
+        if query.dialogue_resource_name is not None:
+            predicate &= col("dialogue_resource_name") == lit(query.dialogue_resource_name)
         if query.terminates_dialog is not None:
             predicate &= col("terminates_dialog") == lit(query.terminates_dialog)
         transition_order = (

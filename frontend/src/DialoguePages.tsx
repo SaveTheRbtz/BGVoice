@@ -9,14 +9,14 @@ import {
   sourceKindLabel,
   toNumber,
 } from "./pipeline-labels";
+import { Data, Metric, ResourceTitle, SourceBadge, StatusPill } from "./resource-ui";
 import {
-  Data,
-  Metric,
-  ResourceTitle,
-  SourceBadge,
-  StatusPill,
-} from "./resource-ui";
-import { dialogueLinesPath, dialoguePath, followLink } from "./routes";
+  dialogueLinesPath,
+  dialoguePath,
+  dialogueTransitionsPath,
+  followLink,
+  resourceId,
+} from "./routes";
 import { useResource } from "./use-resource";
 
 const SOURCE_FILTERS = ["override", "bif", "dlc"] as const;
@@ -26,10 +26,7 @@ const BOOLEAN_FILTERS = ["true", "false"] as const;
 type DialogueOrder =
   | "engine_resource_name"
   | "source_kind"
-  | "serialized_size"
-  | "dialogue_line_count"
   | "npc_line_count"
-  | "player_line_count"
   | "character_count";
 
 const DIALOGUE_COLUMNS = [
@@ -38,78 +35,83 @@ const DIALOGUE_COLUMNS = [
     orderBy: "engine_resource_name",
     render: (dialogue) => (
       <ResourceTitle
-        href={dialoguePath(dialogue.name)}
+        href={dialoguePath(dialogue.name, window.location.search)}
         title={dialogue.engineResourceName}
-        subtitle={dialogue.source?.path ?? dialogue.name}
+        subtitle={resourceId(dialogue.name)}
       />
     ),
   },
-  {
-    label: "Source",
-    orderBy: "source_kind",
-    render: (dialogue) => <SourceBadge kind={dialogue.source?.kind} />,
-  },
-  {
-    label: "Lines",
-    orderBy: "dialogue_line_count",
-    numeric: true,
-    render: (dialogue) => <strong>{formatCount(toNumber(dialogue.detail?.dialogueLineCount))}</strong>,
-  },
-  {
-    label: "NPC",
-    orderBy: "npc_line_count",
-    numeric: true,
-    render: (dialogue) => formatCount(toNumber(dialogue.detail?.npcLineCount)),
-  },
-  {
-    label: "Player",
-    orderBy: "player_line_count",
-    numeric: true,
-    render: (dialogue) => formatCount(toNumber(dialogue.detail?.playerLineCount)),
-  },
+  { label: "Content", orderBy: "npc_line_count", render: (dialogue) => <DialogueContent dialogue={dialogue} /> },
+  { label: "Graph", render: (dialogue) => <DialogueGraph dialogue={dialogue} /> },
   {
     label: "Characters",
     orderBy: "character_count",
     numeric: true,
     render: (dialogue) => formatCount(dialogue.characterCount),
   },
+  { label: "Generated work", render: (dialogue) => <GeneratedWork dialogue={dialogue} /> },
   {
-    label: "Generation",
-    numeric: true,
+    label: "Provenance",
+    orderBy: "source_kind",
     render: (dialogue) => (
-      <GenerationCoverage
-        directed={Number(dialogue.directedLineCount)}
-        audio={Number(dialogue.generatedAudioCount)}
-        total={toNumber(dialogue.detail?.npcLineCount) ?? 0}
-      />
+      <div className="dialogue-provenance">
+        <SourceBadge kind={dialogue.source?.kind} />
+        <StatusPill value={detailStatusLabel(dialogue.extraction?.status)} />
+      </div>
     ),
-  },
-  {
-    label: "Object size",
-    orderBy: "serialized_size",
-    numeric: true,
-    render: (dialogue) => <span className="mono">{formatBytes(toNumber(dialogue.serializedSize))}</span>,
-  },
-  {
-    label: "Status",
-    render: (dialogue) => <StatusPill value={detailStatusLabel(dialogue.extraction?.status)} />,
   },
 ] satisfies readonly Column<Dialogue, DialogueOrder>[];
 
 export function DialogueBrowser() {
   return (
     <TableBrowser
+      defaultOrderBy="npc_line_count desc"
       loadPage={listDialogues}
       columns={DIALOGUE_COLUMNS}
       rowKey={(dialogue) => dialogue.name}
-      eyebrow="DIALOGUE GRAPH"
+      eyebrow="DIALOGUE CORPUS"
       title="Dialogues"
-      description="Every effective DLG resource, including dialogues no character currently references."
+      description="Browse effective DLG resources by content, state-machine size, and generated work."
       noun="dialogues"
       searchPlaceholder="Search dialogue resources and source paths…"
       renderFilters={DialogueFilters}
       tableClassName="dialogue-table"
     />
+  );
+}
+
+function DialogueContent({ dialogue }: { dialogue: Dialogue }) {
+  const href = dialogueLinesPath({
+    dialogue_resource_name: dialogue.engineResourceName,
+    line_kind: "npc",
+  });
+  return (
+    <span className="dialogue-list-summary">
+      <a href={href} onClick={(event) => followLink(event, href)}>
+        {formatCount(toNumber(dialogue.detail?.npcLineCount))} NPC lines
+      </a>
+      <span>
+        {formatCount(toNumber(dialogue.detail?.playerLineCount))} player · {formatCount(toNumber(dialogue.detail?.journalLineCount))} journal
+      </span>
+    </span>
+  );
+}
+
+function DialogueGraph({ dialogue }: { dialogue: Dialogue }) {
+  return (
+    <span className="dialogue-list-summary">
+      <strong>{formatCount(toNumber(dialogue.detail?.stateCount))} states</strong>
+      <span>{formatCount(toNumber(dialogue.detail?.transitionCount))} transitions</span>
+    </span>
+  );
+}
+
+function GeneratedWork({ dialogue }: { dialogue: Dialogue }) {
+  return (
+    <span className="dialogue-list-summary generated-work-summary">
+      <strong>{formatCount(Number(dialogue.generatedAudioCount))} audio lines</strong>
+      <span>{formatCount(Number(dialogue.directedLineCount))} directed lines</span>
+    </span>
   );
 }
 
@@ -141,88 +143,130 @@ function DialogueFilters({ value, update }: FilterControls) {
 
 export function DialogueDetailPage({ name }: { name: string }) {
   const resource = useResource(name, getDialogue);
-  const href = "/dialogues";
+  const href = dialoguePath(undefined, window.location.search);
   return (
-    <section className="detail-page">
-      <a className="back-link" href={href} onClick={(event) => followLink(event, href)}>← Dialogues</a>
+    <article className="detail-page dialogue-detail-page">
+      <a className="back-link" href={href} onClick={(event) => followLink(event, href)}>
+        <span aria-hidden="true">←</span> Back to dialogues
+      </a>
       {resource.error != null && <ErrorBanner message={resource.error} />}
       {resource.value == null && resource.error == null && (
-        <div className="detail-loading">Loading dialogue…</div>
+        <p className="detail-loading">Loading dialogue…</p>
       )}
       {resource.value != null && <DialogueDetail dialogue={resource.value} />}
-    </section>
+    </article>
   );
 }
 
 function DialogueDetail({ dialogue }: { dialogue: Dialogue }) {
   return (
     <>
-      <header className="resource-detail-head">
-        <div>
-          <p className="eyebrow">DIALOGUE RESOURCE</p>
-          <h1>{dialogue.engineResourceName}</h1>
-          <span className="resource-name">{dialogue.name}</span>
-        </div>
-        <StatusPill value={detailStatusLabel(dialogue.extraction?.status)} />
-      </header>
-      <div className="detail-columns">
-        <DialogueOverview dialogue={dialogue} />
-        <StateMachine dialogue={dialogue} />
+      <DialogueHeader dialogue={dialogue} />
+      <GeneratedWorkPanel dialogue={dialogue} />
+      <div className="dialogue-detail-grid">
+        <DialogueContentCard dialogue={dialogue} />
+        <StateMachineCard dialogue={dialogue} />
+        <DialogueResourceDetails dialogue={dialogue} />
       </div>
-      <DialogueGeneration dialogue={dialogue} />
-      <section className="detail-card source-card">
-        <h2>Source path</h2>
-        <code>{dialogue.source?.path ?? "—"}</code>
-      </section>
+      <DialogueTechnicalSource dialogue={dialogue} />
     </>
   );
 }
 
-function DialogueGeneration({ dialogue }: { dialogue: Dialogue }) {
-  const common = { dialogue_resource_name: dialogue.engineResourceName, line_kind: "npc" };
-  const allHref = dialogueLinesPath(common);
-  const voicedHref = dialogueLinesPath({ ...common, voiced: true });
+function DialogueHeader({ dialogue }: { dialogue: Dialogue }) {
   return (
-    <section className="detail-card generation-detail-card">
+    <header className="dialogue-resource-head">
       <div>
-        <h2>Voice generation</h2>
-        <p>Track directed performances and completed audio for this dialogue.</p>
+        <p className="eyebrow">DIALOGUE RESOURCE</p>
+        <h1>{dialogue.engineResourceName}</h1>
+        <span className="resource-name">{resourceId(dialogue.name)}</span>
       </div>
-      <GenerationCoverage
-        directed={Number(dialogue.directedLineCount)}
-        audio={Number(dialogue.generatedAudioCount)}
-        total={toNumber(dialogue.detail?.npcLineCount) ?? 0}
-      />
-      <nav className="generation-links" aria-label="Dialogue voice generation">
+      <div className="dialogue-resource-status">
+        <SourceBadge kind={dialogue.source?.kind} />
+        <StatusPill value={detailStatusLabel(dialogue.extraction?.status)} />
+      </div>
+    </header>
+  );
+}
+
+function GeneratedWorkPanel({ dialogue }: { dialogue: Dialogue }) {
+  const lineFilters = { dialogue_resource_name: dialogue.engineResourceName, line_kind: "npc" };
+  const allHref = dialogueLinesPath(lineFilters);
+  const voicedHref = dialogueLinesPath({ ...lineFilters, voiced: true });
+  const audio = Number(dialogue.generatedAudioCount);
+  const directed = Number(dialogue.directedLineCount);
+  return (
+    <section className="dialogue-generated-work" aria-labelledby="dialogue-generated-work-title">
+      <div className="dialogue-panel-heading">
+        <h2 id="dialogue-generated-work-title">Generated work</h2>
+        <p>Unique dialogue lines with direction or generated audio.</p>
+      </div>
+      <div className="dialogue-generated-metrics" aria-label="Generated work inventory">
+        <DialogueMetric label="Audio lines" value={audio} />
+        <DialogueMetric label="Directed lines" value={directed} />
+      </div>
+      <nav className="dialogue-actions" aria-label="Dialogue generated work">
         <a href={allHref} onClick={(event) => followLink(event, allHref)}>Browse NPC lines</a>
-        <a href={voicedHref} onClick={(event) => followLink(event, voicedHref)}>Play generated audio</a>
+        {audio > 0 && (
+          <a href={voicedHref} onClick={(event) => followLink(event, voicedHref)}>Play generated audio</a>
+        )}
       </nav>
     </section>
   );
 }
 
-function GenerationCoverage({ directed, audio, total }: {
-  directed: number;
-  audio: number;
-  total: number;
-}) {
+function DialogueMetric({ label, value }: { label: string; value: number }) {
+  return <div><strong>{formatCount(value)}</strong><span>{label}</span></div>;
+}
+
+function DialogueContentCard({ dialogue }: { dialogue: Dialogue }) {
+  const filters = { dialogue_resource_name: dialogue.engineResourceName };
+  const npcHref = dialogueLinesPath({ ...filters, line_kind: "npc" });
+  const playerHref = dialogueLinesPath({ ...filters, line_kind: "player" });
+  const journalHref = dialogueLinesPath({ ...filters, line_kind: "journal" });
   return (
-    <div className="generation-coverage" aria-label={`${audio} audio, ${directed} directed, ${total} source lines`}>
-      <strong>{formatCount(audio)} audio</strong>
-      <span>{formatCount(directed)} directed / {formatCount(total)} source</span>
-    </div>
+    <section className="detail-card dialogue-content-card">
+      <h2>Content</h2>
+      <div className="dialogue-metric-grid">
+        <Metric label="Dialogue lines" value={toNumber(dialogue.detail?.dialogueLineCount)} />
+        <Metric label="NPC lines" value={toNumber(dialogue.detail?.npcLineCount)} />
+        <Metric label="Player lines" value={toNumber(dialogue.detail?.playerLineCount)} />
+        <Metric label="Journal entries" value={toNumber(dialogue.detail?.journalLineCount)} />
+      </div>
+      <nav className="dialogue-card-links" aria-label="Dialogue content">
+        <a href={npcHref} onClick={(event) => followLink(event, npcHref)}>Browse NPC lines <span>→</span></a>
+        <a href={playerHref} onClick={(event) => followLink(event, playerHref)}>Browse player lines <span>→</span></a>
+        <a href={journalHref} onClick={(event) => followLink(event, journalHref)}>Browse journal entries <span>→</span></a>
+      </nav>
+    </section>
   );
 }
 
-function DialogueOverview({ dialogue }: { dialogue: Dialogue }) {
+function StateMachineCard({ dialogue }: { dialogue: Dialogue }) {
+  const href = dialogueTransitionsPath(dialogue.engineResourceName);
   return (
-    <section className="detail-card">
-      <h2>Overview</h2>
+    <section className="detail-card dialogue-state-card">
+      <h2>State machine</h2>
+      <div className="dialogue-state-metrics">
+        <Metric label="States" value={toNumber(dialogue.detail?.stateCount)} />
+        <Metric label="Transitions" value={toNumber(dialogue.detail?.transitionCount)} />
+      </div>
+      <nav className="dialogue-card-links" aria-label="Dialogue state machine">
+        <a href={href} onClick={(event) => followLink(event, href)}>Browse transitions <span>→</span></a>
+      </nav>
+    </section>
+  );
+}
+
+function DialogueResourceDetails({ dialogue }: { dialogue: Dialogue }) {
+  return (
+    <section className="detail-card dialogue-resource-details">
+      <h2>Resource details</h2>
       <dl>
         <Data label="Source" value={sourceKindLabel(dialogue.source?.kind)} />
         <Data label="DLG version" value={dialogue.detail?.dlgVersion ?? "—"} />
-        <Data label="Object size" value={formatBytes(toNumber(dialogue.serializedSize))} />
         <Data label="Characters" value={formatCount(dialogue.characterCount)} />
+        <Data label="Object size" value={formatBytes(toNumber(dialogue.serializedSize))} />
         <Data label="Updated" value={formatTimestamp(dialogue.extraction?.updatedAt)} />
         {dialogue.extraction?.error != null && (
           <Data label="Extraction error" value={dialogue.extraction.error} />
@@ -232,19 +276,11 @@ function DialogueOverview({ dialogue }: { dialogue: Dialogue }) {
   );
 }
 
-function StateMachine({ dialogue }: { dialogue: Dialogue }) {
-  const detail = dialogue.detail;
+function DialogueTechnicalSource({ dialogue }: { dialogue: Dialogue }) {
   return (
-    <section className="detail-card">
-      <h2>State machine</h2>
-      <div className="metric-grid">
-        <Metric label="Lines" value={toNumber(detail?.dialogueLineCount)} />
-        <Metric label="NPC lines" value={toNumber(detail?.npcLineCount)} />
-        <Metric label="Player lines" value={toNumber(detail?.playerLineCount)} />
-        <Metric label="Journal lines" value={toNumber(detail?.journalLineCount)} />
-        <Metric label="States" value={toNumber(detail?.stateCount)} />
-        <Metric label="Transitions" value={toNumber(detail?.transitionCount)} />
-      </div>
-    </section>
+    <details className="technical-source">
+      <summary>Technical source</summary>
+      <code>{dialogue.source?.path ?? "—"}</code>
+    </details>
   );
 }

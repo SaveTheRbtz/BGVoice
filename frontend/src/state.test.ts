@@ -9,6 +9,7 @@ import {
   characterPath,
   dialogueLinesPath,
   dialoguePath,
+  dialogueTransitionsPath,
   routeFromPath,
   voicePath,
 } from "./routes";
@@ -42,6 +43,7 @@ describe("public URL state", () => {
       [voicePath(`${ROOT}/voices/imoen`, "?page_size=50"), "/voices/imoen?page_size=50"],
       [characterPath(AERIE), "/characters/aerie-cre-10f6d857"],
       [dialoguePath(IMOEN_DIALOGUE), "/dialogues/imoen2j-dlg-789f493a"],
+      [dialoguePath(IMOEN_DIALOGUE, "?page_size=50"), "/dialogues/imoen2j-dlg-789f493a?page_size=50"],
     ] as const;
     for (const [actual, expected] of paths) expect(actual).toBe(expected);
 
@@ -50,6 +52,10 @@ describe("public URL state", () => {
       "http://localhost",
     );
     expect(lineUrl.searchParams.get("filter")).toBe('voice_id = "imoen" AND voiced = false');
+
+    const transitionUrl = new URL(dialogueTransitionsPath("IMOEN2J.DLG"), "http://localhost");
+    expect(transitionUrl.searchParams.get("filter"))
+      .toBe('dialogue_resource_name = "IMOEN2J.DLG"');
   });
 
   it("round-trips shareable list state and keeps defaults compact", () => {

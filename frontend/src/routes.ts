@@ -75,12 +75,25 @@ export function characterPath(resourceName?: string, search = ""): string {
   return `${resourcePath("characters", resourceName)}${search}`;
 }
 
-export function dialoguePath(resourceName?: string): string {
-  return resourcePath("dialogues", resourceName);
+export function dialoguePath(resourceName?: string, search = ""): string {
+  return `${resourcePath("dialogues", resourceName)}${search}`;
 }
 
 export function dialogueLinesPath(
   filters: Readonly<Record<string, string | boolean>> = {},
+): string {
+  return filteredCollectionPath("/dialogue-lines", filters);
+}
+
+export function dialogueTransitionsPath(dialogueResourceName: string): string {
+  return filteredCollectionPath("/dialogue-transitions", {
+    dialogue_resource_name: dialogueResourceName,
+  });
+}
+
+function filteredCollectionPath(
+  pathname: string,
+  filters: Readonly<Record<string, string | boolean>>,
 ): string {
   let filter = "";
   for (const [field, value] of Object.entries(filters)) {
@@ -89,7 +102,7 @@ export function dialogueLinesPath(
   const parameters = new URLSearchParams();
   if (filter !== "") parameters.set("filter", filter);
   const search = parameters.toString();
-  return search === "" ? "/dialogue-lines" : `/dialogue-lines?${search}`;
+  return search === "" ? pathname : `${pathname}?${search}`;
 }
 
 export function resourceId(resourceName: string): string {

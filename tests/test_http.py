@@ -289,6 +289,25 @@ def test_connect_lists_each_browser_collection(
     assert full_field in first
 
 
+def test_connect_filters_transitions_by_dialogue(
+    shared_scenario_database: Path,
+) -> None:
+    with TestClient(create_app(shared_scenario_database)) as client:
+        response = _connect(
+            client,
+            "ListDialogueTransitions",
+            {
+                "parent": _PARENT,
+                "filter": 'dialogue_resource_name = "UNUSED.DLG"',
+            },
+        )
+
+    assert response.status_code == 200
+    transitions = response.json()["dialogueTransitions"]
+    assert transitions
+    assert {row["dialogueResref"] for row in transitions} == {"UNUSED"}
+
+
 @pytest.mark.parametrize(
     ("list_method", "response_field", "get_method"),
     [

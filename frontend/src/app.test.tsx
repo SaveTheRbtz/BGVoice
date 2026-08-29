@@ -11,6 +11,8 @@ import {
   type Character,
   CharacterSchema,
   DetailStatus,
+  type Dialogue,
+  DialogueSchema,
   type DialogueLine,
   DialogueLineSchema,
   type ExtractionRun,
@@ -25,11 +27,15 @@ const api = vi.hoisted(() => ({
   getInstallation: vi.fn<(signal?: AbortSignal) => Promise<Installation>>(),
   getVoice: vi.fn<(name: string, signal?: AbortSignal) => Promise<Voice>>(),
   getCharacter: vi.fn<(name: string, signal?: AbortSignal) => Promise<Character>>(),
+  getDialogue: vi.fn<(name: string, signal?: AbortSignal) => Promise<Dialogue>>(),
   listCharacters: vi.fn<
     (query: ListQuery, signal?: AbortSignal) => Promise<ListResult<Character>>
   >(),
   listVoices: vi.fn<
     (query: ListQuery, signal?: AbortSignal) => Promise<ListResult<Voice>>
+  >(),
+  listDialogues: vi.fn<
+    (query: ListQuery, signal?: AbortSignal) => Promise<ListResult<Dialogue>>
   >(),
   listDialogueLines: vi.fn<
     (query: ListQuery, signal?: AbortSignal) => Promise<ListResult<DialogueLine>>
@@ -44,8 +50,10 @@ vi.mock(import("./api"), async (importOriginal) => ({
   getInstallation: api.getInstallation,
   getVoice: api.getVoice,
   getCharacter: api.getCharacter,
+  getDialogue: api.getDialogue,
   listCharacters: api.listCharacters,
   listVoices: api.listVoices,
+  listDialogues: api.listDialogues,
   listDialogueLines: api.listDialogueLines,
   listExtractionRuns: api.listExtractionRuns,
 }));
@@ -130,6 +138,27 @@ const character = create(CharacterSchema, {
   biography: "installations/bg2ee-eet/characterSounds/imoen-cre-74-bb456c9b",
 });
 
+const dialogue = create(DialogueSchema, {
+  name: "installations/bg2ee-eet/dialogues/imoen2j-dlg-789f493a",
+  engineResourceName: "IMOEN2J.DLG",
+  resref: "IMOEN2J",
+  source: { kind: SourceKind.OVERRIDE, path: "D:\\Games\\BG\\BG2EE-EET\\override\\IMOEN2J.DLG" },
+  extraction: { status: DetailStatus.COMPLETE },
+  serializedSize: 6_082_560n,
+  characterCount: 15,
+  detail: {
+    dlgVersion: "V1.0",
+    dialogueLineCount: 9_764n,
+    npcLineCount: 5_788n,
+    playerLineCount: 3_976n,
+    journalLineCount: 71n,
+    stateCount: 5_788n,
+    transitionCount: 13_861n,
+  },
+  directedLineCount: 100n,
+  generatedAudioCount: 92n,
+});
+
 const line = create(DialogueLineSchema, {
   name: "installations/bg2ee-eet/dialogueLines/imoen2j-dlg-0-0-ecdf1e0b",
   dialogue: "installations/bg2ee-eet/dialogues/imoen2j-dlg-789f493a",
@@ -163,7 +192,9 @@ beforeEach(() => {
   api.listVoices.mockResolvedValue({ items: [], nextPageToken: "", totalSize: 1n });
   api.getVoice.mockResolvedValue(voice);
   api.getCharacter.mockResolvedValue(character);
+  api.getDialogue.mockResolvedValue(dialogue);
   api.listCharacters.mockResolvedValue({ items: [character], nextPageToken: "", totalSize: 1n });
+  api.listDialogues.mockResolvedValue({ items: [dialogue], nextPageToken: "", totalSize: 1n });
   api.listDialogueLines.mockResolvedValue({ items: [line], nextPageToken: "", totalSize: 1n });
   api.listExtractionRuns.mockResolvedValue({ items: [], nextPageToken: "", totalSize: 0n });
 });
@@ -235,6 +266,49 @@ describe("application jobs", () => {
     const workload = within(screen.getByLabelText("Character dialogue workload"));
     expect(workload.getAllByText("7,563")).toHaveLength(2);
     expect(workload.getByText("5 of 7")).toBeTruthy();
+  });
+
+  it("reviews dialogue content, graph, and generated work without false coverage", async () => {
+    window.history.replaceState(null, "", "/dialogues?page_size=50");
+    const user = userEvent.setup();
+    render(<App />);
+
+    const link = await screen.findByRole("link", {
+      name: "IMOEN2J.DLG, imoen2j-dlg-789f493a",
+    });
+    expect(link.getAttribute("href")).toBe("/dialogues/imoen2j-dlg-789f493a?page_size=50");
+    expect(screen.getByRole("link", { name: "5,788 NPC lines" })).toBeTruthy();
+    expect(screen.getByText("13,861 transitions")).toBeTruthy();
+    expect(api.listDialogues).toHaveBeenCalledWith(
+      expect.objectContaining({ orderBy: "npc_line_count desc", pageSize: 50 }),
+      expect.any(AbortSignal),
+    );
+
+    await user.click(link);
+    expect(await screen.findByRole("heading", { name: "IMOEN2J.DLG", level: 1 })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Back to dialogues" }).getAttribute("href"))
+      .toBe("/dialogues?page_size=50");
+
+    const generated = within(screen.getByRole("region", { name: "Generated work" }));
+    expect(generated.getByText("Audio lines").previousElementSibling?.textContent).toBe("92");
+    expect(generated.getByText("Directed lines").previousElementSibling?.textContent).toBe("100");
+    expect(screen.queryByText("Awaiting TTS")).toBeNull();
+    expect(screen.queryByText(/source lines/i)).toBeNull();
+
+    const npcUrl = new URL(
+      screen.getAllByRole("link", { name: "Browse NPC lines" })[0]!.getAttribute("href") ?? "",
+      window.location.origin,
+    );
+    expect(npcUrl.searchParams.get("filter")).toBe(
+      'dialogue_resource_name = "IMOEN2J.DLG" AND line_kind = "npc"',
+    );
+    const transitionUrl = new URL(
+      screen.getByRole("link", { name: "Browse transitions →" }).getAttribute("href") ?? "",
+      window.location.origin,
+    );
+    expect(transitionUrl.pathname).toBe("/dialogue-transitions");
+    expect(transitionUrl.searchParams.get("filter"))
+      .toBe('dialogue_resource_name = "IMOEN2J.DLG"');
   });
 
   it("filters dialogue lines by canonical voice identity", async () => {

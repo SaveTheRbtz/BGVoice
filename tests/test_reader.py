@@ -239,7 +239,12 @@ async def test_dialogue_line_voice_sound_and_transition_queries(
         voices = await reader.voices(VoiceQuery(page_size=10))
         sounds = await reader.sounds(SoundQuery(q="fallen", slot_id=9, page_size=20))
         actions = await reader.transitions(
-            TransitionQuery(q="SetGlobal", terminates_dialog=False, page_size=10)
+            TransitionQuery(
+                q="SetGlobal",
+                dialogue_resource_name="AERIE.DLG",
+                terminates_dialog=False,
+                page_size=10,
+            )
         )
         terminal = await reader.transitions(
             TransitionQuery(terminates_dialog=True, sort="location", direction="asc", page_size=10)
@@ -259,7 +264,8 @@ async def test_dialogue_line_voice_sound_and_transition_queries(
         ["ATTACK_VOICE"],
         ["BATTLE_CRIES"],
     )
-    edge = next(row for row in actions.items if row.dialogue_resource_name == "AERIE.DLG")
+    assert {row.dialogue_resource_name for row in actions.items} == {"AERIE.DLG"}
+    edge = actions.items[0]
     assert (edge.action_text, edge.next_dialog, edge.next_state_index) == (
         'SetGlobal("Quest","GLOBAL",1)',
         "MINSC",

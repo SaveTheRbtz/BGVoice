@@ -563,6 +563,7 @@ class PipelineService(pipeline_connect.PipelineService):
         sort, direction = parse_order(request.order_by, TRANSITION_ORDER)
         query = TransitionQuery(
             q=filters.search,
+            dialogue_resource_name=filters.text("dialogue_resource_name"),
             terminates_dialog=filters.boolean("terminates_dialog"),
             sort=sort,
             direction=direction,
