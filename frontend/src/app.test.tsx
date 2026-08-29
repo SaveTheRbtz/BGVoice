@@ -133,13 +133,31 @@ afterEach(() => {
 });
 
 describe("application jobs", () => {
+  it("finds a voice without loading its detail and preserves the collection query", async () => {
+    api.listVoices.mockResolvedValue({ items: [voice], nextPageToken: "", totalSize: 1n });
+    window.history.replaceState(null, "", "/voices?page_size=50");
+    const user = userEvent.setup();
+    render(<App />);
+
+    const name = await screen.findByText("Imoen");
+    const link = name.closest("a");
+    expect(link?.getAttribute("href")).toBe("/voices/imoen?page_size=50");
+    expect(api.getVoice).not.toHaveBeenCalled();
+
+    await user.click(link!);
+    expect(await screen.findByRole("heading", { name: "Imoen", level: 1 })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Back to voices" }).getAttribute("href"))
+      .toBe("/voices?page_size=50");
+  });
+
   it("reviews a voice and follows its highest-workload character", async () => {
     window.history.replaceState(null, "", "/voices/imoen");
     const user = userEvent.setup();
     render(<App />);
 
-    expect(await screen.findByRole("heading", { name: "Imoen", level: 2 })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Imoen", level: 1 })).toBeTruthy();
     expect(api.getVoice).toHaveBeenCalledWith(voice.name, expect.any(AbortSignal));
+    expect(api.listVoices).not.toHaveBeenCalled();
     expect(screen.getByText(voice.prompt)).toBeTruthy();
     expect(screen.getByText(voice.generatedVoice?.description ?? "")).toBeTruthy();
     expect(screen.getByText("voice-imoen")).toBeTruthy();
@@ -171,7 +189,7 @@ describe("application jobs", () => {
     );
     render(<App />);
 
-    const href = (await screen.findByRole("link", { name: "All source lines" })).getAttribute("href");
+    const href = (await screen.findByRole("link", { name: "All NPC lines" })).getAttribute("href");
     const url = new URL(href ?? "", window.location.origin);
     expect(url.pathname).toBe("/dialogue-lines");
     expect(url.searchParams.get("filter")).toBe(

@@ -20,7 +20,7 @@ import { followLink, navigate, useRoute } from "./routes";
 import type { AppRoute, PipelineView } from "./routes";
 import { SoundBrowser, TransitionBrowser } from "./SourceBrowsers";
 import { errorMessage } from "./use-browser";
-import { VoiceBrowser } from "./VoiceBrowser";
+import { VoiceBrowser, VoiceDetailPage } from "./VoicePages";
 
 interface NavigationLinkData {
   href: string;
@@ -193,7 +193,9 @@ function Brand() {
 
 function RouteContent({ route, installation }: { route: AppRoute; installation: Installation | null }) {
   if (route.name === "voices") {
-    return <VoiceBrowser voiceName={route.voiceName} />;
+    return route.voiceName == null
+      ? <VoiceBrowser />
+      : <VoiceDetailPage name={route.voiceName} />;
   }
   if (route.name === "characters") {
     return route.resourceName == null
