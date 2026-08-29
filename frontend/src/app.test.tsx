@@ -308,9 +308,9 @@ describe("application jobs", () => {
     expect(screen.getAllByRole("link", { name: "Pipeline", current: "page" })).toHaveLength(2);
 
     await user.click(screen.getAllByRole("link", { name: "Extraction runs" })[0]!);
-    await waitFor(() => expect(window.location.pathname).toBe("/pipeline/runs"));
+    await waitFor(() => expect(window.location.pathname).toBe("/extraction-runs"));
     expect(screen.getAllByRole("link", { name: "Extraction runs", current: "page" })).toHaveLength(2);
-    expect(await screen.findByRole("heading", { name: "Extraction runs", level: 2 })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Extraction runs", level: 1 })).toBeTruthy();
     expect(screen.getByRole("searchbox", { name: "Full-text search runs" })).toBeTruthy();
     expect(api.listExtractionRuns).toHaveBeenCalledOnce();
   });

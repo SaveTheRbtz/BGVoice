@@ -15,10 +15,9 @@ export type AppRoute =
   | { name: "character-classes" }
   | { name: "kits" }
   | { name: "identifier-definitions" }
-  | { name: "pipeline"; view: PipelineView }
+  | { name: "pipeline" }
+  | { name: "extraction-runs" }
   | { name: "not-found" };
-
-export type PipelineView = "overview" | "runs";
 
 export const NAVIGATION_EVENT = "bgvoice:navigate";
 
@@ -40,6 +39,8 @@ const COLLECTION_ROUTES = {
 } satisfies Record<string, (id?: string) => AppRoute>;
 
 const SINGLE_ROUTES = {
+  pipeline: { name: "pipeline" },
+  "extraction-runs": { name: "extraction-runs" },
   "dialogue-lines": { name: "dialogue-lines" },
   "dialogue-transitions": { name: "dialogue-transitions" },
   "character-sounds": { name: "character-sounds" },
@@ -57,11 +58,6 @@ export function routeFromPath(pathname: string = window.location.pathname): AppR
   if (segments.length === 0) return COLLECTION_ROUTES.voices();
 
   const [collection, resource] = segments;
-  if (collection === "pipeline") {
-    if (segments.length === 1) return { name: "pipeline", view: "overview" };
-    if (segments.length === 2 && resource === "runs") return { name: "pipeline", view: "runs" };
-    return NOT_FOUND;
-  }
   const collectionRoute = COLLECTION_ROUTES[collection as keyof typeof COLLECTION_ROUTES];
   if (collectionRoute != null && segments.length <= 2) return collectionRoute(resource);
   if (segments.length === 1) return SINGLE_ROUTES[collection as keyof typeof SINGLE_ROUTES] ?? NOT_FOUND;

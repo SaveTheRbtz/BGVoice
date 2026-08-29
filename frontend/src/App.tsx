@@ -6,6 +6,7 @@ import { ErrorBanner } from "./browser";
 import { CharacterBrowser, CharacterDetailPage } from "./CharacterPages";
 import { DialogueLineBrowser } from "./DialogueLines";
 import { DialogueBrowser, DialogueDetailPage } from "./DialoguePages";
+import { ExtractionRunsPage } from "./ExtractionRunsPage";
 import { formatBytes } from "./format";
 import type { Installation } from "./gen/bgvoice/v1/pipeline_pb";
 import {
@@ -17,7 +18,7 @@ import {
 import { PipelinePage } from "./PipelinePage";
 import { toNumber } from "./pipeline-labels";
 import { followLink, navigate, useRoute } from "./routes";
-import type { AppRoute, PipelineView } from "./routes";
+import type { AppRoute } from "./routes";
 import { SoundBrowser, TransitionBrowser } from "./SourceBrowsers";
 import { errorMessage } from "./use-browser";
 import { VoiceBrowser, VoiceDetailPage } from "./VoicePages";
@@ -27,7 +28,6 @@ interface NavigationLinkData {
   label: string;
   icon: string;
   routes: readonly AppRoute["name"][];
-  pipelineView?: PipelineView;
 }
 
 interface NavigationGroup {
@@ -67,8 +67,8 @@ const NAVIGATION: readonly NavigationGroup[] = [
   {
     label: "System",
     links: [
-      { href: "/pipeline", label: "Pipeline", icon: "P", routes: ["pipeline"], pipelineView: "overview" },
-      { href: "/pipeline/runs", label: "Extraction runs", icon: "R", routes: ["pipeline"], pipelineView: "runs" },
+      { href: "/pipeline", label: "Pipeline", icon: "P", routes: ["pipeline"] },
+      { href: "/extraction-runs", label: "Extraction runs", icon: "R", routes: ["extraction-runs"] },
     ],
   },
 ];
@@ -81,6 +81,7 @@ const STATIC_PAGES: Partial<Record<AppRoute["name"], ComponentType<PageProps>>> 
   "dialogue-lines": DialogueLineBrowser,
   "dialogue-transitions": TransitionBrowser,
   "character-sounds": SoundBrowser,
+  "extraction-runs": ExtractionRunsPage,
   races: RaceBrowser,
   "character-classes": ClassBrowser,
   kits: KitBrowser,
@@ -163,9 +164,7 @@ function NavigationLink({ link, route, compact = false }: {
   route: AppRoute;
   compact?: boolean;
 }) {
-  const active = link.routes.includes(route.name)
-    && (link.pipelineView == null
-      || (route.name === "pipeline" && route.view === link.pipelineView));
+  const active = link.routes.includes(route.name);
   return (
     <a
       className={active ? "is-active" : undefined}
@@ -208,7 +207,7 @@ function RouteContent({ route, installation }: { route: AppRoute; installation: 
       : <DialogueDetailPage name={route.resourceName} />;
   }
   if (route.name === "pipeline") {
-    return <PipelinePage installation={installation} view={route.view} />;
+    return <PipelinePage installation={installation} />;
   }
   const Page = STATIC_PAGES[route.name];
   return Page == null ? <NotFound /> : <Page installation={installation} />;
