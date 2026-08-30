@@ -21,6 +21,7 @@ from bgvoice.metadata_models import MetadataExtraction
 from bgvoice.model_types import (
     CreResource,
     DlgResource,
+    ItmResource,
     PortraitImage,
     PortraitResource,
     RunKind,
@@ -31,16 +32,20 @@ from bgvoice.pipeline import (
     extract_dialogues,
     extract_metadata,
     extract_portraits,
+    extract_readable_items,
 )
 from bgvoice.pipeline_models import (
     ExtractionProgress,
     ExtractionSummary,
 )
+from bgvoice.readable_models import ItmDump
 from bgvoice.storage_records import ExtractionRunRecord
 from tests.factories import (
     make_dialogue_dump,
     make_dialogue_resource,
     make_dump,
+    make_item_dump,
+    make_item_resource,
     make_portrait_resource,
     make_resource,
 )
@@ -61,6 +66,7 @@ class FakeIeCli:
     def __init__(self) -> None:
         self.creatures = [make_resource(), make_resource("MINSC.CRE")]
         self.dialogues = [make_dialogue_resource(), make_dialogue_resource("MINSC.DLG")]
+        self.items: list[ItmResource] = []
         self.portraits: list[PortraitResource] = []
         self.raw_resources: dict[str, bytes] = {}
         self.failures: set[str] = set()
@@ -82,6 +88,10 @@ class FakeIeCli:
         self._raise_inventory_failure(RunKind.PORTRAITS)
         return self.portraits
 
+    def list_items(self, game_root: Path) -> list[ItmResource]:
+        self._raise_inventory_failure(RunKind.READABLE_ITEMS)
+        return self.items
+
     def dump_creature(self, game_root: Path, resource_name: str) -> CreDump:
         self._record_dump(resource_name)
         return make_dump(resource_name, dialog=resource_name.removesuffix(".CRE"))
@@ -89,6 +99,22 @@ class FakeIeCli:
     def dump_dialogue(self, game_root: Path, resource_name: str) -> DlgDump:
         self._record_dump(resource_name)
         return make_dialogue_dump(resource_name)
+
+    def dump_item(self, game_root: Path, resource_name: str) -> ItmDump:
+        self._record_dump(resource_name)
+        if resource_name == "SCROLL.ITM":
+            return make_item_dump(
+                resource_name,
+                category=11,
+                ground_icon="GSCRL01",
+            )
+        if resource_name == "SWORD.ITM":
+            return make_item_dump(
+                resource_name,
+                category=20,
+                ground_icon=None,
+            )
+        return make_item_dump(resource_name)
 
     def read_raw_resource(self, game_root: Path, resource_name: str) -> bytes:
         self._record_dump(resource_name)
@@ -253,6 +279,44 @@ def test_portrait_extraction_failure_is_finalized_and_propagated(
         run.error,
     ) == (RunKind.PORTRAITS, "failed", 1, 1, 0, str(expected))
     assert database.portraits() == []
+
+
+def test_readable_extraction_scans_all_items_and_publishes_only_texts(
+    tmp_path: Path,
+) -> None:
+    client = FakeIeCli()
+    client.items = [
+        make_item_resource("BOOK.ITM"),
+        make_item_resource("SCROLL.ITM"),
+        make_item_resource("SWORD.ITM"),
+        make_item_resource("BROKEN.ITM"),
+    ]
+    client.failures.add("BROKEN.ITM")
+    progress: list[ExtractionProgress] = []
+    database = PipelineDatabase(tmp_path / "readables.lancedb")
+
+    summary = extract_readable_items(
+        client,
+        database,
+        tmp_path,
+        workers=2,
+        progress=progress.append,
+    )
+
+    assert (
+        summary.discovered,
+        summary.attempted,
+        summary.extracted,
+        summary.failed,
+        summary.status,
+    ) == (4, 4, 2, 1, "complete_with_errors")
+    assert summary.skipped == 1
+    assert progress == [ExtractionProgress(completed=4, total=4, succeeded=3, failed=1)]
+    assert sorted(client.dumped) == ["BOOK.ITM", "BROKEN.ITM", "SCROLL.ITM", "SWORD.ITM"]
+    assert [(item.resource_name, item.kind) for item in database.readable_items()] == [
+        ("BOOK.ITM", "book"),
+        ("SCROLL.ITM", "scroll"),
+    ]
 
 
 def test_character_inventory_can_skip_detail_extraction(tmp_path: Path) -> None:

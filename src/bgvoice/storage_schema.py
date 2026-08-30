@@ -32,6 +32,7 @@ from bgvoice.storage_records import (
     MonthDefinitionRecord,
     PortraitImageRecord,
     RaceTextRecord,
+    ReadableItemRecord,
     SoundsetLineRecord,
     SoundSlotGroupRecord,
     SoundSlotSuffixRecord,
@@ -41,6 +42,7 @@ from bgvoice.storage_records import (
 
 _CHARACTERS = "characters"
 _PORTRAIT_IMAGES = "portrait_images"
+_READABLE_ITEMS = "readable_items"
 _CHARACTER_SOUNDS = "character_sounds"
 _CHARACTER_DIALOGUES = "character_dialogues"
 _VOICE_RESOURCES = "voice_resources"
@@ -93,6 +95,7 @@ TABLE_NAMES = frozenset(
     {
         _CHARACTERS,
         _PORTRAIT_IMAGES,
+        _READABLE_ITEMS,
         _CHARACTER_SOUNDS,
         _CHARACTER_DIALOGUES,
         _VOICE_RESOURCES,
@@ -134,6 +137,11 @@ TABLE_INDEXES: dict[str, tuple[IndexSpec, ...]] = {
         IndexSpec("search_text", _FTS, "characters_search_fts"),
     ),
     _PORTRAIT_IMAGES: (IndexSpec("resref", BTree(), "portrait_images_resref_btree"),),
+    _READABLE_ITEMS: (
+        IndexSpec("resource_name", BTree(), "readable_items_resource_name_btree"),
+        IndexSpec("kind", BTree(), "readable_items_kind_btree"),
+        IndexSpec("search_text", _FTS, "readable_items_search_fts"),
+    ),
     _CHARACTER_SOUNDS: (
         IndexSpec("id", BTree(), "character_sounds_id_btree"),
         IndexSpec(
@@ -311,6 +319,7 @@ TABLE_INDEXES: dict[str, tuple[IndexSpec, ...]] = {
 TABLE_MODELS: dict[str, type[LanceModel]] = {
     _CHARACTERS: CharacterRecord,
     _PORTRAIT_IMAGES: PortraitImageRecord,
+    _READABLE_ITEMS: ReadableItemRecord,
     _CHARACTER_SOUNDS: CharacterSoundRecord,
     _CHARACTER_DIALOGUES: CharacterAttributionRecord,
     _VOICE_RESOURCES: VoiceResourceRecord,

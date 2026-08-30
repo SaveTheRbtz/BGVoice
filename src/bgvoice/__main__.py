@@ -24,6 +24,7 @@ from bgvoice.pipeline import (
     extract_dialogues,
     extract_metadata,
     extract_portraits,
+    extract_readable_items,
 )
 from bgvoice.pipeline_models import ExtractionProgress
 
@@ -52,7 +53,10 @@ def build_parser() -> argparse.ArgumentParser:
     portraits = commands.add_parser(
         "extract-portraits", help="store CRE portrait resources as deduplicated PNG images"
     )
-    for extraction in (metadata, characters, portraits, dialogues):
+    readable_items = commands.add_parser(
+        "extract-readables", help="import resolved book and scroll texts from effective ITMs"
+    )
+    for extraction in (metadata, characters, portraits, dialogues, readable_items):
         extraction.add_argument(
             "--game", required=True, type=Path, help="game root containing chitin.key"
         )
@@ -243,6 +247,14 @@ def _extract(args: argparse.Namespace) -> int:
         )
     elif args.command == "extract-portraits":
         summary = extract_portraits(client, database, args.game, workers=args.workers)
+    elif args.command == "extract-readables":
+        summary = extract_readable_items(
+            client,
+            database,
+            args.game,
+            workers=args.workers,
+            progress=_print_readable_progress,
+        )
     else:
         summary = extract_dialogues(
             client,
@@ -270,6 +282,15 @@ def _print_character_progress(progress: ExtractionProgress) -> None:
 def _print_dialogue_progress(progress: ExtractionProgress) -> None:
     print(
         f"DLG metrics {progress.completed}/{progress.total} "
+        f"(ok={progress.succeeded}, failed={progress.failed})",
+        file=sys.stderr,
+        flush=True,
+    )
+
+
+def _print_readable_progress(progress: ExtractionProgress) -> None:
+    print(
+        f"ITM scans {progress.completed}/{progress.total} "
         f"(ok={progress.succeeded}, failed={progress.failed})",
         file=sys.stderr,
         flush=True,

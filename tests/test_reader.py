@@ -15,6 +15,7 @@ from bgvoice.model_types import (
     DialogueLineKind,
     GenerationFailureStage,
     IdentifierKind,
+    ReadableItemKind,
     RunKind,
     RunStatus,
     SourceKind,
@@ -29,6 +30,7 @@ from bgvoice.reader_models import (
     KitQuery,
     LineQuery,
     RaceQuery,
+    ReadableItemQuery,
     SoundQuery,
     TransitionQuery,
     VoiceQuery,
@@ -85,6 +87,7 @@ async def test_stats_report_the_published_pipeline_generation(
     assert stats.attribution_completed_at is not None
     assert (stats.dialogues_attributed, stats.dialogues_unattributed) == (2, 1)
     assert (stats.attributed_dialogue_lines, stats.unattributed_dialogue_lines) == (4, 4)
+    assert stats.readable_items_total == 2
 
 
 def test_generation_counts_distinguish_assignments_from_inworld_voices() -> None:
@@ -212,6 +215,33 @@ async def test_metadata_queries_merge_canonical_ids_with_campaign_text(
         ["BERSERKER"],
     )
     assert (identifiers.total, identifiers.items[0].symbols) == (1, ["FEMALE"])
+
+
+@pytest.mark.anyio
+async def test_readable_items_search_filter_and_order(
+    shared_scenario_database: Path,
+) -> None:
+    reader = await PipelineReader.open(shared_scenario_database)
+    try:
+        search = await reader.readable_items(ReadableItemQuery(q="long road", page_size=10))
+        scrolls = await reader.readable_items(
+            ReadableItemQuery(kind=ReadableItemKind.SCROLL, page_size=10)
+        )
+        longest = await reader.readable_items(
+            ReadableItemQuery(sort="text_length", direction="desc", page_size=10)
+        )
+    finally:
+        reader.close()
+
+    assert (search.total, search.sort, search.items[0].display_title) == (
+        1,
+        "relevance",
+        "The Long Road",
+    )
+    assert [(item.kind, item.resource_name) for item in scrolls.items] == [
+        (ReadableItemKind.SCROLL, "SCROLL.ITM")
+    ]
+    assert [item.resource_name for item in longest.items] == ["BOOK.ITM", "SCROLL.ITM"]
 
 
 @pytest.mark.anyio

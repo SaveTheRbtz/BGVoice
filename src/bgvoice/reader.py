@@ -60,6 +60,10 @@ from bgvoice.reader_models import (
     RacePage,
     RaceQuery,
     RaceSort,
+    ReadableItemPage,
+    ReadableItemQuery,
+    ReadableItemRow,
+    ReadableItemSort,
     SortDirection,
     SoundPage,
     SoundQuery,
@@ -108,6 +112,7 @@ from bgvoice.storage_records import (
     IdentifierDefinitionRecord,
     KitDefinitionRecord,
     RaceTextRecord,
+    ReadableItemRecord,
     SoundSlotGroupRecord,
     VoiceResourceRecord,
 )
@@ -164,6 +169,7 @@ class PipelineReader:
     race_texts_table: AsyncTable
     class_texts_table: AsyncTable
     kits_table: AsyncTable
+    readable_items_table: AsyncTable
 
     @classmethod
     async def open(cls, path: Path) -> PipelineReader:
@@ -210,6 +216,7 @@ class PipelineReader:
             tables["race_texts"],
             tables["class_texts"],
             tables["kits"],
+            tables["readable_items"],
         )
 
     def close(self) -> None:
@@ -327,6 +334,7 @@ class PipelineReader:
             ),
         )
         counts = await asyncio.gather(
+            self.readable_items_table.count_rows(),
             count_rows(self.character_sounds_table, character_children),
             self.soundset_lines_table.count_rows(),
             count_rows(self.lines_table, dialogue_children),
@@ -970,6 +978,34 @@ class PipelineReader:
         return IdentifierPage(
             items=[
                 IdentifierRow.model_validate(record, from_attributes=True) for record in records
+            ],
+            page=query.page,
+            page_size=query.page_size,
+            total=total,
+            page_count=page_count(total, query.page_size),
+            sort=sort,
+            direction=direction,
+        )
+
+    async def readable_items(self, query: ReadableItemQuery) -> ReadableItemPage:
+        predicate = None if query.kind is None else col("kind") == lit(query.kind.value)
+        tokens = search_tokens(query.q)
+        sort: ReadableItemSort | Literal["relevance"] = query.sort or (
+            "relevance" if tokens else "display_title"
+        )
+        direction: SortDirection = "desc" if sort == "relevance" else query.direction
+        total, records = await records_page(
+            table=self.readable_items_table,
+            model=ReadableItemRecord,
+            stable_column="resource_name",
+            predicate=predicate,
+            tokens=tokens,
+            ordering=(None if sort == "relevance" else ordering(sort, direction, "resource_name")),
+            page=query,
+        )
+        return ReadableItemPage(
+            items=[
+                ReadableItemRow.model_validate(record, from_attributes=True) for record in records
             ],
             page=query.page,
             page_size=query.page_size,

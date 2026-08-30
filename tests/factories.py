@@ -11,11 +11,16 @@ from bgvoice.dialogue_models import (
 from bgvoice.model_types import (
     CreResource,
     DlgResource,
+    ItmResource,
     PortraitResource,
 )
+from bgvoice.readable_models import ItmDump
 
 
-def _resource_data(name: str, resource_type: Literal["BMP", "CRE", "DLG"]) -> dict[str, object]:
+def _resource_data(
+    name: str,
+    resource_type: Literal["BMP", "CRE", "DLG", "ITM"],
+) -> dict[str, object]:
     return {
         "resource_name": name,
         "resref": name.rsplit(".", maxsplit=1)[0],
@@ -38,6 +43,47 @@ def make_dialogue_resource(name: str = "AERIE.DLG") -> DlgResource:
 def make_portrait_resource(name: str = "AERIES.BMP") -> PortraitResource:
     """Create a representative BMP inventory entry."""
     return PortraitResource.model_validate(_resource_data(name, "BMP"))
+
+
+def make_item_resource(name: str = "BOOK.ITM") -> ItmResource:
+    """Create a representative ITM inventory entry."""
+    return ItmResource.model_validate(_resource_data(name, "ITM"))
+
+
+def make_item_dump(
+    name: str = "BOOK.ITM",
+    *,
+    category: int = 0,
+    ground_icon: str | None = "GBOOK01",
+    general_name: str | None = "Book",
+    identified_name: str | None = "A Fine Book",
+    general_description: str | None = "General text",
+    identified_description: str | None = "Identified text",
+) -> ItmDump:
+    """Create the text projection of an ie-cli ITM dump."""
+    return ItmDump.model_validate(
+        {
+            "resource_name": name,
+            "resource_type": "ITM",
+            "version": "V1  ",
+            "header": {
+                "category": {"raw": category, "decoded": None},
+                "ground_icon": ground_icon,
+                "icon": "IBOOK01",
+                "description_image": "CBOOK01",
+                "general_name": {"strref": 10, "text": general_name},
+                "identified_name": {"strref": 11, "text": identified_name},
+                "general_description": {
+                    "strref": 12,
+                    "text": general_description,
+                },
+                "identified_description": {
+                    "strref": 13,
+                    "text": identified_description,
+                },
+            },
+        }
+    )
 
 
 def make_dump(

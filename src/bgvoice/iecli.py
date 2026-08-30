@@ -12,12 +12,15 @@ from bgvoice.dialogue_models import DlgDump
 from bgvoice.model_types import (
     CreResource,
     DlgResource,
+    ItmResource,
     PortraitResource,
     StringReference,
 )
+from bgvoice.readable_models import ItmDump
 
 _CRE_RESOURCES = TypeAdapter(list[CreResource])
 _DLG_RESOURCES = TypeAdapter(list[DlgResource])
+_ITM_RESOURCES = TypeAdapter(list[ItmResource])
 _PORTRAIT_RESOURCES = TypeAdapter(list[PortraitResource])
 _LOCAL_IECLI = Path(".tools/iecli/v0.3.0-rc.1/iecli.exe")
 
@@ -50,6 +53,16 @@ class PortraitIeCliClient(Protocol):
     def list_portraits(self, game_root: Path) -> list[PortraitResource]: ...
 
     def read_raw_resource(self, game_root: Path, resource_name: str) -> bytes: ...
+
+
+class ReadableIeCliClient(Protocol):
+    """The ie-cli operations used by readable-item extraction."""
+
+    def version(self) -> str: ...
+
+    def list_items(self, game_root: Path) -> list[ItmResource]: ...
+
+    def dump_item(self, game_root: Path, resource_name: str) -> ItmDump: ...
 
 
 class MetadataIeCliClient(Protocol):
@@ -123,6 +136,21 @@ class IeCli:
             strict=True,
         )
 
+    def list_items(self, game_root: Path) -> list[ItmResource]:
+        """List every effective ITM resource."""
+        return _ITM_RESOURCES.validate_json(
+            self._run(
+                "list",
+                "--game",
+                str(game_root),
+                "--type",
+                "ITM",
+                "--format",
+                "json",
+            ),
+            strict=True,
+        )
+
     def dump_creature(self, game_root: Path, resource_name: str) -> CreDump:
         """Dump and validate one CRE resource."""
         dump = CreDump.model_validate_json(
@@ -142,6 +170,17 @@ class IeCli:
         )
         assert dump.resource_name.casefold() == resource_name.casefold(), (
             f"iecli returned {dump.resource_name!r} for requested DLG {resource_name!r}"
+        )
+        return dump
+
+    def dump_item(self, game_root: Path, resource_name: str) -> ItmDump:
+        """Dump and validate one ITM resource."""
+        dump = ItmDump.model_validate_json(
+            self._dump_resource(game_root, resource_name),
+            strict=True,
+        )
+        assert dump.resource_name.casefold() == resource_name.casefold(), (
+            f"iecli returned {dump.resource_name!r} for requested ITM {resource_name!r}"
         )
         return dump
 

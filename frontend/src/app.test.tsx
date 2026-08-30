@@ -28,6 +28,9 @@ import {
   KitSchema,
   type Race,
   RaceSchema,
+  type ReadableItem,
+  ReadableItemKind,
+  ReadableItemSchema,
   type Voice,
   VoiceSchema,
   SourceKind,
@@ -65,6 +68,9 @@ const api = vi.hoisted(() => ({
   listIdentifierDefinitions: vi.fn<
     (query: ListQuery, signal?: AbortSignal) => Promise<ListResult<IdentifierDefinition>>
   >(),
+  listReadableItems: vi.fn<
+    (query: ListQuery, signal?: AbortSignal) => Promise<ListResult<ReadableItem>>
+  >(),
 }));
 
 vi.mock(import("./api"), async (importOriginal) => ({
@@ -82,6 +88,7 @@ vi.mock(import("./api"), async (importOriginal) => ({
   listCharacterClasses: api.listCharacterClasses,
   listKits: api.listKits,
   listIdentifierDefinitions: api.listIdentifierDefinitions,
+  listReadableItems: api.listReadableItems,
 }));
 
 import App from "./App";
@@ -97,6 +104,7 @@ const installation = create(InstallationSchema, {
     voiceCreationFailures: 1n,
     dialogueDirectionFailures: 3n,
     audioGenerationFailures: 6n,
+    readableItems: 2n,
   },
 });
 
@@ -286,6 +294,53 @@ const identifier = create(IdentifierDefinitionSchema, {
   displayName: "Male",
 });
 
+const readableItems = [
+  create(ReadableItemSchema, {
+    name: "installations/bg2ee-eet/readableItems/book50-itm-e5b5b3a1",
+    engineResourceName: "BOOK50.ITM",
+    resref: "BOOK50",
+    source: { kind: SourceKind.BIF, path: "D:\\Games\\BG\\BG2EE-EET\\DATA\\ITEMS.BIF" },
+    kind: ReadableItemKind.BOOK,
+    itemVersion: "V1",
+    itemType: 37,
+    icon: "IBOOK01",
+    groundIcon: "GBOOK01",
+    descriptionImage: "CBOOK09",
+    generalName: { strref: 7_149, text: "Book" },
+    identifiedName: { strref: 13_125, text: "History of the North VIII" },
+    generalDescription: {
+      strref: 13_177,
+      text: "History of the North—1369\n\nThe tumultuous climate continued.",
+    },
+    displayTitle: "History of the North VIII",
+    titleStrref: 13_125,
+    text: "History of the North—1369\n\nThe tumultuous climate continued.",
+    textStrref: 13_177,
+    textLength: 64n,
+    serializedSize: 114n,
+  }),
+  create(ReadableItemSchema, {
+    name: "installations/bg2ee-eet/readableItems/bpnote1-itm-56a4496c",
+    engineResourceName: "BPNOTE1.ITM",
+    resref: "BPNOTE1",
+    source: { kind: SourceKind.OVERRIDE, path: "D:\\Games\\BG\\BG2EE-EET\\override\\BPNOTE1.ITM" },
+    kind: ReadableItemKind.SCROLL,
+    itemVersion: "V1",
+    itemType: 11,
+    groundIcon: "GSCRL01",
+    generalName: { strref: 230_291, text: "Note from Krancor" },
+    identifiedName: { strref: 230_291, text: "Note from Krancor" },
+    generalDescription: { strref: 206_487, text: "An unidentified note." },
+    identifiedDescription: { strref: 230_289, text: "To Aluend,\n\nHappy Birthday!" },
+    displayTitle: "Note from Krancor",
+    titleStrref: 230_291,
+    text: "To Aluend,\n\nHappy Birthday!",
+    textStrref: 230_289,
+    textLength: 29n,
+    serializedSize: 114n,
+  }),
+] as const;
+
 beforeEach(() => {
   vi.resetAllMocks();
   api.getInstallation.mockResolvedValue(installation);
@@ -301,6 +356,7 @@ beforeEach(() => {
   api.listCharacterClasses.mockResolvedValue({ items: [], nextPageToken: "", totalSize: 0n });
   api.listKits.mockResolvedValue({ items: [], nextPageToken: "", totalSize: 0n });
   api.listIdentifierDefinitions.mockResolvedValue({ items: [], nextPageToken: "", totalSize: 0n });
+  api.listReadableItems.mockResolvedValue({ items: [], nextPageToken: "", totalSize: 0n });
 });
 
 afterEach(() => {
@@ -541,6 +597,53 @@ describe("application jobs", () => {
     ));
   });
 
+  it("reads installed books and scrolls with shareable search and ordering", async () => {
+    api.listReadableItems.mockResolvedValue({
+      items: [...readableItems],
+      nextPageToken: "",
+      totalSize: 2n,
+    });
+    window.history.replaceState(null, "", "/readable-items");
+    const user = userEvent.setup();
+    render(<App />);
+
+    expect(await screen.findByRole("heading", { name: "Readable items", level: 1 })).toBeTruthy();
+    expect(screen.getByText("2 readable items")).toBeTruthy();
+    expect(screen.getAllByRole("link", { name: "Readable items", current: "page" })).toHaveLength(2);
+    expect(api.listReadableItems).toHaveBeenCalledWith(
+      expect.objectContaining({ orderBy: "display_title asc", pageSize: 25 }),
+      expect.any(AbortSignal),
+    );
+
+    await user.click(screen.getByText("History of the North VIII"));
+    const text = screen.getByLabelText("History of the North VIII text");
+    expect(text.textContent).toContain("History of the North—1369\n\nThe tumultuous climate continued.");
+    expect(screen.getByText("ITEMS.BIF", { exact: false })).toBeTruthy();
+
+    const search = screen.getByRole("searchbox", { name: "Full-text search readable items" });
+    await user.type(search, "history");
+    await waitFor(() => expect(api.listReadableItems).toHaveBeenLastCalledWith(
+      expect.objectContaining({ filter: 'search("history")', orderBy: "" }),
+      expect.any(AbortSignal),
+    ));
+    await user.clear(search);
+    await waitFor(() => expect(api.listReadableItems).toHaveBeenLastCalledWith(
+      expect.objectContaining({ filter: "", orderBy: "display_title asc" }),
+      expect.any(AbortSignal),
+    ));
+
+    await user.selectOptions(screen.getByRole("combobox", { name: "Type" }), "scroll");
+    await waitFor(() => expect(api.listReadableItems).toHaveBeenLastCalledWith(
+      expect.objectContaining({ filter: 'kind = "scroll"' }),
+      expect.any(AbortSignal),
+    ));
+    await user.selectOptions(screen.getByRole("combobox", { name: "Order" }), "text_length desc");
+    await waitFor(() => expect(api.listReadableItems).toHaveBeenLastCalledWith(
+      expect.objectContaining({ orderBy: "text_length desc" }),
+      expect.any(AbortSignal),
+    ));
+  });
+
   it("summarizes the pipeline and opens extraction history on demand", async () => {
     window.history.replaceState(null, "", "/pipeline");
     const user = userEvent.setup();
@@ -555,6 +658,9 @@ describe("application jobs", () => {
     const corpus = within(screen.getByRole("region", { name: "Dialogue corpus" }));
     expect(corpus.getByText("20")).toBeTruthy();
     expect(corpus.getByRole("img", { name: "NPC 11, Player 7, Journal 2" })).toBeTruthy();
+
+    const inventory = within(screen.getByRole("region", { name: "Resource inventory" }));
+    expect(inventory.getByText("Readable items").nextElementSibling?.textContent).toBe("2");
 
     expect(screen.getByRole("heading", { name: "3 dialogue lines need direction" })).toBeTruthy();
     const health = within(screen.getByLabelText("Generation health"));

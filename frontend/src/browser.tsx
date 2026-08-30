@@ -17,6 +17,11 @@ export interface FilterControls {
   update: (field: string, value: string | number | boolean) => void;
 }
 
+export interface OrderOption {
+  value: string;
+  label: string;
+}
+
 export interface TableBrowserProps<Row, Order extends string> {
   defaultOrderBy?: "" | `${Order} asc` | `${Order} desc`;
   loadPage: (query: ListQuery, signal: AbortSignal) => Promise<ListResult<Row>>;
@@ -316,6 +321,28 @@ export function SelectFilter<Value extends string>({
         <option value="">All</option>
         {values.map((item) => (
           <option key={item} value={item}>{labels[item] ?? item}</option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+export function OrderSelect({
+  value,
+  options,
+  onChange,
+}: {
+  value: string;
+  options: readonly OrderOption[];
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label className="filter">
+      <span>Order</span>
+      <select value={value} onChange={(event) => onChange(event.currentTarget.value)}>
+        {value === "" && <option value="">Relevance</option>}
+        {options.map((option) => (
+          <option key={option.value} value={option.value}>{option.label}</option>
         ))}
       </select>
     </label>

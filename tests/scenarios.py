@@ -39,10 +39,13 @@ from bgvoice.model_types import (
     SoundSlotId,
     SourceKind,
 )
+from bgvoice.readable_models import ReadableItem
 from tests.factories import (
     make_dialogue_dump,
     make_dialogue_resource,
     make_dump,
+    make_item_dump,
+    make_item_resource,
     make_resource,
 )
 
@@ -354,5 +357,39 @@ def build_scenario_database(path: Path) -> Path:
         ],
     )
     finish_run(database, portrait_run, attempted=1)
+
+    readable_run = database.start_run(
+        game_root,
+        "iecli test",
+        run_kind=RunKind.READABLE_ITEMS,
+    )
+    readable_items = [
+        ReadableItem.from_dump(
+            make_item_resource("BOOK.ITM"),
+            make_item_dump(
+                "BOOK.ITM",
+                category=37,
+                ground_icon="GBOOK01",
+                identified_name="The Long Road",
+                identified_description="First paragraph.\n\nSecond paragraph on the long road.",
+            ),
+        ),
+        ReadableItem.from_dump(
+            make_item_resource("SCROLL.ITM"),
+            make_item_dump(
+                "SCROLL.ITM",
+                category=11,
+                ground_icon="GSCRL01",
+                identified_name="A Short Notice",
+                identified_description="A brief message.",
+            ),
+        ),
+    ]
+    assert all(item is not None for item in readable_items)
+    database.replace_readable_items(
+        readable_run,
+        [item for item in readable_items if item is not None],
+    )
+    finish_run(database, readable_run, attempted=len(readable_items))
     database.rebuild_attributions()
     return path

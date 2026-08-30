@@ -43,6 +43,7 @@ class RunKind(StrEnum):
     CHARACTERS = "characters"
     DIALOGUES = "dialogues"
     PORTRAITS = "portraits"
+    READABLE_ITEMS = "readable_items"
     METADATA = "metadata"
     ATTRIBUTION = "attribution"
 
@@ -73,6 +74,13 @@ class SourceKind(StrEnum):
     OVERRIDE = "override"
     BIF = "bif"
     DLC = "dlc"
+
+
+class ReadableItemKind(StrEnum):
+    """Readable inventory-item presentation used by the game UI."""
+
+    BOOK = "book"
+    SCROLL = "scroll"
 
 
 type ResRef = Annotated[str, Field(min_length=1, max_length=8)]
@@ -175,6 +183,16 @@ class PortraitResource(IeCliProjection):
     resource_type: Literal["BMP"] = Field(alias="type")
 
 
+class ItmResource(IeCliProjection):
+    """One effective ITM resource returned by ``iecli list``."""
+
+    resource_name: str = Field(min_length=1)
+    resref: ResRef
+    source_kind: SourceKind = Field(strict=False)
+    source_path: str = Field(min_length=1)
+    resource_type: Literal["ITM"] = Field(alias="type")
+
+
 class ResourceSource(StrictModel):
     """Physical origin of one effective Infinity Engine resource."""
 
@@ -182,7 +200,10 @@ class ResourceSource(StrictModel):
     path: str = Field(min_length=1)
 
     @classmethod
-    def from_resource(cls, resource: CreResource | DlgResource | PortraitResource) -> Self:
+    def from_resource(
+        cls,
+        resource: CreResource | DlgResource | PortraitResource | ItmResource,
+    ) -> Self:
         return cls(kind=resource.source_kind, path=resource.source_path)
 
 

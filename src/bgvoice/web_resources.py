@@ -14,6 +14,7 @@ from bgvoice.model_types import (
     DetailStatus,
     DialogueLineKind,
     IdentifierKind,
+    ReadableItemKind,
     RunKind,
     RunStatus,
     SourceKind,
@@ -29,6 +30,7 @@ from bgvoice.reader_models import (
     IdentifierRow,
     KitRow,
     RaceRow,
+    ReadableItemRow,
     SoundRow,
     TransitionRow,
     VoiceRow,
@@ -84,10 +86,15 @@ _IDENTIFIER_KIND: Final[dict[IdentifierKind, pb.IdentifierKind]] = {
     IdentifierKind.KIT: pb.IDENTIFIER_KIND_KIT,
     IdentifierKind.SOUND_SLOT: pb.IDENTIFIER_KIND_SOUND_SLOT,
 }
+_READABLE_ITEM_KIND: Final[dict[ReadableItemKind, pb.ReadableItemKind]] = {
+    ReadableItemKind.BOOK: pb.READABLE_ITEM_KIND_BOOK,
+    ReadableItemKind.SCROLL: pb.READABLE_ITEM_KIND_SCROLL,
+}
 _RUN_KIND: Final[dict[RunKind, pb.RunKind]] = {
     RunKind.CHARACTERS: pb.RUN_KIND_CHARACTERS,
     RunKind.DIALOGUES: pb.RUN_KIND_DIALOGUES,
     RunKind.PORTRAITS: pb.RUN_KIND_PORTRAITS,
+    RunKind.READABLE_ITEMS: pb.RUN_KIND_READABLE_ITEMS,
     RunKind.METADATA: pb.RUN_KIND_METADATA,
     RunKind.ATTRIBUTION: pb.RUN_KIND_ATTRIBUTION,
 }
@@ -568,6 +575,46 @@ def identifier(row: IdentifierRow) -> pb.IdentifierDefinition:
         source_resource=row.source_resource,
         display_name=(row.symbols[0].replace("_", " ").title() if row.symbols else str(row.value)),
     )
+
+
+def readable_item(row: ReadableItemRow) -> pb.ReadableItem:
+    message = pb.ReadableItem(
+        name=resource_name(Collection.READABLE_ITEMS, row.resource_name),
+        engine_resource_name=row.resource_name,
+        resref=row.resref,
+        source=source(row.source.kind, row.source.path),
+        kind=_READABLE_ITEM_KIND[row.kind],
+        item_version=row.item_version,
+        item_type=row.item_type,
+        general_name=_tlk_string(row.general_name_strref, row.general_name),
+        identified_name=_tlk_string(row.identified_name_strref, row.identified_name),
+        general_description=_tlk_string(
+            row.general_description_strref,
+            row.general_description,
+        ),
+        identified_description=_tlk_string(
+            row.identified_description_strref,
+            row.identified_description,
+        ),
+        display_title=row.display_title,
+        title_strref=row.title_strref,
+        text=row.text,
+        text_strref=row.text_strref,
+        text_length=row.text_length,
+        serialized_size=row.serialized_size,
+    )
+    for field_name in ("icon", "ground_icon", "description_image"):
+        value = getattr(row, field_name)
+        if value is not None:
+            setattr(message, field_name, value)
+    return message
+
+
+def _tlk_string(strref: int, text: str | None) -> pb.TlkString:
+    value = pb.TlkString(strref=strref)
+    if text is not None:
+        value.text = text
+    return value
 
 
 def extraction_run(row: ExtractionRunRecord) -> pb.ExtractionRun:

@@ -33,6 +33,8 @@ service PipelineService {
 
   rpc ListIdentifierDefinitions(ListIdentifierDefinitionsRequest) returns (ListIdentifierDefinitionsResponse);
 
+  rpc ListReadableItems(ListReadableItemsRequest) returns (ListReadableItemsResponse);
+
   rpc ListExtractionRuns(ListExtractionRunsRequest) returns (ListExtractionRunsResponse);
 }
 
@@ -73,6 +75,12 @@ enum DialogueLineKind {
   DIALOGUE_LINE_KIND_JOURNAL = 3;
 }
 
+enum ReadableItemKind {
+  READABLE_ITEM_KIND_UNSPECIFIED = 0;
+  READABLE_ITEM_KIND_BOOK = 1;
+  READABLE_ITEM_KIND_SCROLL = 2;
+}
+
 enum IdentifierKind {
   IDENTIFIER_KIND_UNSPECIFIED = 0;
   IDENTIFIER_KIND_RACE = 1;
@@ -94,6 +102,7 @@ enum RunKind {
   RUN_KIND_PORTRAITS = 3;
   RUN_KIND_METADATA = 4;
   RUN_KIND_ATTRIBUTION = 5;
+  RUN_KIND_READABLE_ITEMS = 6;
 }
 
 enum RunStatus {
@@ -107,6 +116,11 @@ enum RunStatus {
 message ResourceSource {
   SourceKind kind = 1;
   string path = 2;
+}
+
+message TlkString {
+  uint32 strref = 1;
+  optional string text = 2;
 }
 
 message ExtractionState {
@@ -143,6 +157,7 @@ message PipelineSummary {
   uint64 unique_inworld_voices = 24;
   uint64 player_lines = 25;
   uint64 journal_lines = 26;
+  uint64 readable_items = 27;
 }
 
 message Installation {
@@ -341,6 +356,34 @@ message Dialogue {
   DialogueDetail detail = 8;
   uint64 directed_line_count = 9;
   uint64 generated_audio_count = 10;
+}
+
+message ReadableItem {
+  option (google.api.resource) = {
+    type: "bgvoice.local/ReadableItem"
+    pattern: "installations/{installation}/readableItems/{readable_item}"
+  };
+
+  string name = 1;
+  string engine_resource_name = 2;
+  string resref = 3;
+  ResourceSource source = 4;
+  ReadableItemKind kind = 5;
+  string item_version = 6;
+  uint32 item_type = 7;
+  optional string icon = 8;
+  optional string ground_icon = 9;
+  optional string description_image = 10;
+  TlkString general_name = 11;
+  TlkString identified_name = 12;
+  TlkString general_description = 13;
+  TlkString identified_description = 14;
+  string display_title = 15;
+  uint32 title_strref = 16;
+  string text = 17;
+  uint32 text_strref = 18;
+  uint64 text_length = 19;
+  uint64 serialized_size = 20;
 }
 
 message DialogueLine {
@@ -704,6 +747,21 @@ message ListIdentifierDefinitionsRequest {
 }
 message ListIdentifierDefinitionsResponse {
   repeated IdentifierDefinition identifier_definitions = 1;
+  string next_page_token = 2;
+  int64 total_size = 3;
+}
+message ListReadableItemsRequest {
+  string parent = 1 [
+    (google.api.field_behavior) = REQUIRED,
+    (google.api.resource_reference).child_type = "bgvoice.local/ReadableItem"
+  ];
+  int32 page_size = 2;
+  string page_token = 3;
+  string filter = 4;
+  string order_by = 5;
+}
+message ListReadableItemsResponse {
+  repeated ReadableItem readable_items = 1;
   string next_page_token = 2;
   int64 total_size = 3;
 }

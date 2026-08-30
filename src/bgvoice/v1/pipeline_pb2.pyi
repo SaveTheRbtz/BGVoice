@@ -49,6 +49,12 @@ class DialogueLineKind(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     DIALOGUE_LINE_KIND_PLAYER: _ClassVar[DialogueLineKind]
     DIALOGUE_LINE_KIND_JOURNAL: _ClassVar[DialogueLineKind]
 
+class ReadableItemKind(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    READABLE_ITEM_KIND_UNSPECIFIED: _ClassVar[ReadableItemKind]
+    READABLE_ITEM_KIND_BOOK: _ClassVar[ReadableItemKind]
+    READABLE_ITEM_KIND_SCROLL: _ClassVar[ReadableItemKind]
+
 class IdentifierKind(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
     IDENTIFIER_KIND_UNSPECIFIED: _ClassVar[IdentifierKind]
@@ -71,6 +77,7 @@ class RunKind(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     RUN_KIND_PORTRAITS: _ClassVar[RunKind]
     RUN_KIND_METADATA: _ClassVar[RunKind]
     RUN_KIND_ATTRIBUTION: _ClassVar[RunKind]
+    RUN_KIND_READABLE_ITEMS: _ClassVar[RunKind]
 
 class RunStatus(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
@@ -101,6 +108,9 @@ DIALOGUE_LINE_KIND_UNSPECIFIED: DialogueLineKind
 DIALOGUE_LINE_KIND_NPC: DialogueLineKind
 DIALOGUE_LINE_KIND_PLAYER: DialogueLineKind
 DIALOGUE_LINE_KIND_JOURNAL: DialogueLineKind
+READABLE_ITEM_KIND_UNSPECIFIED: ReadableItemKind
+READABLE_ITEM_KIND_BOOK: ReadableItemKind
+READABLE_ITEM_KIND_SCROLL: ReadableItemKind
 IDENTIFIER_KIND_UNSPECIFIED: IdentifierKind
 IDENTIFIER_KIND_RACE: IdentifierKind
 IDENTIFIER_KIND_CLASS: IdentifierKind
@@ -118,6 +128,7 @@ RUN_KIND_DIALOGUES: RunKind
 RUN_KIND_PORTRAITS: RunKind
 RUN_KIND_METADATA: RunKind
 RUN_KIND_ATTRIBUTION: RunKind
+RUN_KIND_READABLE_ITEMS: RunKind
 RUN_STATUS_UNSPECIFIED: RunStatus
 RUN_STATUS_RUNNING: RunStatus
 RUN_STATUS_COMPLETE: RunStatus
@@ -132,6 +143,14 @@ class ResourceSource(_message.Message):
     path: str
     def __init__(self, kind: _Optional[_Union[SourceKind, str]] = ..., path: _Optional[str] = ...) -> None: ...
 
+class TlkString(_message.Message):
+    __slots__ = ("strref", "text")
+    STRREF_FIELD_NUMBER: _ClassVar[int]
+    TEXT_FIELD_NUMBER: _ClassVar[int]
+    strref: int
+    text: str
+    def __init__(self, strref: _Optional[int] = ..., text: _Optional[str] = ...) -> None: ...
+
 class ExtractionState(_message.Message):
     __slots__ = ("status", "error", "updated_at", "extraction_run")
     STATUS_FIELD_NUMBER: _ClassVar[int]
@@ -145,7 +164,7 @@ class ExtractionState(_message.Message):
     def __init__(self, status: _Optional[_Union[DetailStatus, str]] = ..., error: _Optional[str] = ..., updated_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., extraction_run: _Optional[str] = ...) -> None: ...
 
 class PipelineSummary(_message.Message):
-    __slots__ = ("voices", "characters", "dialogues", "npc_lines", "character_sounds", "dialogue_transitions", "races", "character_classes", "kits", "identifier_definitions", "matched_characters", "partially_matched_characters", "missing_dialogue_characters", "unattributed_dialogues", "unattributed_dialogue_lines", "generated_voices", "directed_lines", "generated_audios", "running_tts_batches", "failed_tts_batches", "voice_creation_failures", "dialogue_direction_failures", "audio_generation_failures", "unique_inworld_voices", "player_lines", "journal_lines")
+    __slots__ = ("voices", "characters", "dialogues", "npc_lines", "character_sounds", "dialogue_transitions", "races", "character_classes", "kits", "identifier_definitions", "matched_characters", "partially_matched_characters", "missing_dialogue_characters", "unattributed_dialogues", "unattributed_dialogue_lines", "generated_voices", "directed_lines", "generated_audios", "running_tts_batches", "failed_tts_batches", "voice_creation_failures", "dialogue_direction_failures", "audio_generation_failures", "unique_inworld_voices", "player_lines", "journal_lines", "readable_items")
     VOICES_FIELD_NUMBER: _ClassVar[int]
     CHARACTERS_FIELD_NUMBER: _ClassVar[int]
     DIALOGUES_FIELD_NUMBER: _ClassVar[int]
@@ -172,6 +191,7 @@ class PipelineSummary(_message.Message):
     UNIQUE_INWORLD_VOICES_FIELD_NUMBER: _ClassVar[int]
     PLAYER_LINES_FIELD_NUMBER: _ClassVar[int]
     JOURNAL_LINES_FIELD_NUMBER: _ClassVar[int]
+    READABLE_ITEMS_FIELD_NUMBER: _ClassVar[int]
     voices: int
     characters: int
     dialogues: int
@@ -198,7 +218,8 @@ class PipelineSummary(_message.Message):
     unique_inworld_voices: int
     player_lines: int
     journal_lines: int
-    def __init__(self, voices: _Optional[int] = ..., characters: _Optional[int] = ..., dialogues: _Optional[int] = ..., npc_lines: _Optional[int] = ..., character_sounds: _Optional[int] = ..., dialogue_transitions: _Optional[int] = ..., races: _Optional[int] = ..., character_classes: _Optional[int] = ..., kits: _Optional[int] = ..., identifier_definitions: _Optional[int] = ..., matched_characters: _Optional[int] = ..., partially_matched_characters: _Optional[int] = ..., missing_dialogue_characters: _Optional[int] = ..., unattributed_dialogues: _Optional[int] = ..., unattributed_dialogue_lines: _Optional[int] = ..., generated_voices: _Optional[int] = ..., directed_lines: _Optional[int] = ..., generated_audios: _Optional[int] = ..., running_tts_batches: _Optional[int] = ..., failed_tts_batches: _Optional[int] = ..., voice_creation_failures: _Optional[int] = ..., dialogue_direction_failures: _Optional[int] = ..., audio_generation_failures: _Optional[int] = ..., unique_inworld_voices: _Optional[int] = ..., player_lines: _Optional[int] = ..., journal_lines: _Optional[int] = ...) -> None: ...
+    readable_items: int
+    def __init__(self, voices: _Optional[int] = ..., characters: _Optional[int] = ..., dialogues: _Optional[int] = ..., npc_lines: _Optional[int] = ..., character_sounds: _Optional[int] = ..., dialogue_transitions: _Optional[int] = ..., races: _Optional[int] = ..., character_classes: _Optional[int] = ..., kits: _Optional[int] = ..., identifier_definitions: _Optional[int] = ..., matched_characters: _Optional[int] = ..., partially_matched_characters: _Optional[int] = ..., missing_dialogue_characters: _Optional[int] = ..., unattributed_dialogues: _Optional[int] = ..., unattributed_dialogue_lines: _Optional[int] = ..., generated_voices: _Optional[int] = ..., directed_lines: _Optional[int] = ..., generated_audios: _Optional[int] = ..., running_tts_batches: _Optional[int] = ..., failed_tts_batches: _Optional[int] = ..., voice_creation_failures: _Optional[int] = ..., dialogue_direction_failures: _Optional[int] = ..., audio_generation_failures: _Optional[int] = ..., unique_inworld_voices: _Optional[int] = ..., player_lines: _Optional[int] = ..., journal_lines: _Optional[int] = ..., readable_items: _Optional[int] = ...) -> None: ...
 
 class Installation(_message.Message):
     __slots__ = ("name", "display_name", "database_path", "database_size", "attribution_publication", "attribution_completed_at", "summary")
@@ -521,6 +542,50 @@ class Dialogue(_message.Message):
     directed_line_count: int
     generated_audio_count: int
     def __init__(self, name: _Optional[str] = ..., engine_resource_name: _Optional[str] = ..., resref: _Optional[str] = ..., source: _Optional[_Union[ResourceSource, _Mapping]] = ..., extraction: _Optional[_Union[ExtractionState, _Mapping]] = ..., serialized_size: _Optional[int] = ..., character_count: _Optional[int] = ..., detail: _Optional[_Union[DialogueDetail, _Mapping]] = ..., directed_line_count: _Optional[int] = ..., generated_audio_count: _Optional[int] = ...) -> None: ...
+
+class ReadableItem(_message.Message):
+    __slots__ = ("name", "engine_resource_name", "resref", "source", "kind", "item_version", "item_type", "icon", "ground_icon", "description_image", "general_name", "identified_name", "general_description", "identified_description", "display_title", "title_strref", "text", "text_strref", "text_length", "serialized_size")
+    NAME_FIELD_NUMBER: _ClassVar[int]
+    ENGINE_RESOURCE_NAME_FIELD_NUMBER: _ClassVar[int]
+    RESREF_FIELD_NUMBER: _ClassVar[int]
+    SOURCE_FIELD_NUMBER: _ClassVar[int]
+    KIND_FIELD_NUMBER: _ClassVar[int]
+    ITEM_VERSION_FIELD_NUMBER: _ClassVar[int]
+    ITEM_TYPE_FIELD_NUMBER: _ClassVar[int]
+    ICON_FIELD_NUMBER: _ClassVar[int]
+    GROUND_ICON_FIELD_NUMBER: _ClassVar[int]
+    DESCRIPTION_IMAGE_FIELD_NUMBER: _ClassVar[int]
+    GENERAL_NAME_FIELD_NUMBER: _ClassVar[int]
+    IDENTIFIED_NAME_FIELD_NUMBER: _ClassVar[int]
+    GENERAL_DESCRIPTION_FIELD_NUMBER: _ClassVar[int]
+    IDENTIFIED_DESCRIPTION_FIELD_NUMBER: _ClassVar[int]
+    DISPLAY_TITLE_FIELD_NUMBER: _ClassVar[int]
+    TITLE_STRREF_FIELD_NUMBER: _ClassVar[int]
+    TEXT_FIELD_NUMBER: _ClassVar[int]
+    TEXT_STRREF_FIELD_NUMBER: _ClassVar[int]
+    TEXT_LENGTH_FIELD_NUMBER: _ClassVar[int]
+    SERIALIZED_SIZE_FIELD_NUMBER: _ClassVar[int]
+    name: str
+    engine_resource_name: str
+    resref: str
+    source: ResourceSource
+    kind: ReadableItemKind
+    item_version: str
+    item_type: int
+    icon: str
+    ground_icon: str
+    description_image: str
+    general_name: TlkString
+    identified_name: TlkString
+    general_description: TlkString
+    identified_description: TlkString
+    display_title: str
+    title_strref: int
+    text: str
+    text_strref: int
+    text_length: int
+    serialized_size: int
+    def __init__(self, name: _Optional[str] = ..., engine_resource_name: _Optional[str] = ..., resref: _Optional[str] = ..., source: _Optional[_Union[ResourceSource, _Mapping]] = ..., kind: _Optional[_Union[ReadableItemKind, str]] = ..., item_version: _Optional[str] = ..., item_type: _Optional[int] = ..., icon: _Optional[str] = ..., ground_icon: _Optional[str] = ..., description_image: _Optional[str] = ..., general_name: _Optional[_Union[TlkString, _Mapping]] = ..., identified_name: _Optional[_Union[TlkString, _Mapping]] = ..., general_description: _Optional[_Union[TlkString, _Mapping]] = ..., identified_description: _Optional[_Union[TlkString, _Mapping]] = ..., display_title: _Optional[str] = ..., title_strref: _Optional[int] = ..., text: _Optional[str] = ..., text_strref: _Optional[int] = ..., text_length: _Optional[int] = ..., serialized_size: _Optional[int] = ...) -> None: ...
 
 class DialogueLine(_message.Message):
     __slots__ = ("name", "dialogue", "dialogue_resref", "source_kind", "line_kind", "state_index", "state_trigger_index", "state_trigger_text", "transition_index", "strref", "text", "tokens", "serialized_size", "character_count", "directions")
@@ -1047,6 +1112,30 @@ class ListIdentifierDefinitionsResponse(_message.Message):
     next_page_token: str
     total_size: int
     def __init__(self, identifier_definitions: _Optional[_Iterable[_Union[IdentifierDefinition, _Mapping]]] = ..., next_page_token: _Optional[str] = ..., total_size: _Optional[int] = ...) -> None: ...
+
+class ListReadableItemsRequest(_message.Message):
+    __slots__ = ("parent", "page_size", "page_token", "filter", "order_by")
+    PARENT_FIELD_NUMBER: _ClassVar[int]
+    PAGE_SIZE_FIELD_NUMBER: _ClassVar[int]
+    PAGE_TOKEN_FIELD_NUMBER: _ClassVar[int]
+    FILTER_FIELD_NUMBER: _ClassVar[int]
+    ORDER_BY_FIELD_NUMBER: _ClassVar[int]
+    parent: str
+    page_size: int
+    page_token: str
+    filter: str
+    order_by: str
+    def __init__(self, parent: _Optional[str] = ..., page_size: _Optional[int] = ..., page_token: _Optional[str] = ..., filter: _Optional[str] = ..., order_by: _Optional[str] = ...) -> None: ...
+
+class ListReadableItemsResponse(_message.Message):
+    __slots__ = ("readable_items", "next_page_token", "total_size")
+    READABLE_ITEMS_FIELD_NUMBER: _ClassVar[int]
+    NEXT_PAGE_TOKEN_FIELD_NUMBER: _ClassVar[int]
+    TOTAL_SIZE_FIELD_NUMBER: _ClassVar[int]
+    readable_items: _containers.RepeatedCompositeFieldContainer[ReadableItem]
+    next_page_token: str
+    total_size: int
+    def __init__(self, readable_items: _Optional[_Iterable[_Union[ReadableItem, _Mapping]]] = ..., next_page_token: _Optional[str] = ..., total_size: _Optional[int] = ...) -> None: ...
 
 class ListExtractionRunsRequest(_message.Message):
     __slots__ = ("parent", "page_size", "page_token", "filter", "order_by")

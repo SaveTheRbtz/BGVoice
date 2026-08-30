@@ -48,6 +48,8 @@ def test_parser_uses_available_cpu_count(monkeypatch: pytest.MonkeyPatch) -> Non
     assert metadata.workers == 12
     portraits = cli.build_parser().parse_args(["extract-portraits", "--game", "C:/game"])
     assert portraits.workers == 12
+    readables = cli.build_parser().parse_args(["extract-readables", "--game", "C:/game"])
+    assert readables.workers == 12
     generation = cli.build_parser().parse_args(
         [
             "generate",
@@ -90,12 +92,14 @@ def test_progress_is_written_only_to_stderr(capsys: pytest.CaptureFixture[str]) 
 
     cli._print_character_progress(progress)
     cli._print_dialogue_progress(progress)
+    cli._print_readable_progress(progress)
 
     output = capsys.readouterr()
     assert output.out == ""
     assert output.err.splitlines() == [
         "CRE details 4/5 (ok=3, failed=1)",
         "DLG metrics 4/5 (ok=3, failed=1)",
+        "ITM scans 4/5 (ok=3, failed=1)",
     ]
 
 
@@ -135,6 +139,11 @@ def test_extraction_commands_dispatch_options_and_status(
         extractor("dialogues", RunStatus.COMPLETE_WITH_ERRORS),
     )
     monkeypatch.setattr(cli, "extract_portraits", extractor("portraits", RunStatus.COMPLETE))
+    monkeypatch.setattr(
+        cli,
+        "extract_readable_items",
+        extractor("readable_items", RunStatus.COMPLETE),
+    )
 
     executable = tmp_path / "iecli.exe"
     database = tmp_path / "pipeline.lancedb"
@@ -148,6 +157,18 @@ def test_extraction_commands_dispatch_options_and_status(
                 str(database),
                 "--workers",
                 "6",
+            ],
+            0,
+        ),
+        (
+            [
+                "extract-readables",
+                "--game",
+                str(tmp_path),
+                "--database",
+                str(database),
+                "--workers",
+                "5",
             ],
             0,
         ),
@@ -196,7 +217,7 @@ def test_extraction_commands_dispatch_options_and_status(
         expected for _arguments, expected in commands
     ]
 
-    assert executables == [None, None, executable, None]
+    assert executables == [None, None, None, executable, None]
     assert calls["metadata"] == {"workers": 4}
     assert calls["characters"] == {
         "include_details": False,
@@ -210,10 +231,14 @@ def test_extraction_commands_dispatch_options_and_status(
         "progress": cli._print_dialogue_progress,
     }
     assert calls["portraits"] == {"workers": 6}
+    assert calls["readable_items"] == {
+        "workers": 5,
+        "progress": cli._print_readable_progress,
+    }
     output = capsys.readouterr()
     assert '"status": "complete"' in output.out
     assert '"status": "complete_with_errors"' in output.out
-    assert output.err.count("Active character records: 0") == 3
+    assert output.err.count("Active character records: 0") == 4
 
 
 def test_web_and_attribution_commands_dispatch(

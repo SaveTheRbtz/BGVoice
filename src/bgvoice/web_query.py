@@ -20,6 +20,7 @@ from bgvoice.reader_models import (
     KitSort,
     LineSort,
     RaceSort,
+    ReadableItemSort,
     SortDirection,
     SoundSort,
     TransitionSort,
@@ -102,6 +103,12 @@ IDENTIFIER_ORDER: Final[dict[str, IdentifierSort]] = {
     "kind": "kind",
     "value": "value",
     "source_resource": "source_resource",
+}
+READABLE_ITEM_ORDER: Final[dict[str, ReadableItemSort]] = {
+    "display_title": "display_title",
+    "engine_resource_name": "resource_name",
+    "text_length": "text_length",
+    "serialized_size": "serialized_size",
 }
 
 

@@ -228,6 +228,7 @@ def test_generated_work_is_browsable_filterable_and_playable(
         "4",
         "2",
     )
+    assert summary["readableItems"] == "2"
     assert (
         summary["generatedVoices"],
         summary["uniqueInworldVoices"],
@@ -265,6 +266,7 @@ def test_generated_work_is_browsable_filterable_and_playable(
         ("ListCharacterClasses", "characterClasses", "texts"),
         ("ListKits", "kits", "displayName"),
         ("ListIdentifierDefinitions", "identifierDefinitions", "symbols"),
+        ("ListReadableItems", "readableItems", "text"),
         ("ListExtractionRuns", "extractionRuns", "runId"),
     ],
 )

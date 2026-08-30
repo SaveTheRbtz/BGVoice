@@ -18,7 +18,7 @@ from connectrpc.protocol import ProtocolType
 from connectrpc.server import ConnectASGIApplication, ConnectWSGIApplication, Endpoint, EndpointSync
 from pyqwest import Client, SyncClient
 
-from .pipeline_pb2 import Character, Dialogue, GetCharacterRequest, GetDialogueRequest, GetInstallationRequest, GetVoiceRequest, Installation, ListCharacterClassesRequest, ListCharacterClassesResponse, ListCharacterSoundsRequest, ListCharacterSoundsResponse, ListCharactersRequest, ListCharactersResponse, ListDialogueLinesRequest, ListDialogueLinesResponse, ListDialogueTransitionsRequest, ListDialogueTransitionsResponse, ListDialoguesRequest, ListDialoguesResponse, ListExtractionRunsRequest, ListExtractionRunsResponse, ListIdentifierDefinitionsRequest, ListIdentifierDefinitionsResponse, ListKitsRequest, ListKitsResponse, ListRacesRequest, ListRacesResponse, ListVoicesRequest, ListVoicesResponse, Voice
+from .pipeline_pb2 import Character, Dialogue, GetCharacterRequest, GetDialogueRequest, GetInstallationRequest, GetVoiceRequest, Installation, ListCharacterClassesRequest, ListCharacterClassesResponse, ListCharacterSoundsRequest, ListCharacterSoundsResponse, ListCharactersRequest, ListCharactersResponse, ListDialogueLinesRequest, ListDialogueLinesResponse, ListDialogueTransitionsRequest, ListDialogueTransitionsResponse, ListDialoguesRequest, ListDialoguesResponse, ListExtractionRunsRequest, ListExtractionRunsResponse, ListIdentifierDefinitionsRequest, ListIdentifierDefinitionsResponse, ListKitsRequest, ListKitsResponse, ListRacesRequest, ListRacesResponse, ListReadableItemsRequest, ListReadableItemsResponse, ListVoicesRequest, ListVoicesResponse, Voice
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Iterable, Mapping
@@ -75,6 +75,9 @@ class PipelineService(Protocol):
         raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
 
     async def list_identifier_definitions(self, request: ListIdentifierDefinitionsRequest, ctx: RequestContext[ListIdentifierDefinitionsRequest, ListIdentifierDefinitionsResponse]) -> ListIdentifierDefinitionsResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def list_readable_items(self, request: ListReadableItemsRequest, ctx: RequestContext[ListReadableItemsRequest, ListReadableItemsResponse]) -> ListReadableItemsResponse:
         raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
 
     async def list_extraction_runs(self, request: ListExtractionRunsRequest, ctx: RequestContext[ListExtractionRunsRequest, ListExtractionRunsResponse]) -> ListExtractionRunsResponse:
@@ -234,6 +237,16 @@ class PipelineServiceASGIApplication(ConnectASGIApplication[PipelineService]):
                     ),
                     function=svc.list_identifier_definitions,
                 ),
+                "/bgvoice.v1.PipelineService/ListReadableItems": Endpoint.unary(
+                    method=MethodInfo(
+                        name="ListReadableItems",
+                        service_name="bgvoice.v1.PipelineService",
+                        input=ListReadableItemsRequest,
+                        output=ListReadableItemsResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.list_readable_items,
+                ),
                 "/bgvoice.v1.PipelineService/ListExtractionRuns": Endpoint.unary(
                     method=MethodInfo(
                         name="ListExtractionRuns",
@@ -286,7 +299,7 @@ class PipelineServiceClient(ConnectClient):
         self,
         request: GetInstallationRequest,
         *,
-        headers: Headers | Mapping[str, str] | None = None, 
+        headers: Headers | Mapping[str, str] | None = None,
         timeout_ms: int | None = None,
     ) -> Installation:
         return await self.execute_unary(
@@ -306,7 +319,7 @@ class PipelineServiceClient(ConnectClient):
         self,
         request: ListVoicesRequest,
         *,
-        headers: Headers | Mapping[str, str] | None = None, 
+        headers: Headers | Mapping[str, str] | None = None,
         timeout_ms: int | None = None,
     ) -> ListVoicesResponse:
         return await self.execute_unary(
@@ -326,7 +339,7 @@ class PipelineServiceClient(ConnectClient):
         self,
         request: GetVoiceRequest,
         *,
-        headers: Headers | Mapping[str, str] | None = None, 
+        headers: Headers | Mapping[str, str] | None = None,
         timeout_ms: int | None = None,
     ) -> Voice:
         return await self.execute_unary(
@@ -346,7 +359,7 @@ class PipelineServiceClient(ConnectClient):
         self,
         request: ListCharactersRequest,
         *,
-        headers: Headers | Mapping[str, str] | None = None, 
+        headers: Headers | Mapping[str, str] | None = None,
         timeout_ms: int | None = None,
     ) -> ListCharactersResponse:
         return await self.execute_unary(
@@ -366,7 +379,7 @@ class PipelineServiceClient(ConnectClient):
         self,
         request: GetCharacterRequest,
         *,
-        headers: Headers | Mapping[str, str] | None = None, 
+        headers: Headers | Mapping[str, str] | None = None,
         timeout_ms: int | None = None,
     ) -> Character:
         return await self.execute_unary(
@@ -386,7 +399,7 @@ class PipelineServiceClient(ConnectClient):
         self,
         request: ListDialoguesRequest,
         *,
-        headers: Headers | Mapping[str, str] | None = None, 
+        headers: Headers | Mapping[str, str] | None = None,
         timeout_ms: int | None = None,
     ) -> ListDialoguesResponse:
         return await self.execute_unary(
@@ -406,7 +419,7 @@ class PipelineServiceClient(ConnectClient):
         self,
         request: GetDialogueRequest,
         *,
-        headers: Headers | Mapping[str, str] | None = None, 
+        headers: Headers | Mapping[str, str] | None = None,
         timeout_ms: int | None = None,
     ) -> Dialogue:
         return await self.execute_unary(
@@ -426,7 +439,7 @@ class PipelineServiceClient(ConnectClient):
         self,
         request: ListDialogueLinesRequest,
         *,
-        headers: Headers | Mapping[str, str] | None = None, 
+        headers: Headers | Mapping[str, str] | None = None,
         timeout_ms: int | None = None,
     ) -> ListDialogueLinesResponse:
         return await self.execute_unary(
@@ -446,7 +459,7 @@ class PipelineServiceClient(ConnectClient):
         self,
         request: ListCharacterSoundsRequest,
         *,
-        headers: Headers | Mapping[str, str] | None = None, 
+        headers: Headers | Mapping[str, str] | None = None,
         timeout_ms: int | None = None,
     ) -> ListCharacterSoundsResponse:
         return await self.execute_unary(
@@ -466,7 +479,7 @@ class PipelineServiceClient(ConnectClient):
         self,
         request: ListDialogueTransitionsRequest,
         *,
-        headers: Headers | Mapping[str, str] | None = None, 
+        headers: Headers | Mapping[str, str] | None = None,
         timeout_ms: int | None = None,
     ) -> ListDialogueTransitionsResponse:
         return await self.execute_unary(
@@ -486,7 +499,7 @@ class PipelineServiceClient(ConnectClient):
         self,
         request: ListRacesRequest,
         *,
-        headers: Headers | Mapping[str, str] | None = None, 
+        headers: Headers | Mapping[str, str] | None = None,
         timeout_ms: int | None = None,
     ) -> ListRacesResponse:
         return await self.execute_unary(
@@ -506,7 +519,7 @@ class PipelineServiceClient(ConnectClient):
         self,
         request: ListCharacterClassesRequest,
         *,
-        headers: Headers | Mapping[str, str] | None = None, 
+        headers: Headers | Mapping[str, str] | None = None,
         timeout_ms: int | None = None,
     ) -> ListCharacterClassesResponse:
         return await self.execute_unary(
@@ -526,7 +539,7 @@ class PipelineServiceClient(ConnectClient):
         self,
         request: ListKitsRequest,
         *,
-        headers: Headers | Mapping[str, str] | None = None, 
+        headers: Headers | Mapping[str, str] | None = None,
         timeout_ms: int | None = None,
     ) -> ListKitsResponse:
         return await self.execute_unary(
@@ -546,7 +559,7 @@ class PipelineServiceClient(ConnectClient):
         self,
         request: ListIdentifierDefinitionsRequest,
         *,
-        headers: Headers | Mapping[str, str] | None = None, 
+        headers: Headers | Mapping[str, str] | None = None,
         timeout_ms: int | None = None,
     ) -> ListIdentifierDefinitionsResponse:
         return await self.execute_unary(
@@ -562,11 +575,31 @@ class PipelineServiceClient(ConnectClient):
             timeout_ms=timeout_ms,
         )
 
+    async def list_readable_items(
+        self,
+        request: ListReadableItemsRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> ListReadableItemsResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="ListReadableItems",
+                service_name="bgvoice.v1.PipelineService",
+                input=ListReadableItemsRequest,
+                output=ListReadableItemsResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
     async def list_extraction_runs(
         self,
         request: ListExtractionRunsRequest,
         *,
-        headers: Headers | Mapping[str, str] | None = None, 
+        headers: Headers | Mapping[str, str] | None = None,
         timeout_ms: int | None = None,
     ) -> ListExtractionRunsResponse:
         return await self.execute_unary(
@@ -623,6 +656,9 @@ class PipelineServiceSync(Protocol):
         raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
 
     def list_identifier_definitions(self, request: ListIdentifierDefinitionsRequest, ctx: RequestContext[ListIdentifierDefinitionsRequest, ListIdentifierDefinitionsResponse]) -> ListIdentifierDefinitionsResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    def list_readable_items(self, request: ListReadableItemsRequest, ctx: RequestContext[ListReadableItemsRequest, ListReadableItemsResponse]) -> ListReadableItemsResponse:
         raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
 
     def list_extraction_runs(self, request: ListExtractionRunsRequest, ctx: RequestContext[ListExtractionRunsRequest, ListExtractionRunsResponse]) -> ListExtractionRunsResponse:
@@ -780,6 +816,16 @@ class PipelineServiceWSGIApplication(ConnectWSGIApplication):
                     ),
                     function=service.list_identifier_definitions,
                 ),
+                "/bgvoice.v1.PipelineService/ListReadableItems": EndpointSync.unary(
+                    method=MethodInfo(
+                        name="ListReadableItems",
+                        service_name="bgvoice.v1.PipelineService",
+                        input=ListReadableItemsRequest,
+                        output=ListReadableItemsResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=service.list_readable_items,
+                ),
                 "/bgvoice.v1.PipelineService/ListExtractionRuns": EndpointSync.unary(
                     method=MethodInfo(
                         name="ListExtractionRuns",
@@ -832,7 +878,7 @@ class PipelineServiceClientSync(ConnectClientSync):
         self,
         request: GetInstallationRequest,
         *,
-        headers: Headers | Mapping[str, str] | None = None, 
+        headers: Headers | Mapping[str, str] | None = None,
         timeout_ms: int | None = None,
     ) -> Installation:
         return self.execute_unary(
@@ -851,7 +897,7 @@ class PipelineServiceClientSync(ConnectClientSync):
         self,
         request: ListVoicesRequest,
         *,
-        headers: Headers | Mapping[str, str] | None = None, 
+        headers: Headers | Mapping[str, str] | None = None,
         timeout_ms: int | None = None,
     ) -> ListVoicesResponse:
         return self.execute_unary(
@@ -870,7 +916,7 @@ class PipelineServiceClientSync(ConnectClientSync):
         self,
         request: GetVoiceRequest,
         *,
-        headers: Headers | Mapping[str, str] | None = None, 
+        headers: Headers | Mapping[str, str] | None = None,
         timeout_ms: int | None = None,
     ) -> Voice:
         return self.execute_unary(
@@ -889,7 +935,7 @@ class PipelineServiceClientSync(ConnectClientSync):
         self,
         request: ListCharactersRequest,
         *,
-        headers: Headers | Mapping[str, str] | None = None, 
+        headers: Headers | Mapping[str, str] | None = None,
         timeout_ms: int | None = None,
     ) -> ListCharactersResponse:
         return self.execute_unary(
@@ -908,7 +954,7 @@ class PipelineServiceClientSync(ConnectClientSync):
         self,
         request: GetCharacterRequest,
         *,
-        headers: Headers | Mapping[str, str] | None = None, 
+        headers: Headers | Mapping[str, str] | None = None,
         timeout_ms: int | None = None,
     ) -> Character:
         return self.execute_unary(
@@ -927,7 +973,7 @@ class PipelineServiceClientSync(ConnectClientSync):
         self,
         request: ListDialoguesRequest,
         *,
-        headers: Headers | Mapping[str, str] | None = None, 
+        headers: Headers | Mapping[str, str] | None = None,
         timeout_ms: int | None = None,
     ) -> ListDialoguesResponse:
         return self.execute_unary(
@@ -946,7 +992,7 @@ class PipelineServiceClientSync(ConnectClientSync):
         self,
         request: GetDialogueRequest,
         *,
-        headers: Headers | Mapping[str, str] | None = None, 
+        headers: Headers | Mapping[str, str] | None = None,
         timeout_ms: int | None = None,
     ) -> Dialogue:
         return self.execute_unary(
@@ -965,7 +1011,7 @@ class PipelineServiceClientSync(ConnectClientSync):
         self,
         request: ListDialogueLinesRequest,
         *,
-        headers: Headers | Mapping[str, str] | None = None, 
+        headers: Headers | Mapping[str, str] | None = None,
         timeout_ms: int | None = None,
     ) -> ListDialogueLinesResponse:
         return self.execute_unary(
@@ -984,7 +1030,7 @@ class PipelineServiceClientSync(ConnectClientSync):
         self,
         request: ListCharacterSoundsRequest,
         *,
-        headers: Headers | Mapping[str, str] | None = None, 
+        headers: Headers | Mapping[str, str] | None = None,
         timeout_ms: int | None = None,
     ) -> ListCharacterSoundsResponse:
         return self.execute_unary(
@@ -1003,7 +1049,7 @@ class PipelineServiceClientSync(ConnectClientSync):
         self,
         request: ListDialogueTransitionsRequest,
         *,
-        headers: Headers | Mapping[str, str] | None = None, 
+        headers: Headers | Mapping[str, str] | None = None,
         timeout_ms: int | None = None,
     ) -> ListDialogueTransitionsResponse:
         return self.execute_unary(
@@ -1022,7 +1068,7 @@ class PipelineServiceClientSync(ConnectClientSync):
         self,
         request: ListRacesRequest,
         *,
-        headers: Headers | Mapping[str, str] | None = None, 
+        headers: Headers | Mapping[str, str] | None = None,
         timeout_ms: int | None = None,
     ) -> ListRacesResponse:
         return self.execute_unary(
@@ -1041,7 +1087,7 @@ class PipelineServiceClientSync(ConnectClientSync):
         self,
         request: ListCharacterClassesRequest,
         *,
-        headers: Headers | Mapping[str, str] | None = None, 
+        headers: Headers | Mapping[str, str] | None = None,
         timeout_ms: int | None = None,
     ) -> ListCharacterClassesResponse:
         return self.execute_unary(
@@ -1060,7 +1106,7 @@ class PipelineServiceClientSync(ConnectClientSync):
         self,
         request: ListKitsRequest,
         *,
-        headers: Headers | Mapping[str, str] | None = None, 
+        headers: Headers | Mapping[str, str] | None = None,
         timeout_ms: int | None = None,
     ) -> ListKitsResponse:
         return self.execute_unary(
@@ -1079,7 +1125,7 @@ class PipelineServiceClientSync(ConnectClientSync):
         self,
         request: ListIdentifierDefinitionsRequest,
         *,
-        headers: Headers | Mapping[str, str] | None = None, 
+        headers: Headers | Mapping[str, str] | None = None,
         timeout_ms: int | None = None,
     ) -> ListIdentifierDefinitionsResponse:
         return self.execute_unary(
@@ -1094,11 +1140,30 @@ class PipelineServiceClientSync(ConnectClientSync):
             headers=headers,
             timeout_ms=timeout_ms,
         )
+    def list_readable_items(
+        self,
+        request: ListReadableItemsRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> ListReadableItemsResponse:
+        return self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="ListReadableItems",
+                service_name="bgvoice.v1.PipelineService",
+                input=ListReadableItemsRequest,
+                output=ListReadableItemsResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
     def list_extraction_runs(
         self,
         request: ListExtractionRunsRequest,
         *,
-        headers: Headers | Mapping[str, str] | None = None, 
+        headers: Headers | Mapping[str, str] | None = None,
         timeout_ms: int | None = None,
     ) -> ListExtractionRunsResponse:
         return self.execute_unary(

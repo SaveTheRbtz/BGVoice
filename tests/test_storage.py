@@ -20,6 +20,7 @@ from bgvoice.model_types import (
     RunStatus,
     SourceKind,
 )
+from bgvoice.readable_models import ReadableItem
 from bgvoice.storage_records import (
     CharacterRecord,
     CharacterSoundRecord,
@@ -28,7 +29,14 @@ from bgvoice.storage_records import (
     DialogueTransitionRecord,
     ExtractionRunRecord,
 )
-from tests.factories import make_dialogue_dump, make_dialogue_resource, make_dump, make_resource
+from tests.factories import (
+    make_dialogue_dump,
+    make_dialogue_resource,
+    make_dump,
+    make_item_dump,
+    make_item_resource,
+    make_resource,
+)
 from tests.scenarios import empty_metadata, finish_run, make_metadata, rows
 
 
@@ -359,6 +367,39 @@ def test_portraits_follow_character_references_and_replace_as_one_set(tmp_path: 
     assert [(row.resref, row.width, row.height) for row in database.portraits()] == [
         ("AERIES", 54, 84)
     ]
+
+
+def test_readable_items_replace_the_complete_published_set(tmp_path: Path) -> None:
+    database = PipelineDatabase(tmp_path / "readables.lancedb")
+    book = ReadableItem.from_dump(make_item_resource(), make_item_dump())
+    scroll = ReadableItem.from_dump(
+        make_item_resource("SCROLL.ITM"),
+        make_item_dump("SCROLL.ITM", category=11, ground_icon="GSCRL01"),
+    )
+    assert book is not None and scroll is not None
+
+    first_run = database.start_run(
+        tmp_path,
+        "iecli test",
+        run_kind=RunKind.READABLE_ITEMS,
+    )
+    database.replace_readable_items(first_run, [book, scroll])
+    finish_run(database, first_run, attempted=2)
+    assert [item.resource_name for item in database.readable_items()] == [
+        "BOOK.ITM",
+        "SCROLL.ITM",
+    ]
+
+    second_run = database.start_run(
+        tmp_path,
+        "iecli test",
+        run_kind=RunKind.READABLE_ITEMS,
+    )
+    database.replace_readable_items(second_run, [scroll])
+    assert [
+        (item.resource_name, item.display_title, item.text_length)
+        for item in database.readable_items()
+    ] == [("SCROLL.ITM", "A Fine Book", len("Identified text"))]
 
 
 def test_run_lifecycle_records_progress_and_stats(tmp_path: Path) -> None:

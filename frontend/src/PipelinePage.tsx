@@ -40,6 +40,7 @@ function PipelineOverview({ installation }: { installation: Installation | null 
     characterClasses,
     kits,
     identifierDefinitions,
+    readableItems,
     generatedVoices,
     uniqueInworldVoices,
     directedLines,
@@ -139,6 +140,7 @@ function PipelineOverview({ installation }: { installation: Installation | null 
           <PipelineMetric label="Classes" value={characterClasses} />
           <PipelineMetric label="Kits" value={kits} />
           <PipelineMetric label="Identifiers" value={identifierDefinitions} />
+          <PipelineMetric label="Readable items" value={readableItems} />
         </dl>
       </section>
     </div>

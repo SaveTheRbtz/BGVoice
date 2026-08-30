@@ -32,6 +32,7 @@ describe("public URL state", () => {
       ["/dialogue-lines/npc", { name: "dialogue-lines", lineKind: "npc" }],
       ["/dialogue-lines/player", { name: "dialogue-lines", lineKind: "player" }],
       ["/dialogue-lines/journal", { name: "dialogue-lines", lineKind: "journal" }],
+      ["/readable-items", { name: "readable-items" }],
       ["/dialogue-lines/unknown", { name: "not-found" }],
       ["/pipeline", { name: "pipeline" }],
       ["/extraction-runs", { name: "extraction-runs" }],

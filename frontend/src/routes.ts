@@ -13,6 +13,7 @@ export type AppRoute =
   | { name: "dialogue-lines"; lineKind: DialogueLineKind }
   | { name: "dialogue-transitions" }
   | { name: "character-sounds" }
+  | { name: "readable-items" }
   | { name: "races" }
   | { name: "character-classes" }
   | { name: "kits" }
@@ -45,6 +46,7 @@ const SINGLE_ROUTES = {
   "extraction-runs": { name: "extraction-runs" },
   "dialogue-transitions": { name: "dialogue-transitions" },
   "character-sounds": { name: "character-sounds" },
+  "readable-items": { name: "readable-items" },
 } satisfies Record<string, AppRoute>;
 
 const LINE_ROUTES = {

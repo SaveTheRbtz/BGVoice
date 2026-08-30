@@ -20,6 +20,7 @@ from bgvoice.model_types import (
     HappinessAlignment,
     IdentifierKind,
     InteractionKind,
+    ReadableItemKind,
     ResourceSource,
     ResourceTargetType,
     RunKind,
@@ -167,6 +168,40 @@ class PortraitImageRecord(_Record):
     width: int = Field(gt=0)
     height: int = Field(gt=0)
     png: bytes = Field(min_length=1)
+
+
+class ReadableItemRecord(_Record):
+    """One effective readable ITM with both source and preferred localized text."""
+
+    resource_name: str = Field(min_length=1)
+    resref: str = Field(min_length=1, max_length=8)
+    source: ResourceSource
+    kind: ReadableItemKind = Field(strict=False)
+    item_type: int = Field(ge=0, le=0xFFFF)
+    ground_icon: str | None = Field(default=None, max_length=8)
+    icon: str | None = Field(default=None, max_length=8)
+    description_image: str | None = Field(default=None, max_length=8)
+    general_name_strref: int = Field(ge=0, le=0xFFFF_FFFF)
+    general_name: str | None
+    identified_name_strref: int = Field(ge=0, le=0xFFFF_FFFF)
+    identified_name: str | None
+    general_description_strref: int = Field(ge=0, le=0xFFFF_FFFF)
+    general_description: str | None
+    identified_description_strref: int = Field(ge=0, le=0xFFFF_FFFF)
+    identified_description: str | None
+    display_title: str = Field(min_length=1)
+    title_strref: int = Field(ge=0, le=0xFFFF_FFFF)
+    text: str = Field(min_length=1)
+    text_strref: int = Field(ge=0, le=0xFFFF_FFFF)
+    text_length: int = Field(gt=0)
+    item_version: str = Field(min_length=1)
+    serialized_size: int = Field(ge=0)
+    search_text: str
+
+    @model_validator(mode="after")
+    def validate_text_length(self) -> Self:
+        assert self.text_length == len(self.text), "readable item text length must match its text"
+        return self
 
 
 class CharacterSoundRecord(_Record):

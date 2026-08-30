@@ -67,6 +67,7 @@ uv run bgvoice extract-metadata --game "D:\Games\BG\BG2EE-EET"
 uv run bgvoice extract-dialogues --game "D:\Games\BG\BG2EE-EET"
 uv run bgvoice extract-characters --game "D:\Games\BG\BG2EE-EET"
 uv run bgvoice extract-portraits --game "D:\Games\BG\BG2EE-EET"
+uv run bgvoice extract-readables --game "D:\Games\BG\BG2EE-EET"
 uv run bgvoice attribute-dialogues
 ```
 
@@ -83,7 +84,9 @@ uv run bgvoice attribute-dialogues
    levels, abilities, morale, reputation, racial enemy, and both raw and normalized kit values.
 4. `extract-portraits` intersects the CRE portrait references with the effective BMP inventory,
    extracts every referenced image once, and stores its original dimensions and PNG bytes by resref.
-5. `attribute-dialogues` combines direct CRE dialogue fields with imported party/banter links, then
+5. `extract-readables` scans the effective ITM inventory once and stores localized books and scrolls,
+   retaining both general and identified TLK names and descriptions alongside the preferred text.
+6. `attribute-dialogues` combines direct CRE dialogue fields with imported party/banter links, then
    accounts for matched, dangling, and failed character references and every attributed or
    unattributed dialogue and line. It groups successfully extracted CREs by their resolved,
    case-insensitive display name and publishes only groups with NPC lines. Each voice retains its

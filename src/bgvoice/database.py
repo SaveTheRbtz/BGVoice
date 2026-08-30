@@ -35,6 +35,7 @@ from bgvoice.model_types import (
     utc_now,
 )
 from bgvoice.pipeline_models import AttributionSummary, DatabaseStats
+from bgvoice.readable_models import ReadableItem
 from bgvoice.record_builders import (
     character_batch_records,
     dialogue_batch_records,
@@ -68,6 +69,7 @@ from bgvoice.storage_records import (
     MonthDefinitionRecord,
     PortraitImageRecord,
     RaceTextRecord,
+    ReadableItemRecord,
     SoundsetLineRecord,
     SoundSlotGroupRecord,
     SoundSlotSuffixRecord,
@@ -96,6 +98,7 @@ from bgvoice.storage_schema import (
     _MONTHS,
     _PORTRAIT_IMAGES,
     _RACE_TEXTS,
+    _READABLE_ITEMS,
     _SOUND_SLOT_GROUPS,
     _SOUND_SLOT_SUFFIXES,
     _SOUNDSET_LINES,
@@ -395,6 +398,27 @@ class PipelineDatabase:
             key=lambda portrait: (portrait.resref.casefold(), portrait.resref),
         )
 
+    def replace_readable_items(
+        self,
+        run_id: str,
+        items: Sequence[ReadableItem],
+    ) -> None:
+        """Replace the complete set of effective books and scrolls."""
+        self._run(run_id, expected_kind=RunKind.READABLE_ITEMS)
+        records = [ReadableItemRecord.model_validate(item, from_attributes=True) for item in items]
+        self._assert_unique_names(
+            [record.resource_name for record in records],
+            kind="readable items",
+        )
+        self._replace(_READABLE_ITEMS, "resource_name", ReadableItemRecord, records)
+
+    def readable_items(self) -> list[ReadableItemRecord]:
+        """Return readable items in stable resource order."""
+        return sorted(
+            self._records(_READABLE_ITEMS, ReadableItemRecord),
+            key=lambda item: (item.resource_name.casefold(), item.resource_name),
+        )
+
     def apply_detail_batch(
         self,
         run_id: str,
@@ -612,6 +636,8 @@ class PipelineDatabase:
                 self._optimize(_CHARACTER_SOUNDS, self._table(_CHARACTER_SOUNDS))
             elif run.run_kind is RunKind.PORTRAITS:
                 self._optimize(_PORTRAIT_IMAGES, self._table(_PORTRAIT_IMAGES))
+            elif run.run_kind is RunKind.READABLE_ITEMS:
+                self._optimize(_READABLE_ITEMS, self._table(_READABLE_ITEMS))
             elif run.run_kind is RunKind.DIALOGUES:
                 self._optimize(_DIALOGUES, self._table(_DIALOGUES))
                 self._optimize(_DIALOGUE_LINES, self._table(_DIALOGUE_LINES))

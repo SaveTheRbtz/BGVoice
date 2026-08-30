@@ -10,6 +10,8 @@ from bgvoice.model_types import (
     DetailStatus,
     DialogueLineKind,
     IdentifierKind,
+    ReadableItemKind,
+    ResourceSource,
     SourceKind,
 )
 from bgvoice.storage_records import CharacterDirection, NarratorDirection
@@ -52,6 +54,12 @@ type RaceSort = Literal["race_id", "row_name", "name", "source_resource"]
 type ClassSort = Literal["class_id", "row_name", "lower_name", "fallen"]
 type KitSort = Literal["row_id", "row_name", "lower_name", "class_id"]
 type IdentifierSort = Literal["kind", "value", "source_resource"]
+type ReadableItemSort = Literal[
+    "display_title",
+    "resource_name",
+    "text_length",
+    "serialized_size",
+]
 type VoiceSort = Literal[
     "display_name",
     "variant_count",
@@ -180,6 +188,13 @@ class IdentifierQuery(PageQuery):
     q: str | None = Field(default=None, max_length=300)
     kind: SimpleIdentifierKind | None = None
     sort: IdentifierSort | None = None
+    direction: SortDirection = "asc"
+
+
+class ReadableItemQuery(PageQuery):
+    q: str | None = Field(default=None, max_length=300)
+    kind: ReadableItemKind | None = None
+    sort: ReadableItemSort | None = None
     direction: SortDirection = "asc"
 
 
@@ -471,6 +486,36 @@ class IdentifierPage(ResultPage[IdentifierRow, IdentifierSort | Literal["relevan
     pass
 
 
+class ReadableItemRow(_ReaderModel):
+    resource_name: str
+    resref: str
+    source: ResourceSource
+    kind: ReadableItemKind
+    item_version: str
+    item_type: int
+    icon: str | None
+    ground_icon: str | None
+    description_image: str | None
+    general_name_strref: int
+    general_name: str | None
+    identified_name_strref: int
+    identified_name: str | None
+    general_description_strref: int
+    general_description: str | None
+    identified_description_strref: int
+    identified_description: str | None
+    display_title: str
+    title_strref: int
+    text: str
+    text_strref: int
+    text_length: int
+    serialized_size: int
+
+
+class ReadableItemPage(ResultPage[ReadableItemRow, ReadableItemSort | Literal["relevance"]]):
+    pass
+
+
 class PipelineStats(_ReaderModel):
     database_path: str
     database_size: int = Field(ge=0)
@@ -508,6 +553,7 @@ class PipelineStats(_ReaderModel):
     kits_total: int = Field(ge=0)
     identifiers_total: int = Field(ge=0)
     campaigns_total: int = Field(ge=0)
+    readable_items_total: int = Field(ge=0)
     dialogues_attributed: int = Field(ge=0)
     dialogues_unattributed: int = Field(ge=0)
     attributed_dialogue_lines: int = Field(ge=0)

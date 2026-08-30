@@ -16,6 +16,7 @@ import {
   RaceBrowser,
 } from "./MetadataBrowser";
 import { PipelinePage } from "./PipelinePage";
+import { ReadableItemBrowser } from "./ReadableItemBrowser";
 import { toNumber } from "./pipeline-labels";
 import { dialogueLinesPath, followLink, navigate, useRoute } from "./routes";
 import type { AppRoute, DialogueLineKind } from "./routes";
@@ -57,6 +58,7 @@ const NAVIGATION: readonly NavigationGroup[] = [
     links: [
       { href: "/characters", label: "Characters", icon: "C", route: "characters" },
       { href: "/character-sounds", label: "Sounds", icon: "S", route: "character-sounds" },
+      { href: "/readable-items", label: "Readable items", icon: "R", route: "readable-items" },
     ],
   },
   {
@@ -84,6 +86,7 @@ const ROUTE_TITLES = {
   "dialogue-lines": "Dialogue lines",
   "dialogue-transitions": "Transitions",
   "character-sounds": "Character sounds",
+  "readable-items": "Readable items",
   races: "Races",
   "character-classes": "Character classes",
   kits: "Kits",
@@ -96,6 +99,7 @@ const ROUTE_TITLES = {
 const STATIC_PAGES: Partial<Record<AppRoute["name"], ComponentType>> = {
   "dialogue-transitions": TransitionBrowser,
   "character-sounds": SoundBrowser,
+  "readable-items": ReadableItemBrowser,
   "extraction-runs": ExtractionRunsPage,
   races: RaceBrowser,
   "character-classes": ClassBrowser,

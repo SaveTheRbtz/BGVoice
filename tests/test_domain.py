@@ -19,12 +19,70 @@ from bgvoice.metadata_models import SoundSlotGroup
 from bgvoice.model_types import (
     DialogueLineKind,
     PortraitImage,
+    ReadableItemKind,
     SoundSlotId,
     class_text_kit_id_from_kit_ids,
     cre_kit_value_from_bytes,
     kit_ids_value_from_cre,
 )
-from tests.factories import make_dialogue_dump, make_dump, make_portrait_resource, make_resource
+from bgvoice.readable_models import ReadableItem
+from tests.factories import (
+    make_dialogue_dump,
+    make_dump,
+    make_item_dump,
+    make_item_resource,
+    make_portrait_resource,
+    make_resource,
+)
+
+
+@pytest.mark.parametrize(
+    ("category", "ground_icon", "identified", "general", "expected_kind", "expected_text"),
+    [
+        (0, "GBOOK01", "Identified text", "General text", ReadableItemKind.BOOK, "Identified text"),
+        (37, "GSCRL01", None, "A parchment", ReadableItemKind.SCROLL, "A parchment"),
+        (37, None, None, "A book", ReadableItemKind.BOOK, "A book"),
+        (11, None, "A spell", "Generic scroll", ReadableItemKind.SCROLL, "A spell"),
+        (20, None, "A sword", None, None, None),
+        (37, None, "  ", None, None, None),
+    ],
+)
+def test_readable_items_use_presentation_then_item_type_and_require_text(
+    category: int,
+    ground_icon: str | None,
+    identified: str | None,
+    general: str | None,
+    expected_kind: ReadableItemKind | None,
+    expected_text: str | None,
+) -> None:
+    resource = make_item_resource()
+    item = ReadableItem.from_dump(
+        resource,
+        make_item_dump(
+            category=category,
+            ground_icon=ground_icon,
+            identified_description=identified,
+            general_description=general,
+        ),
+    )
+
+    if expected_kind is None:
+        assert item is None
+        return
+    assert item is not None
+    assert expected_text is not None
+    assert (item.kind, item.display_title, item.title_strref) == (
+        expected_kind,
+        "A Fine Book",
+        11,
+    )
+    assert (item.text, item.text_strref, item.text_length) == (
+        expected_text,
+        13 if identified and identified.strip() else 12,
+        len(expected_text),
+    )
+    assert (item.general_description, item.identified_description) == (general, identified)
+    assert item.resource_name in item.search_text
 
 
 def test_cre_projection_preserves_voice_metadata_and_sound_slots() -> None:

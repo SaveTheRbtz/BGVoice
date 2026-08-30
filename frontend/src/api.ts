@@ -14,6 +14,7 @@ import {
   type Installation,
   type Kit,
   type Race,
+  type ReadableItem,
   type Voice,
 } from "./gen/bgvoice/v1/pipeline_pb";
 
@@ -158,6 +159,14 @@ export async function listIdentifierDefinitions(
 ): Promise<ListResult<IdentifierDefinition>> {
   const response = await client.listIdentifierDefinitions(listRequest(query), options(signal));
   return listResult(response.identifierDefinitions, response);
+}
+
+export async function listReadableItems(
+  query: ListQuery,
+  signal?: AbortSignal,
+): Promise<ListResult<ReadableItem>> {
+  const response = await client.listReadableItems(listRequest(query), options(signal));
+  return listResult(response.readableItems, response);
 }
 
 export async function listExtractionRuns(

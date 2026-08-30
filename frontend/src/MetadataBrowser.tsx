@@ -10,11 +10,12 @@ import {
 import {
   BrowserScaffold,
   NumberFilter,
+  OrderSelect,
   SelectFilter,
   TableBrowser,
   TextFilter,
 } from "./browser";
-import type { Column, FilterControls } from "./browser";
+import type { Column, FilterControls, OrderOption } from "./browser";
 import { formatCount, formatHex } from "./format";
 import { IdentifierKind } from "./gen/bgvoice/v1/pipeline_pb";
 import type {
@@ -39,11 +40,6 @@ const IDENTIFIER_KINDS = [
 ] as const;
 
 type IdentifierOrder = "kind" | "value" | "display_name" | "source_resource";
-
-interface OrderOption {
-  value: string;
-  label: string;
-}
 
 const RACE_ORDERS = [
   { value: "race_id asc", label: "Engine ID" },
@@ -193,7 +189,7 @@ function DefinitionCatalog<Row extends { name: string }>({
       renderFilters={(controls) => (
         <>
           {renderFilters(controls)}
-          <DefinitionOrder
+          <OrderSelect
             value={browser.query.orderBy}
             options={orderOptions}
             onChange={browser.setOrderBy}
@@ -210,28 +206,6 @@ function DefinitionCatalog<Row extends { name: string }>({
         )}
       </div>
     </BrowserScaffold>
-  );
-}
-
-function DefinitionOrder({
-  value,
-  options,
-  onChange,
-}: {
-  value: string;
-  options: readonly OrderOption[];
-  onChange: (value: string) => void;
-}) {
-  return (
-    <label className="filter">
-      <span>Order</span>
-      <select value={value} onChange={(event) => onChange(event.currentTarget.value)}>
-        {value === "" && <option value="">Relevance</option>}
-        {options.map((option) => (
-          <option key={option.value} value={option.value}>{option.label}</option>
-        ))}
-      </select>
-    </label>
   );
 }
 

@@ -15,6 +15,7 @@ from bgvoice.iecli import (
     DialogueIeCliClient,
     MetadataIeCliClient,
     PortraitIeCliClient,
+    ReadableIeCliClient,
 )
 from bgvoice.metadata import build_metadata
 from bgvoice.model_types import (
@@ -25,6 +26,7 @@ from bgvoice.model_types import (
     TerminalRunStatus,
 )
 from bgvoice.pipeline_models import ExtractionProgress, ExtractionSummary
+from bgvoice.readable_models import ReadableItem
 
 type ProgressCallback = Callable[[ExtractionProgress], None]
 type CommitCallback = Callable[[int, int], None]
@@ -151,6 +153,87 @@ def extract_portraits(
             attempted=attempted,
             extracted=extracted,
             failures=0,
+        )
+        raise
+
+
+def extract_readable_items(
+    client: ReadableIeCliClient,
+    database: PipelineDatabase,
+    game_root: Path,
+    *,
+    workers: PositiveInt = 8,
+    progress: ProgressCallback | None = None,
+) -> ExtractionSummary:
+    """Scan effective ITMs and publish all books and scrolls with resolved text."""
+    root = game_root.expanduser().resolve()
+    iecli_version = client.version()
+    run_id = database.start_run(root, iecli_version, run_kind=RunKind.READABLE_ITEMS)
+    discovered = attempted = failed = 0
+    extracted = 0
+    readable_items: list[ReadableItem] = []
+
+    try:
+        resources = client.list_items(root)
+        discovered = attempted = len(resources)
+
+        def collect(
+            items: Sequence[ReadableItem | None],
+            _failures: Sequence[Failure],
+        ) -> None:
+            readable_items.extend(item for item in items if item is not None)
+
+        def record_commit(_succeeded: int, failures: int) -> None:
+            nonlocal failed
+            failed += failures
+
+        _extract_resources(
+            resources,
+            root,
+            name=lambda resource: resource.resource_name,
+            dump=client.dump_item,
+            build=ReadableItem.from_dump,
+            save=collect,
+            workers=int(workers),
+            thread_name_prefix="iecli-itm",
+            progress=progress,
+            committed=record_commit,
+        )
+        database.replace_readable_items(
+            run_id,
+            sorted(readable_items, key=lambda item: item.resource_name.casefold()),
+        )
+        extracted = len(readable_items)
+        status: TerminalRunStatus = RunStatus.COMPLETE_WITH_ERRORS if failed else RunStatus.COMPLETE
+        database.finish_run(
+            run_id,
+            status=status,
+            discovered=discovered,
+            attempted=attempted,
+            extracted=extracted,
+            failures=failed,
+        )
+        return ExtractionSummary(
+            run_id=run_id,
+            game_root=root,
+            database_path=database.path,
+            iecli_version=iecli_version,
+            discovered=discovered,
+            attempted=attempted,
+            extracted=extracted,
+            failed=failed,
+            skipped=discovered - extracted - failed,
+            status=status,
+        )
+    except BaseException as error:
+        _fail_run(
+            database,
+            run_id,
+            error,
+            discovered=discovered,
+            attempted=attempted,
+            extracted=extracted,
+            failures=failed,
         )
         raise
 

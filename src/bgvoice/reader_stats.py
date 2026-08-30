@@ -37,6 +37,7 @@ class AttributionSnapshot:
 
 @dataclass(frozen=True, slots=True)
 class StatsTableCounts:
+    readable_items: int
     character_sounds: int
     soundset_lines: int
     line_records: int
@@ -143,6 +144,7 @@ def pipeline_stats(
         kits_total=metadata_counts.kits,
         identifiers_total=metadata_counts.identifiers,
         campaigns_total=metadata_counts.campaigns,
+        readable_items_total=tables.readable_items,
         dialogues_attributed=dialogue.attributed,
         dialogues_unattributed=dialogue.unattributed,
         attributed_dialogue_lines=dialogue.attributed_lines,

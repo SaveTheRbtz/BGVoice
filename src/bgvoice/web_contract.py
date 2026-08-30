@@ -26,6 +26,7 @@ class Collection(StrEnum):
     CHARACTER_CLASSES = "characterClasses"
     KITS = "kits"
     IDENTIFIER_DEFINITIONS = "identifierDefinitions"
+    READABLE_ITEMS = "readableItems"
     EXTRACTION_RUNS = "extractionRuns"
 
 

@@ -13,6 +13,8 @@ from tests.factories import (
     make_dialogue_dump,
     make_dialogue_resource,
     make_dump,
+    make_item_dump,
+    make_item_resource,
     make_portrait_resource,
     make_resource,
 )
@@ -46,8 +48,10 @@ def test_json_commands_are_exact_and_responses_are_typed(
                 json.dumps([make_resource().model_dump(by_alias=True)]),
                 json.dumps([make_dialogue_resource().model_dump(by_alias=True)]),
                 json.dumps([make_portrait_resource().model_dump(by_alias=True)]),
+                json.dumps([make_item_resource().model_dump(by_alias=True)]),
                 make_dump("MONKTU 8.CRE").model_dump_json(by_alias=True),
                 make_dialogue_dump().model_dump_json(by_alias=True),
+                make_item_dump().model_dump_json(by_alias=True),
             ]
         ),
     )
@@ -57,8 +61,10 @@ def test_json_commands_are_exact_and_responses_are_typed(
     assert client.list_creatures(game_root)[0].resref == "AERIE"
     assert client.list_dialogues(game_root)[0].resource_type == "DLG"
     assert client.list_portraits(game_root)[0].resref == "AERIES"
+    assert client.list_items(game_root)[0].resource_type == "ITM"
     assert client.dump_creature(game_root, "MONKTU 8.CRE").resource_name == "MONKTU 8.CRE"
     assert client.dump_dialogue(game_root, "AERIE.DLG").header.num_states == 2
+    assert client.dump_item(game_root, "BOOK.ITM").header.category.raw == 0
 
     program = str(executable.resolve())
     assert [command for command, _ in calls] == [
@@ -66,6 +72,7 @@ def test_json_commands_are_exact_and_responses_are_typed(
         [program, "list", "--game", str(game_root), "--type", "CRE", "--format", "json"],
         [program, "list", "--game", str(game_root), "--type", "DLG", "--format", "json"],
         [program, "list", "--game", str(game_root), "--type", "BMP", "--format", "json"],
+        [program, "list", "--game", str(game_root), "--type", "ITM", "--format", "json"],
         [
             program,
             "dump",
@@ -90,6 +97,18 @@ def test_json_commands_are_exact_and_responses_are_typed(
             "--strings",
             "both",
         ],
+        [
+            program,
+            "dump",
+            "--game",
+            str(game_root),
+            "--resource",
+            "BOOK.ITM",
+            "--format",
+            "json",
+            "--strings",
+            "both",
+        ],
     ]
     assert all(
         options
@@ -108,8 +127,10 @@ def test_json_commands_are_exact_and_responses_are_typed(
     [
         ("CRE", "aerie.cre", "AERIE.CRE", True),
         ("DLG", "aerie.dlg", "AERIE.DLG", True),
+        ("ITM", "book.itm", "BOOK.ITM", True),
         ("CRE", "MINSC.CRE", "AERIE.CRE", False),
         ("DLG", "MINSC.DLG", "AERIE.DLG", False),
+        ("ITM", "TOME.ITM", "BOOK.ITM", False),
     ],
 )
 def test_dump_identity_is_case_insensitive_but_must_match(
@@ -120,14 +141,20 @@ def test_dump_identity_is_case_insensitive_but_must_match(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    output = (
-        make_dump(returned).model_dump_json(by_alias=True)
-        if kind == "CRE"
-        else make_dialogue_dump(returned).model_dump_json(by_alias=True)
-    )
+    if kind == "CRE":
+        output = make_dump(returned).model_dump_json(by_alias=True)
+    elif kind == "DLG":
+        output = make_dialogue_dump(returned).model_dump_json(by_alias=True)
+    else:
+        output = make_item_dump(returned).model_dump_json(by_alias=True)
     _responses(monkeypatch, iter([output]))
     client = IeCli(tmp_path / "iecli.exe")
-    dump = client.dump_creature if kind == "CRE" else client.dump_dialogue
+    dumps = {
+        "CRE": client.dump_creature,
+        "DLG": client.dump_dialogue,
+        "ITM": client.dump_item,
+    }
+    dump = dumps[kind]
 
     if valid:
         assert dump(tmp_path, requested).resource_name == returned

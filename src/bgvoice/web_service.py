@@ -16,6 +16,7 @@ from bgvoice.model_types import (
     DetailStatus,
     DialogueLineKind,
     IdentifierKind,
+    ReadableItemKind,
     SourceKind,
 )
 from bgvoice.reader import PipelineReader
@@ -34,6 +35,8 @@ from bgvoice.reader_models import (
     LineQuery,
     RaceQuery,
     RaceRow,
+    ReadableItemQuery,
+    ReadableItemRow,
     SoundQuery,
     SoundRow,
     TransitionQuery,
@@ -63,6 +66,7 @@ from bgvoice.web_query import (
     LINE_ORDER,
     MAX_PAGE_SIZE,
     RACE_ORDER,
+    READABLE_ITEM_ORDER,
     READER_PAGE_SIZE,
     SOUND_ORDER,
     TRANSITION_ORDER,
@@ -90,6 +94,7 @@ from bgvoice.web_resources import (
     load_portrait_resrefs,
     optional_value,
     race,
+    readable_item,
     resolved_character_row,
     resolved_dialogue_row,
     selected_characters,
@@ -178,6 +183,7 @@ class PipelineService(pipeline_connect.PipelineService):
                 npc_lines=stats.npc_lines,
                 player_lines=stats.player_lines,
                 journal_lines=stats.journal_lines,
+                readable_items=stats.readable_items_total,
                 character_sounds=stats.character_sounds_total,
                 dialogue_transitions=stats.transition_edges_total,
                 races=stats.races_total,
@@ -834,6 +840,52 @@ class PipelineService(pipeline_connect.PipelineService):
             identifier_definitions=[identifier(row) for row in rows],
             next_page_token=next_token(
                 Collection.IDENTIFIER_DEFINITIONS,
+                request.filter,
+                request.order_by,
+                page,
+                len(rows),
+                total,
+            ),
+            total_size=total,
+        )
+
+    @_invalid_arguments
+    async def list_readable_items(
+        self,
+        request: pb.ListReadableItemsRequest,
+        _ctx: RequestContext[
+            pb.ListReadableItemsRequest,
+            pb.ListReadableItemsResponse,
+        ],
+    ) -> pb.ListReadableItemsResponse:
+        page = self._page(
+            Collection.READABLE_ITEMS,
+            parent=request.parent,
+            page_size=request.page_size,
+            page_token=request.page_token,
+            request_filter=request.filter,
+            order_by=request.order_by,
+        )
+        filters = Filter.parse(request.filter)
+        sort, direction = parse_order(request.order_by, READABLE_ITEM_ORDER)
+        query = ReadableItemQuery(
+            q=filters.search,
+            kind=filters.enum("kind", ReadableItemKind),
+            sort=sort,
+            direction=direction if sort is not None else "asc",
+        )
+        filters.finish()
+
+        async def load(page_number: int) -> ReaderPage[ReadableItemRow]:
+            return await self.reader().readable_items(
+                query.model_copy(update={"page": page_number, "page_size": READER_PAGE_SIZE})
+            )
+
+        rows, total = await read_window(page.offset, page.size, load)
+        return pb.ListReadableItemsResponse(
+            readable_items=[readable_item(row) for row in rows],
+            next_page_token=next_token(
+                Collection.READABLE_ITEMS,
                 request.filter,
                 request.order_by,
                 page,
