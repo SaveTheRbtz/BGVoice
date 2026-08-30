@@ -72,6 +72,7 @@ OPENAI_CONCURRENCY = 100
 NARRATOR_VOICE_ID = "narrator"
 DEFAULT_NAMED_RACE_COUNT = 9
 VOICE_DESIGN_SAMPLE_COUNT = 30
+VOICE_DESIGN_SAMPLE_MIN_CHARS = 50
 
 _NARRATOR_DISPLAY_NAME = "Narrator"
 _NARRATOR_DESCRIPTION = (
@@ -275,7 +276,7 @@ def _dialogue_samples(
         line.text
         for lines in dialogues.values()
         for line in lines
-        if line.text is not None and line.text.strip()
+        if line.text is not None and len(line.text.strip()) > VOICE_DESIGN_SAMPLE_MIN_CHARS
     }
     ranked = sorted(
         texts,
