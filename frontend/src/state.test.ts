@@ -20,38 +20,40 @@ const AERIE = `${ROOT}/characters/aerie-cre-10f6d857`;
 const IMOEN_DIALOGUE = `${ROOT}/dialogues/imoen2j-dlg-789f493a`;
 
 describe("public URL state", () => {
-  it("maps every route shape and writes canonical resource paths", () => {
-    const routes = [
-      ["/", { name: "voices", voiceName: null }],
-      ["/voices", { name: "voices", voiceName: null }],
-      ["/voices/imoen", { name: "voices", voiceName: `${ROOT}/voices/imoen` }],
-      ["/characters/aerie-cre-10f6d857", { name: "characters", resourceName: AERIE }],
-      ["/dialogues/imoen2j-dlg-789f493a", { name: "dialogues", resourceName: IMOEN_DIALOGUE }],
-      ["/dialogue-lines", { name: "dialogue-lines", lineKind: "npc" }],
-      ["/dialogue-lines/npc", { name: "dialogue-lines", lineKind: "npc" }],
-      ["/dialogue-lines/player", { name: "dialogue-lines", lineKind: "player" }],
-      ["/dialogue-lines/journal", { name: "dialogue-lines", lineKind: "journal" }],
-      ["/readable-items", { name: "readable-items" }],
-      ["/dialogue-lines/unknown", { name: "not-found" }],
-      ["/pipeline", { name: "pipeline" }],
-      ["/extraction-runs", { name: "extraction-runs" }],
-      ["/pipeline/unknown", { name: "not-found" }],
-      ["/definitions/races", { name: "races" }],
-      ["/definitions/character-classes", { name: "character-classes" }],
-      ["/definitions/unknown", { name: "not-found" }],
-      ["/voices/imoen/extra", { name: "not-found" }],
-    ] satisfies ReadonlyArray<readonly [string, AppRoute]>;
-    for (const [path, expected] of routes) expect(routeFromPath(path)).toEqual(expected);
+  it.for([
+    { path: "/", expected: { name: "voices", voiceName: null } },
+    { path: "/voices", expected: { name: "voices", voiceName: null } },
+    { path: "/voices/imoen", expected: { name: "voices", voiceName: `${ROOT}/voices/imoen` } },
+    { path: "/characters/aerie-cre-10f6d857", expected: { name: "characters", resourceName: AERIE } },
+    { path: "/dialogues/imoen2j-dlg-789f493a", expected: { name: "dialogues", resourceName: IMOEN_DIALOGUE } },
+    { path: "/dialogue-lines", expected: { name: "dialogue-lines", lineKind: "npc" } },
+    { path: "/dialogue-lines/npc", expected: { name: "dialogue-lines", lineKind: "npc" } },
+    { path: "/dialogue-lines/player", expected: { name: "dialogue-lines", lineKind: "player" } },
+    { path: "/dialogue-lines/journal", expected: { name: "dialogue-lines", lineKind: "journal" } },
+    { path: "/readable-items", expected: { name: "readable-items" } },
+    { path: "/pipeline", expected: { name: "pipeline" } },
+    { path: "/extraction-runs", expected: { name: "extraction-runs" } },
+    { path: "/definitions/races", expected: { name: "races" } },
+    { path: "/definitions/character-classes", expected: { name: "character-classes" } },
+    { path: "/dialogue-lines/unknown", expected: { name: "not-found" } },
+    { path: "/pipeline/unknown", expected: { name: "not-found" } },
+    { path: "/definitions/unknown", expected: { name: "not-found" } },
+    { path: "/voices/imoen/extra", expected: { name: "not-found" } },
+  ] satisfies ReadonlyArray<{ path: string; expected: AppRoute }>)("parses $path", ({ path, expected }) => {
+    expect(routeFromPath(path)).toEqual(expected);
+  });
 
-    const paths = [
-      [voicePath(`${ROOT}/voices/imoen`), "/voices/imoen"],
-      [voicePath(`${ROOT}/voices/imoen`, "?page_size=50"), "/voices/imoen?page_size=50"],
-      [characterPath(AERIE), "/characters/aerie-cre-10f6d857"],
-      [dialoguePath(IMOEN_DIALOGUE), "/dialogues/imoen2j-dlg-789f493a"],
-      [dialoguePath(IMOEN_DIALOGUE, "?page_size=50"), "/dialogues/imoen2j-dlg-789f493a?page_size=50"],
-    ] as const;
-    for (const [actual, expected] of paths) expect(actual).toBe(expected);
+  it.for([
+    { actual: voicePath(`${ROOT}/voices/imoen`), expected: "/voices/imoen" },
+    { actual: voicePath(`${ROOT}/voices/imoen`, "?page_size=50"), expected: "/voices/imoen?page_size=50" },
+    { actual: characterPath(AERIE), expected: "/characters/aerie-cre-10f6d857" },
+    { actual: dialoguePath(IMOEN_DIALOGUE), expected: "/dialogues/imoen2j-dlg-789f493a" },
+    { actual: dialoguePath(IMOEN_DIALOGUE, "?page_size=50"), expected: "/dialogues/imoen2j-dlg-789f493a?page_size=50" },
+  ])("writes $expected", ({ actual, expected }) => {
+    expect(actual).toBe(expected);
+  });
 
+  it("builds typed cross-resource filters", () => {
     const lineUrl = new URL(
       dialogueLinesPath({ voice_id: "imoen", voiced: false }),
       "http://localhost",

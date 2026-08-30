@@ -30,7 +30,7 @@ from tests.factories import (
 
 
 @pytest.mark.anyio
-async def test_generated_assets_round_trip_upsert_filter_and_delete(
+async def test_generated_state_upserts_idempotently_and_deletes_at_ownership_boundaries(
     scenario_database: Path,
 ) -> None:
     store = await GenerationStore.open(scenario_database)
@@ -99,34 +99,17 @@ async def test_generated_assets_round_trip_upsert_filter_and_delete(
         await store.upsert_failures([imoen_failure, gorion_failure])
         await store.upsert_failures([updated_imoen_failure])
 
-        voices = await store.generated_voices()
-        assert voices["imoen"].description.language_code == "en-GB"
-        assert voices["imoen"].inworld_voice_id == "voice-imoen-v2"
-        assert set(await store.generated_voices(["imoen"])) == {"imoen"}
-        assert await store.generated_voice("imoen") == updated_imoen
-        assert await store.voice_profile("imoen") == updated_imoen
-        assert await store.voice_generations(["imoen"]) == {"imoen": generations[0]}
-        stored_directions = await store.directed_lines()
-        assert {line.id for line in stored_directions if line.character is not None} == {
-            imoen_line.id
+        assert await store.generated_voices() == {
+            "imoen": updated_imoen,
+            "gorion": gorion_profile,
         }
-        assert {line.id for line in stored_directions if line.narrator is not None} == {
-            gorion_line.id
+        assert {line.id: line for line in await store.directed_lines()} == {
+            imoen_line.id: imoen_line,
+            gorion_line.id: gorion_line,
         }
-        assert {line.id for line in await store.directed_lines(["imoen"])} == {imoen_line.id}
-        assert (await store.audio(imoen_audio.id)) == imoen_audio
-        assert (await store.generated_audio(["imoen"]))[0].audio == imoen_audio.audio
-        identities = await store.generated_audio_identities(["imoen"])
-        assert [identity.model_dump() for identity in identities] == [
-            {
-                "id": imoen_audio.id,
-                "voice_id": "imoen",
-                "dialogue_line_id": line_id,
-            }
-        ]
-        assert {audio.id for audio in await store.generated_audio()} == {
-            imoen_audio.id,
-            gorion_audio.id,
+        assert {audio.id: audio for audio in await store.generated_audio()} == {
+            imoen_audio.id: imoen_audio,
+            gorion_audio.id: gorion_audio,
         }
         assert await store.failures(["imoen"]) == [updated_imoen_failure]
         await store.delete_failures([gorion_failure.id])

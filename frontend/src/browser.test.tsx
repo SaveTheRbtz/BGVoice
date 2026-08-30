@@ -67,7 +67,6 @@ describe("resource browser workflow", () => {
 
     await screen.findByText("Imoen");
     expect(query()).toMatchObject({ orderBy: "name desc", pageSize: 25, pageToken: "" });
-    expect(loadPage.mock.lastCall?.[1]).toBeInstanceOf(AbortSignal);
 
     await user.type(screen.getByRole("searchbox", { name: "Full-text search characters" }), "Imoen");
     await waitFor(() => expect(query()).toMatchObject({ filter: 'search("Imoen")', orderBy: "" }));
@@ -79,6 +78,8 @@ describe("resource browser workflow", () => {
     await waitFor(() => expect(query()).toMatchObject({ orderBy: "name desc" }));
     await user.click(screen.getByRole("button", { name: /Name/ }));
     await waitFor(() => expect(query()).toMatchObject({ orderBy: "name asc" }));
+    await user.click(screen.getByRole("button", { name: "Relevance" }));
+    await waitFor(() => expect(query()).toMatchObject({ orderBy: "" }));
 
     await user.selectOptions(screen.getByRole("combobox", { name: "Source" }), "override");
     await waitFor(() => expect(query()).toMatchObject({
@@ -121,7 +122,7 @@ describe("resource browser workflow", () => {
       .toBe(screen.getByDisplayValue("50"));
   });
 
-  it("reports a failed page load without discarding the browser shell", async () => {
+  it("reports a failed load without discarding the browser shell", async () => {
     const loadPage = vi.fn<(
       query: ListQuery,
       signal: AbortSignal,
@@ -130,6 +131,6 @@ describe("resource browser workflow", () => {
     renderBrowser(loadPage);
 
     expect((await screen.findByRole("alert")).textContent).toContain("database unavailable");
-    expect(screen.getByRole("heading", { name: "Characters" })).toBeTruthy();
+    screen.getByRole("heading", { name: "Characters" });
   });
 });

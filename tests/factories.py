@@ -13,6 +13,7 @@ from bgvoice.dialogue_models import (
 )
 from bgvoice.model_types import (
     CreResource,
+    DialogueLineKind,
     DlgResource,
     GenerationFailureStage,
     ItmResource,
@@ -26,6 +27,7 @@ from bgvoice.model_types import (
 from bgvoice.readable_models import ItmDump
 from bgvoice.storage_records import (
     CharacterDirection,
+    DialogueLineRecord,
     DirectedLineRecord,
     GeneratedAudioRecord,
     GenerationFailureRecord,
@@ -58,6 +60,27 @@ def _resource_data(
 def make_resource(name: str = "AERIE.CRE") -> CreResource:
     """Create a representative CRE inventory entry."""
     return CreResource.model_validate(_resource_data(name, "CRE"))
+
+
+def make_dialogue_line(
+    dialogue: str = "AERIE.DLG",
+    state: int = 0,
+    text: str | None = None,
+) -> DialogueLineRecord:
+    """Create one extracted NPC line."""
+    value = f"Line {state}" if text is None else text
+    return DialogueLineRecord(
+        id=f"{dialogue}:npc:{state}:-",
+        run_id="run",
+        dialogue_resource_name=dialogue,
+        line_kind=DialogueLineKind.NPC,
+        state_index=state,
+        strref=state,
+        text=value,
+        tokens=[],
+        serialized_size=10,
+        search_text=value,
+    )
 
 
 def make_dialogue_resource(name: str = "AERIE.DLG") -> DlgResource:

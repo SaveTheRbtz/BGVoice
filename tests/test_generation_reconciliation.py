@@ -24,7 +24,6 @@ from tests.scenarios import rows
 
 
 @pytest.mark.anyio
-@pytest.mark.integration
 async def test_reconciliation_remaps_provider_and_prunes_stale_line_state(
     scenario_database: Path,
 ) -> None:
@@ -107,7 +106,6 @@ async def test_reconciliation_remaps_provider_and_prunes_stale_line_state(
 
 
 @pytest.mark.anyio
-@pytest.mark.integration
 async def test_reconciliation_collapses_unsuffixed_dedicated_voice_into_neutral_variant(
     scenario_database: Path,
 ) -> None:
@@ -150,7 +148,6 @@ async def test_reconciliation_collapses_unsuffixed_dedicated_voice_into_neutral_
 
 
 @pytest.mark.anyio
-@pytest.mark.integration
 async def test_reconciliation_leaves_redundant_unsuffixed_profile_orphaned(
     scenario_database: Path,
 ) -> None:
@@ -199,7 +196,6 @@ async def test_reconciliation_leaves_redundant_unsuffixed_profile_orphaned(
 
 
 @pytest.mark.anyio
-@pytest.mark.integration
 @pytest.mark.parametrize("artifact", ["direction", "audio"])
 async def test_reconciliation_refuses_to_orphan_running_tts_work(
     scenario_database: Path,

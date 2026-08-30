@@ -70,9 +70,11 @@ def test_unrelated_lancedb_is_rejected_without_mutation(tmp_path: Path) -> None:
     assert connection.open_table("unrelated").to_arrow().to_pylist() == [{"value": "keep me"}]
 
 
-def test_metadata_replacement_is_a_complete_generation(tmp_path: Path) -> None:
-    path = tmp_path / "metadata.lancedb"
-    database = PipelineDatabase(path)
+def test_metadata_replacement_is_a_complete_generation(
+    empty_database: PipelineDatabase,
+    tmp_path: Path,
+) -> None:
+    database = empty_database
     metadata = make_metadata()
     aliased = metadata.identifiers[0].model_copy(
         update={"symbols": [*metadata.identifiers[0].symbols, "HUMAN_ALIAS"]}
@@ -110,10 +112,11 @@ def test_metadata_replacement_is_a_complete_generation(tmp_path: Path) -> None:
 
 
 def test_unchanged_inventory_resumes_but_changed_sources_reset_aggregate(
+    empty_database: PipelineDatabase,
     tmp_path: Path,
 ) -> None:
-    path = tmp_path / "pipeline.lancedb"
-    database = PipelineDatabase(path)
+    database = empty_database
+    path = database.path
     character = make_resource()
     dialogue = make_dialogue_resource()
 
@@ -162,9 +165,12 @@ def test_unchanged_inventory_resumes_but_changed_sources_reset_aggregate(
     assert _edges(path) == []
 
 
-def test_successful_batches_replace_children_idempotently_and_refresh_fts(tmp_path: Path) -> None:
-    path = tmp_path / "pipeline.lancedb"
-    database = PipelineDatabase(path)
+def test_successful_batches_replace_children_idempotently_and_refresh_fts(
+    empty_database: PipelineDatabase,
+    tmp_path: Path,
+) -> None:
+    database = empty_database
+    path = database.path
     character = make_resource()
     character_run = database.start_run(tmp_path, "iecli test")
     database.replace_inventory(character_run, [character])
@@ -203,9 +209,12 @@ def test_successful_batches_replace_children_idempotently_and_refresh_fts(tmp_pa
     )
 
 
-def test_failed_refresh_clears_stale_derived_data_and_remains_retryable(tmp_path: Path) -> None:
-    path = tmp_path / "pipeline.lancedb"
-    database = PipelineDatabase(path)
+def test_failed_refresh_clears_stale_derived_data_and_remains_retryable(
+    empty_database: PipelineDatabase,
+    tmp_path: Path,
+) -> None:
+    database = empty_database
+    path = database.path
     character = make_resource()
     dialogue = make_dialogue_resource()
     character_run = database.start_run(tmp_path, "iecli test")
@@ -264,11 +273,12 @@ def _fail_child_writes(
 
 
 def test_interrupted_sound_write_keeps_previous_slots_and_marks_character_retryable(
+    empty_database: PipelineDatabase,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    path = tmp_path / "pipeline.lancedb"
-    database = PipelineDatabase(path)
+    database = empty_database
+    path = database.path
     resource = make_resource()
     run_id = database.start_run(tmp_path, "iecli test")
     database.replace_inventory(run_id, [resource])
@@ -287,11 +297,12 @@ def test_interrupted_sound_write_keeps_previous_slots_and_marks_character_retrya
 @pytest.mark.parametrize("child_table", ["dialogue_lines", "dialogue_transitions"])
 def test_interrupted_graph_write_keeps_previous_children_and_marks_dialogue_retryable(
     child_table: str,
+    empty_database: PipelineDatabase,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    path = tmp_path / "pipeline.lancedb"
-    database = PipelineDatabase(path)
+    database = empty_database
+    path = database.path
     resource = make_dialogue_resource()
     run_id = database.start_run(tmp_path, "iecli test", run_kind=RunKind.DIALOGUES)
     database.replace_dialogue_inventory(run_id, [resource])
@@ -308,9 +319,12 @@ def test_interrupted_graph_write_keeps_previous_children_and_marks_dialogue_retr
     assert _dialogues(path)[0].extraction.status is DetailStatus.PENDING
 
 
-def test_invalid_batch_is_rejected_before_any_aggregate_mutation(tmp_path: Path) -> None:
-    path = tmp_path / "pipeline.lancedb"
-    database = PipelineDatabase(path)
+def test_invalid_batch_is_rejected_before_any_aggregate_mutation(
+    empty_database: PipelineDatabase,
+    tmp_path: Path,
+) -> None:
+    database = empty_database
+    path = database.path
     resource = make_resource()
     run_id = database.start_run(tmp_path, "iecli test")
     database.replace_inventory(run_id, [resource])
@@ -333,8 +347,11 @@ def test_invalid_batch_is_rejected_before_any_aggregate_mutation(tmp_path: Path)
     assert _sounds(path) == []
 
 
-def test_portraits_follow_character_references_and_replace_as_one_set(tmp_path: Path) -> None:
-    database = PipelineDatabase(tmp_path / "portraits.lancedb")
+def test_portraits_follow_character_references_and_replace_as_one_set(
+    empty_database: PipelineDatabase,
+    tmp_path: Path,
+) -> None:
+    database = empty_database
     character = make_resource()
     character_run = database.start_run(tmp_path, "iecli test")
     database.replace_inventory(character_run, [character])
@@ -365,9 +382,12 @@ def test_portraits_follow_character_references_and_replace_as_one_set(tmp_path: 
     ]
 
 
-def test_run_lifecycle_records_progress_and_stats(tmp_path: Path) -> None:
-    path = tmp_path / "runs.lancedb"
-    database = PipelineDatabase(path)
+def test_run_lifecycle_records_progress_and_stats(
+    empty_database: PipelineDatabase,
+    tmp_path: Path,
+) -> None:
+    database = empty_database
+    path = database.path
     resources = [make_resource(), make_resource("MINSC.CRE"), make_resource("JAHEIRA.CRE")]
     run_id = database.start_run(tmp_path, "iecli test")
     database.replace_inventory(run_id, resources)

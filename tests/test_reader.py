@@ -446,10 +446,13 @@ async def test_generation_progress_enriches_and_filters_source_resources(
 
 
 @pytest.mark.anyio
-async def test_fts_relevance_and_explicit_sort_page_the_complete_match_set(tmp_path: Path) -> None:
-    path = tmp_path / "fts.lancedb"
+async def test_fts_relevance_and_explicit_sort_page_the_complete_match_set(
+    empty_database: PipelineDatabase,
+    tmp_path: Path,
+) -> None:
+    database = empty_database
+    path = database.path
     resources = [make_resource(f"R{index:02}.CRE") for index in range(25)]
-    database = PipelineDatabase(path)
     run_id = database.start_run(tmp_path, "iecli test")
     database.replace_inventory(run_id, resources)
     database.apply_detail_batch(

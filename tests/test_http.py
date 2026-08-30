@@ -118,11 +118,14 @@ def _seed_generated_audio(path: Path) -> DirectedLineRecord:
     return direction
 
 
-def test_pipeline_output_is_browsable_over_connect_and_portrait_http(tmp_path: Path) -> None:
-    path = tmp_path / "pipeline.lancedb"
+def test_pipeline_output_is_browsable_over_connect_and_portrait_http(
+    empty_database: PipelineDatabase,
+    tmp_path: Path,
+) -> None:
+    database = empty_database
+    path = database.path
     game_root = tmp_path / "game"
     client = PipelineClient()
-    database = PipelineDatabase(path)
 
     assert extract_characters(client, database, game_root, workers=2).status == "complete"
     assert extract_dialogues(client, database, game_root, workers=2).status == "complete"
@@ -130,8 +133,10 @@ def test_pipeline_output_is_browsable_over_connect_and_portrait_http(tmp_path: P
     assert extract_portraits(client, database, game_root, workers=2).extracted == 1
     summary = database.rebuild_attributions()
     assert (summary.characters_matched, summary.attributed_dialogue_lines) == (1, 4)
+    direction = _seed_generated_audio(path)
 
     with TestClient(create_app(path)) as web:
+        installation = _connect(web, "GetInstallation", {"name": _PARENT}).json()
         voices = _connect(
             web,
             "ListVoices",
@@ -142,7 +147,7 @@ def test_pipeline_output_is_browsable_over_connect_and_portrait_http(tmp_path: P
         assert (voice["displayName"], voice["npcLineCount"]) == ("Aerie", "2")
         assert voice["characters"][0]["engineResourceName"] == "AERIE.CRE"
 
-        lines = _connect(
+        corpus_lines = _connect(
             web,
             "ListDialogueLines",
             {
@@ -152,8 +157,8 @@ def test_pipeline_output_is_browsable_over_connect_and_portrait_http(tmp_path: P
                 "orderBy": "text_length desc",
             },
         )
-        assert lines.status_code == 200
-        dialogue_lines = lines.json()["dialogueLines"]
+        assert corpus_lines.status_code == 200
+        dialogue_lines = corpus_lines.json()["dialogueLines"]
         assert dialogue_lines[0]["text"] == "A quest for <DAYANDMONTH>."
         assert {line["text"] for line in dialogue_lines} == {
             "Hello.",
@@ -165,69 +170,48 @@ def test_pipeline_output_is_browsable_over_connect_and_portrait_http(tmp_path: P
         assert portrait.headers["content-type"] == "image/png"
         assert portrait.content.startswith(b"\x89PNG\r\n\x1a\n")
 
-
-def test_generated_work_is_browsable_filterable_and_playable(
-    scenario_database: Path,
-) -> None:
-    direction = _seed_generated_audio(scenario_database)
-
-    with TestClient(create_app(scenario_database)) as client:
-        installation = _connect(client, "GetInstallation", {"name": _PARENT}).json()
         voice = _connect(
-            client,
+            web,
             "ListVoices",
             {"parent": _PARENT, "filter": 'search("Aerie")'},
         ).json()["voices"][0]
-        lines = _connect(
-            client,
+        generated_lines = _connect(
+            web,
             "ListDialogueLines",
             {
                 "parent": _PARENT,
                 "filter": 'voice_id = "aerie" AND directed = true AND voiced = true',
             },
         ).json()["dialogueLines"]
-        audio_url = lines[0]["directions"][0]["audioUrl"]
-        audio = client.get(audio_url)
-        missing_audio = client.get(f"/v1/{_PARENT}/generatedAudios/missing:download")
+        audio_url = generated_lines[0]["directions"][0]["audioUrl"]
+        audio = web.get(audio_url)
+        missing_audio = web.get(f"/v1/{_PARENT}/generatedAudios/missing:download")
 
-    summary = installation["summary"]
-    assert (summary["npcLines"], summary["playerLines"], summary["journalLines"]) == (
-        "4",
-        "4",
-        "2",
-    )
-    assert summary["readableItems"] == "2"
-    assert (
-        summary["generatedVoices"],
-        summary["uniqueInworldVoices"],
-        summary["directedLines"],
-        summary["generatedAudios"],
-    ) == ("1", "1", "1", "1")
-    assert (
-        summary["voiceCreationFailures"],
-        summary["dialogueDirectionFailures"],
-        summary["audioGenerationFailures"],
-    ) == ("1", "1", "1")
-    assert voice["voiceId"] == "aerie"
-    assert voice["familyId"] == "aerie"
-    assert voice["gender"] == "PROVIDER_GENDER_FEMALE"
-    assert voice["generatedVoice"]["profileId"] == "aerie"
-    assert voice["generatedVoice"]["profileKind"] == "VOICE_PROFILE_KIND_DEDICATED"
-    assert voice["generatedVoice"]["inworldVoiceId"] == "voice-aerie"
-    assert (voice["directedLineCount"], voice["generatedAudioCount"]) == ("1", "1")
-    direction_json = lines[0]["directions"][0]
-    assert direction_json["id"] == direction.id
-    assert direction_json["character"] == {"directedDialogue": "[warmly] Hello."}
-    assert "narrator" not in direction_json
-    assert audio.status_code == 200
-    assert audio.headers["content-type"] == "audio/ogg"
-    assert audio.content == b"OggSgenerated audio"
-    assert missing_audio.status_code == 404
+        pipeline_summary = installation["summary"]
+        assert (
+            pipeline_summary["generatedVoices"],
+            pipeline_summary["uniqueInworldVoices"],
+            pipeline_summary["directedLines"],
+            pipeline_summary["generatedAudios"],
+        ) == ("1", "1", "1", "1")
+        assert voice["generatedVoice"]["inworldVoiceId"] == "voice-aerie"
+        assert (voice["directedLineCount"], voice["generatedAudioCount"]) == ("1", "1")
+        direction_json = generated_lines[0]["directions"][0]
+        assert direction_json["id"] == direction.id
+        assert direction_json["character"] == {"directedDialogue": "[warmly] Hello."}
+        assert "narrator" not in direction_json
+        assert (audio.status_code, audio.headers["content-type"], audio.content) == (
+            200,
+            "audio/ogg",
+            b"OggSgenerated audio",
+        )
+        assert missing_audio.status_code == 404
 
 
-@pytest.mark.parametrize(
-    ("list_method", "response_field", "full_field"),
-    [
+def test_connect_browser_contract_uses_typed_resources_and_errors(
+    shared_scenario_database: Path,
+) -> None:
+    collections = [
         ("ListVoices", "voices", "prompt"),
         ("ListCharacters", "characters", "detail"),
         ("ListDialogues", "dialogues", "detail"),
@@ -240,66 +224,39 @@ def test_generated_work_is_browsable_filterable_and_playable(
         ("ListIdentifierDefinitions", "identifierDefinitions", "symbols"),
         ("ListReadableItems", "readableItems", "text"),
         ("ListExtractionRuns", "extractionRuns", "runId"),
-    ],
-)
-def test_connect_lists_each_browser_collection(
-    list_method: str,
-    response_field: str,
-    full_field: str,
-    shared_scenario_database: Path,
-) -> None:
+    ]
+    listed_resources: dict[str, dict[str, object]] = {}
+
     with TestClient(create_app(shared_scenario_database)) as client:
-        payload: dict[str, object] = {
-            "parent": _PARENT,
-            "pageSize": 2,
-        }
-        if list_method == "ListRaces":
-            payload["filter"] = 'search("Floating aberrations")'
-        elif list_method == "ListCharacterClasses":
-            payload["filter"] = "class_id = 14"
-        response = _connect(
-            client,
-            list_method,
-            payload,
-        )
-        first = response.json()[response_field][0]
+        for list_method, response_field, full_field in collections:
+            payload: dict[str, object] = {"parent": _PARENT, "pageSize": 2}
+            if list_method == "ListRaces":
+                payload["filter"] = 'search("Floating aberrations")'
+            elif list_method == "ListCharacterClasses":
+                payload["filter"] = "class_id = 14"
+            response = _connect(client, list_method, payload)
+            body = response.json()
+            resources = body[response_field]
 
-    assert response.status_code == 200
-    assert response.json()[response_field]
-    assert int(response.json()["totalSize"]) >= len(response.json()[response_field])
-    assert full_field in first
-    if list_method == "ListRaces":
-        assert first["displayName"] == "Beholder"
-        assert first["lore"]["description"] == "Floating aberrations."
+            assert response.status_code == 200, list_method
+            assert resources, list_method
+            assert int(body["totalSize"]) >= len(resources), list_method
+            assert full_field in resources[0], list_method
+            listed_resources[response_field] = resources[0]
+            if list_method == "ListRaces":
+                assert resources[0]["displayName"] == "Beholder"
+                assert resources[0]["lore"]["description"] == "Floating aberrations."
 
+        for response_field, get_method in (
+            ("voices", "GetVoice"),
+            ("characters", "GetCharacter"),
+            ("dialogues", "GetDialogue"),
+        ):
+            expected = listed_resources[response_field]
+            fetched = _connect(client, get_method, {"name": expected["name"]})
+            assert fetched.status_code == 200, get_method
+            assert fetched.json() == expected, get_method
 
-@pytest.mark.parametrize(
-    ("list_method", "response_field", "get_method"),
-    [
-        ("ListVoices", "voices", "GetVoice"),
-        ("ListCharacters", "characters", "GetCharacter"),
-        ("ListDialogues", "dialogues", "GetDialogue"),
-    ],
-)
-def test_connect_gets_routed_detail_resources(
-    list_method: str,
-    response_field: str,
-    get_method: str,
-    shared_scenario_database: Path,
-) -> None:
-    with TestClient(create_app(shared_scenario_database)) as client:
-        listed = _connect(client, list_method, {"parent": _PARENT, "pageSize": 1})
-        first = listed.json()[response_field][0]
-        fetched = _connect(client, get_method, {"name": first["name"]})
-
-    assert fetched.status_code == 200
-    assert fetched.json() == first
-
-
-def test_connect_pagination_and_errors_are_publicly_typed(
-    shared_scenario_database: Path,
-) -> None:
-    with TestClient(create_app(shared_scenario_database)) as client:
         installation = _connect(client, "GetInstallation", {"name": _PARENT})
         first = _connect(
             client,
@@ -331,11 +288,7 @@ def test_connect_pagination_and_errors_are_publicly_typed(
                 "orderBy": "engine_resource_name desc",
             },
         )
-        missing = _connect(
-            client,
-            "GetVoice",
-            {"name": f"{_PARENT}/voices/missing"},
-        )
+        missing = _connect(client, "GetVoice", {"name": f"{_PARENT}/voices/missing"})
         missing_installation = _connect(
             client,
             "GetInstallation",

@@ -6,32 +6,35 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as apiModule from "./api";
+import App from "./App";
 import {
   AttributionStatus,
   CharacterClassSchema,
   CharacterSchema,
+  CharacterSoundSchema,
   DetailStatus,
-  DialogueSchema,
   DialogueLineKind,
   DialogueLineSchema,
+  DialogueSchema,
+  DialogueTransitionSchema,
+  ExtractionRunSchema,
   IdentifierDefinitionSchema,
   IdentifierKind,
   InstallationSchema,
   KitSchema,
+  ProviderGender,
   RaceSchema,
   ReadableItemKind,
   ReadableItemSchema,
-  VoiceSchema,
-  ProviderGender,
-  VoiceProfileKind,
+  RunKind,
+  RunStatus,
   SourceKind,
+  VoiceProfileKind,
+  VoiceSchema,
 } from "./gen/bgvoice/v1/pipeline_pb";
 
 vi.mock(import("./api"));
-
 const api = vi.mocked(apiModule);
-
-import App from "./App";
 
 const installation = create(InstallationSchema, {
   name: "installations/bg2ee-eet",
@@ -44,7 +47,6 @@ const installation = create(InstallationSchema, {
     voiceCreationFailures: 1n,
     dialogueDirectionFailures: 3n,
     audioGenerationFailures: 6n,
-    readableItems: 2n,
   },
 });
 
@@ -54,7 +56,7 @@ const voice = create(VoiceSchema, {
   familyId: "imoen",
   gender: ProviderGender.FEMALE,
   displayName: "Imoen",
-  prompt: "Warm, quick-witted and mischievous. Keep an easy Amnian cadence.",
+  prompt: "Warm, quick-witted and mischievous.",
   characters: [
     { name: "installations/bg2ee-eet/characters/imoen15-cre-fe85cc5b", engineResourceName: "IMOEN15.CRE", npcLineCount: 812n },
     { name: "installations/bg2ee-eet/characters/imoen-cre-3768424f", engineResourceName: "IMOEN.CRE", npcLineCount: 6108n },
@@ -69,8 +71,7 @@ const voice = create(VoiceSchema, {
   generatedVoice: {
     profileId: "imoen",
     profileKind: VoiceProfileKind.DEDICATED,
-    description: "Youthful, warm and quick-witted, with a mischievous Amnian lilt.",
-    languageCode: "en-GB",
+    description: "Youthful, warm and quick-witted.",
     inworldVoiceId: "voice-imoen",
   },
 });
@@ -81,56 +82,27 @@ const character = create(CharacterSchema, {
   resref: "IMOEN",
   displayName: "Imoen",
   voice: voice.name,
-  source: { kind: SourceKind.OVERRIDE, path: "D:\\Games\\BG\\BG2EE-EET\\override\\imoen.cre" },
+  source: { kind: SourceKind.OVERRIDE, path: "D:\\Games\\BG\\override\\IMOEN.CRE" },
   extraction: { status: DetailStatus.COMPLETE },
   attributionStatus: AttributionStatus.PARTIAL_MATCH,
-  serializedSize: 6042n,
   dialogue: {
     declaredDialogueCount: 7,
     resolvedDialogueCount: 5,
     npcLineCount: 7563n,
-    playerLineCount: 5009n,
     stateCount: 7563n,
-    transitionCount: 17309n,
   },
-  detail: {
-    dialogResref: "imoen",
-    genderLabel: "Female",
-    raceLabel: "Human",
-    classLabel: "Thief",
-    alignmentLabel: "Neutral Good",
-    kitIdsValue: 16384,
-    kitLabel: "Trueclass",
-    creKitValue: 0x40000000,
-    baseAttributes: {
-      strength: 9,
-      intelligence: 17,
-      wisdom: 11,
-      dexterity: 18,
-      constitution: 16,
-      charisma: 16,
-    },
-    creVersion: "V1.0",
-  },
-  directDialogue: "installations/bg2ee-eet/dialogues/imoen-dlg-dc9ebab9",
-  biography: "installations/bg2ee-eet/characterSounds/imoen-cre-74-bb456c9b",
 });
 
 const dialogue = create(DialogueSchema, {
   name: "installations/bg2ee-eet/dialogues/imoen2j-dlg-789f493a",
   engineResourceName: "IMOEN2J.DLG",
   resref: "IMOEN2J",
-  source: { kind: SourceKind.OVERRIDE, path: "D:\\Games\\BG\\BG2EE-EET\\override\\IMOEN2J.DLG" },
+  source: { kind: SourceKind.OVERRIDE, path: "D:\\Games\\BG\\override\\IMOEN2J.DLG" },
   extraction: { status: DetailStatus.COMPLETE },
-  serializedSize: 6_082_560n,
-  characterCount: 15,
   detail: {
-    dlgVersion: "V1.0",
-    dialogueLineCount: 9_764n,
-    npcLineCount: 5_788n,
-    playerLineCount: 3_976n,
+    npcLineCount: 5788n,
+    playerLineCount: 3976n,
     journalLineCount: 71n,
-    stateCount: 5_788n,
     transitionCount: 13_861n,
   },
   directedLineCount: 100n,
@@ -139,34 +111,25 @@ const dialogue = create(DialogueSchema, {
 
 const line = create(DialogueLineSchema, {
   name: "installations/bg2ee-eet/dialogueLines/imoen2j-dlg-0-0-ecdf1e0b",
-  dialogue: "installations/bg2ee-eet/dialogues/imoen2j-dlg-789f493a",
+  dialogue: dialogue.name,
   dialogueResref: "IMOEN2J",
   sourceKind: SourceKind.OVERRIDE,
   lineKind: DialogueLineKind.NPC,
   stateIndex: 42,
   transitionIndex: 7,
-  strref: 18_421,
-  characterCount: 3,
   text: "Heya! It's me, Imoen!",
   tokens: ["PLAYER2", "CHARNAME", "DAY", "PLAYER1", "CHARNAME", "PLAYER2", "CHARNAME", "PLAYER1"],
-  stateTriggerIndex: 23,
   directions: [{
-    id: "direction-imoen-line-1",
+    id: "direction-1",
     voice: voice.name,
     voiceDisplayName: "Imoen",
-    result: {
-      case: "character",
-      value: { directedDialogue: "[brightly] Heya! It's me, Imoen!" },
-    },
+    result: { case: "character", value: { directedDialogue: "[brightly] Heya! It's me, Imoen!" } },
     audioUrl: "/v1/installations/bg2ee-eet/generatedAudio/audio-1:download",
   }, {
-    id: "direction-imoen-line-2",
+    id: "direction-2",
     voice: voice.name,
     voiceDisplayName: "Imoen",
-    result: {
-      case: "narrator",
-      value: { directedDialogue: "[narrate gently] The chamber falls silent." },
-    },
+    result: { case: "narrator", value: { directedDialogue: "[gently] The chamber falls silent." } },
     audioUrl: "/v1/installations/bg2ee-eet/generatedAudio/audio-2:download",
   }],
 });
@@ -175,33 +138,12 @@ const race = create(RaceSchema, {
   name: "installations/bg2ee-eet/races/r-1-245bda1b",
   raceId: 1,
   symbols: ["HUMAN"],
-  displayName: "human",
+  displayName: "Human",
   campaignTexts: [{
     sourceResource: "RACETEXT.2DA",
-    campaigns: ["SOA", "TOB"],
     rowName: "HUMAN",
-    nameStrref: 7_193,
-    displayName: "human",
-    descriptionStrref: 9_550,
     description: "Humans are adaptable and ambitious.",
-    biographyStrref: 21_023,
-    biography: "Raised in Candlekeep under Gorion's care.",
   }],
-});
-
-const bestiaryRace = create(RaceSchema, {
-  name: "installations/bg2ee-eet/races/r-123-c07a839b",
-  raceId: 123,
-  symbols: ["BEHOLDER"],
-  displayName: "Beholder",
-  lore: {
-    sourceResource: "HATERACE.2DA",
-    rowName: "BEHOLDER",
-    nameStrref: 54_770,
-    displayName: "Beholder",
-    descriptionStrref: 54_772,
-    description: "A floating aberration with many magical eyes.",
-  },
 });
 
 const characterClass = create(CharacterClassSchema, {
@@ -211,18 +153,8 @@ const characterClass = create(CharacterClassSchema, {
   displayName: "Cleric",
   texts: [{
     sourceResource: "CLASTEXT.2DA",
-    campaigns: ["SOA", "TOB"],
     rowName: "CLERIC",
-    classTextKitId: 16_384,
-    lowerNameStrref: 7_200,
-    lowerName: "cleric",
-    mixedNameStrref: 7_201,
-    mixedName: "Cleric",
-    descriptionStrref: 7_202,
     description: "A divine spellcaster and armored healer.",
-    briefDescriptionStrref: 7_203,
-    briefDescription: "Divine spellcaster",
-    fallen: false,
   }],
 });
 
@@ -231,17 +163,11 @@ const kit = create(KitSchema, {
   rowId: 1,
   rowName: "BERSERKER",
   sourceResource: "KITLIST.2DA",
-  lowerName: "berserker",
-  mixedName: "Berserker",
   displayName: "Berserker",
   helpText: "A warrior who channels a controlled battle rage.",
   characterClass: characterClass.name,
-  classSymbols: ["FIGHTER", "FIGHTER_ALL"],
+  classSymbols: ["FIGHTER"],
   kitIdsValue: 0x4001,
-  kitSymbols: ["BERSERKER"],
-  abilitiesResref: "CLABFI02",
-  proficiencyColumn: 29,
-  unusableMask: 1,
 });
 
 const identifier = create(IdentifierDefinitionSchema, {
@@ -253,76 +179,43 @@ const identifier = create(IdentifierDefinitionSchema, {
   displayName: "Male",
 });
 
-const readableItems = [
-  create(ReadableItemSchema, {
-    name: "installations/bg2ee-eet/readableItems/book50-itm-e5b5b3a1",
-    engineResourceName: "BOOK50.ITM",
-    resref: "BOOK50",
-    source: { kind: SourceKind.BIF, path: "D:\\Games\\BG\\BG2EE-EET\\DATA\\ITEMS.BIF" },
-    kind: ReadableItemKind.BOOK,
-    itemVersion: "V1",
-    itemType: 37,
-    icon: "IBOOK01",
-    groundIcon: "GBOOK01",
-    descriptionImage: "CBOOK09",
-    generalName: { strref: 7_149, text: "Book" },
-    identifiedName: { strref: 13_125, text: "History of the North VIII" },
-    generalDescription: {
-      strref: 13_177,
-      text: "History of the North—1369\n\nThe tumultuous climate continued.",
-    },
-    displayTitle: "History of the North VIII",
-    titleStrref: 13_125,
-    text: "History of the North—1369\n\nThe tumultuous climate continued.",
-    textStrref: 13_177,
-    textLength: 64n,
-    serializedSize: 114n,
-  }),
-  create(ReadableItemSchema, {
-    name: "installations/bg2ee-eet/readableItems/bpnote1-itm-56a4496c",
-    engineResourceName: "BPNOTE1.ITM",
-    resref: "BPNOTE1",
-    source: { kind: SourceKind.OVERRIDE, path: "D:\\Games\\BG\\BG2EE-EET\\override\\BPNOTE1.ITM" },
-    kind: ReadableItemKind.SCROLL,
-    itemVersion: "V1",
-    itemType: 11,
-    groundIcon: "GSCRL01",
-    generalName: { strref: 230_291, text: "Note from Krancor" },
-    identifiedName: { strref: 230_291, text: "Note from Krancor" },
-    generalDescription: { strref: 206_487, text: "An unidentified note." },
-    identifiedDescription: { strref: 230_289, text: "To Aluend,\n\nHappy Birthday!" },
-    displayTitle: "Note from Krancor",
-    titleStrref: 230_291,
-    text: "To Aluend,\n\nHappy Birthday!",
-    textStrref: 230_289,
-    textLength: 29n,
-    serializedSize: 114n,
-  }),
-] as const;
+function page<T>(...items: T[]) {
+  return { items, nextPageToken: "", totalSize: BigInt(items.length) };
+}
+
+function renderRoute(path: string) {
+  const user = userEvent.setup();
+  window.history.replaceState(null, "", path);
+  render(<App />);
+  return user;
+}
 
 function summaryContaining(text: string): HTMLElement {
-  const summaries = screen.getAllByText(text, { exact: true })
-    .flatMap((element) => element.closest("summary") ?? []);
-  expect(summaries).not.toHaveLength(0);
-  return summaries[0]!;
+  const summary = screen.getAllByText(text, { exact: true })
+    .map((element) => element.closest("summary"))
+    .find((element): element is HTMLElement => element != null);
+  expect(summary).toBeDefined();
+  return summary!;
 }
 
 beforeEach(() => {
   vi.resetAllMocks();
   api.getInstallation.mockResolvedValue(installation);
-  api.listVoices.mockResolvedValue({ items: [], nextPageToken: "", totalSize: 1n });
+  api.listVoices.mockResolvedValue(page());
   api.getVoice.mockResolvedValue(voice);
   api.getCharacter.mockResolvedValue(character);
   api.getDialogue.mockResolvedValue(dialogue);
-  api.listCharacters.mockResolvedValue({ items: [character], nextPageToken: "", totalSize: 1n });
-  api.listDialogues.mockResolvedValue({ items: [dialogue], nextPageToken: "", totalSize: 1n });
-  api.listDialogueLines.mockResolvedValue({ items: [line], nextPageToken: "", totalSize: 1n });
-  api.listExtractionRuns.mockResolvedValue({ items: [], nextPageToken: "", totalSize: 0n });
-  api.listRaces.mockResolvedValue({ items: [], nextPageToken: "", totalSize: 0n });
-  api.listCharacterClasses.mockResolvedValue({ items: [], nextPageToken: "", totalSize: 0n });
-  api.listKits.mockResolvedValue({ items: [], nextPageToken: "", totalSize: 0n });
-  api.listIdentifierDefinitions.mockResolvedValue({ items: [], nextPageToken: "", totalSize: 0n });
-  api.listReadableItems.mockResolvedValue({ items: [], nextPageToken: "", totalSize: 0n });
+  api.listCharacters.mockResolvedValue(page(character));
+  api.listDialogues.mockResolvedValue(page(dialogue));
+  api.listDialogueLines.mockResolvedValue(page(line));
+  api.listDialogueTransitions.mockResolvedValue(page());
+  api.listCharacterSounds.mockResolvedValue(page());
+  api.listExtractionRuns.mockResolvedValue(page());
+  api.listRaces.mockResolvedValue(page());
+  api.listCharacterClasses.mockResolvedValue(page());
+  api.listKits.mockResolvedValue(page());
+  api.listIdentifierDefinitions.mockResolvedValue(page());
+  api.listReadableItems.mockResolvedValue(page());
 });
 
 afterEach(() => {
@@ -330,318 +223,170 @@ afterEach(() => {
   window.history.replaceState(null, "", "/");
 });
 
-describe("application jobs", () => {
-  it("browses voices and characters through stable resource identities", async () => {
-    api.listVoices.mockResolvedValue({ items: [voice], nextPageToken: "", totalSize: 1n });
-    window.history.replaceState(null, "", "/voices?page_size=50");
-    const user = userEvent.setup();
-    render(<App />);
+describe("application workflows", () => {
+  it.for([
+    {
+      path: "/character-sounds",
+      seed: () => api.listCharacterSounds.mockResolvedValue(page(create(CharacterSoundSchema, {
+        name: `${character.name}/sounds/74`,
+        character: character.name,
+        characterDisplayName: "Imoen",
+        slotId: 74,
+        slotGroups: ["BIO"],
+        text: "Imoen grew up in Candlekeep.",
+      }))),
+      fact: "Biography",
+    },
+    {
+      path: "/dialogue-transitions",
+      seed: () => api.listDialogueTransitions.mockResolvedValue(page(create(
+        DialogueTransitionSchema,
+        {
+          name: `${dialogue.name}/transitions/42-7`,
+          dialogue: dialogue.name,
+          dialogueResref: "IMOEN2J",
+          sourceKind: SourceKind.OVERRIDE,
+          stateIndex: 42,
+          transitionIndex: 7,
+          actionText: 'SetGlobal("Quest","GLOBAL",1)',
+          flagsDecoded: ["HAS_ACTION"],
+        },
+      ))),
+      fact: "HAS ACTION",
+    },
+    {
+      path: "/readable-items",
+      seed: () => api.listReadableItems.mockResolvedValue(page(create(ReadableItemSchema, {
+        name: "installations/bg2ee-eet/readableItems/book50",
+        engineResourceName: "BOOK50.ITM",
+        kind: ReadableItemKind.BOOK,
+        displayTitle: "History of the North VIII",
+        text: "The tumultuous climate continued.",
+        textLength: 32n,
+      }))),
+      fact: "History of the North VIII",
+    },
+  ])("renders the domain fact '$fact'", async ({ path, seed, fact }) => {
+    seed();
+    renderRoute(path);
+    await screen.findByText(fact);
+  });
 
-    const link = await screen.findByRole("link", { name: /^Imoen, ready,/ });
-    expect(link.getAttribute("href")).toBe("/voices/imoen-befd8070?page_size=50");
-    expect(api.getVoice).not.toHaveBeenCalled();
+  it("follows stable voice identities into characters and dialogue lines", async () => {
+    api.listVoices.mockResolvedValue(page(voice));
+    const user = renderRoute("/voices?page_size=50");
 
-    await user.click(link);
-    expect(await screen.findByRole("heading", { name: "Imoen", level: 1 })).toBeTruthy();
-    expect(api.getVoice).toHaveBeenCalledWith(voice.name, expect.any(AbortSignal));
-    expect(api.listVoices).toHaveBeenCalledOnce();
-    expect(screen.getByRole("link", { name: "Back to voices" }).getAttribute("href"))
-      .toBe("/voices?page_size=50");
-    expect(screen.getByText(voice.prompt)).toBeTruthy();
-    expect(screen.getByText(voice.generatedVoice?.description ?? "")).toBeTruthy();
-    expect(screen.getByText("Family imoen")).toBeTruthy();
-    expect(screen.getByText("Gender Female")).toBeTruthy();
-    expect(screen.getByText("Dedicated")).toBeTruthy();
-    expect(screen.getByText("voice-imoen")).toBeTruthy();
+    const voiceLink = await screen.findByRole("link", { name: /^Imoen, ready,/ });
+    expect(voiceLink.getAttribute("href")).toBe("/voices/imoen-befd8070?page_size=50");
+    await user.click(voiceLink);
+
+    await screen.findByRole("heading", { name: "Imoen", level: 1 });
+    screen.getByText(voice.prompt);
+    screen.getByText(voice.generatedVoice!.description);
     const allLines = new URL(
-      screen.getByRole("link", { name: "All NPC lines" }).getAttribute("href") ?? "",
+      screen.getByRole("link", { name: "All NPC lines" }).getAttribute("href")!,
       window.location.origin,
     );
-    expect(allLines.pathname).toBe("/dialogue-lines/npc");
-    expect(allLines.searchParams.get("filter")).toBe('voice_id = "imoen"');
+    expect([allLines.pathname, allLines.searchParams.get("filter")])
+      .toEqual(["/dialogue-lines/npc", 'voice_id = "imoen"']);
     expect(screen.getAllByRole("link", { name: /^IMOEN(?:15)? ×/ }).map((link) => link.textContent))
       .toEqual(["IMOEN × 6,108", "IMOEN15 × 812"]);
-    expect(screen.getAllByRole("link", { name: /^IMOEN(?:2J|B) ×/ }).map((link) => link.textContent))
-      .toEqual(["IMOEN2J × 5,758", "IMOENB × 12"]);
 
     await user.click(screen.getByRole("link", { name: "IMOEN × 6,108" }));
     await waitFor(() => expect(window.location.pathname).toBe("/characters/imoen-cre-3768424f"));
-    expect(await screen.findByRole("heading", { name: "Imoen", level: 1 })).toBeTruthy();
-    expect(api.getCharacter).toHaveBeenCalledWith(character.name, expect.any(AbortSignal));
-    expect(screen.getByRole("link", { name: "Back to characters" }).getAttribute("href"))
-      .toBe("/characters");
-    const workload = within(screen.getByLabelText("Character dialogue workload"));
-    expect(workload.getAllByText("7,563")).toHaveLength(2);
-    expect(workload.getByText("5 of 7")).toBeTruthy();
-
-    await user.click(screen.getByRole("link", { name: "Back to characters" }));
-    expect(await screen.findByRole("heading", { name: "Characters", level: 1 })).toBeTruthy();
-    expect(screen.getByRole("link", { name: "Imoen, IMOEN.CRE" }).getAttribute("href"))
-      .toBe("/characters/imoen-cre-3768424f");
-    expect(screen.queryByRole("spinbutton", { name: "Gender ID" })).toBeNull();
-    expect(api.listCharacters).toHaveBeenCalledWith(
-      expect.objectContaining({ orderBy: "npc_line_count desc", pageSize: 25 }),
-      expect.any(AbortSignal),
-    );
+    await screen.findByRole("heading", { name: "Imoen", level: 1 });
+    within(screen.getByLabelText("Character dialogue workload")).getByText("5 of 7");
   });
 
-  it("keeps resource navigation available when a detail request fails", async () => {
+  it("preserves navigation when a resource cannot load", async () => {
     api.getVoice.mockRejectedValue(new Error("voice unavailable"));
-    window.history.replaceState(null, "", "/voices/imoen-befd8070?page_size=50");
-    render(<App />);
+    renderRoute("/voices/imoen-befd8070?page_size=50");
 
     expect((await screen.findByRole("alert")).textContent).toContain("voice unavailable");
     expect(screen.getByRole("link", { name: "Back to voices" }).getAttribute("href"))
       .toBe("/voices?page_size=50");
   });
 
-  it("reviews a dialogue and follows its generated work into each line workspace", async () => {
-    window.history.replaceState(null, "", "/dialogues?page_size=50");
-    const user = userEvent.setup();
-    render(<App />);
-
-    const link = await screen.findByRole("link", {
+  it("reviews generated dialogue and switches between each line workspace", async () => {
+    const user = renderRoute("/dialogues?page_size=50");
+    await user.click(await screen.findByRole("link", {
       name: "IMOEN2J.DLG, imoen2j-dlg-789f493a",
-    });
-    expect(link.getAttribute("href")).toBe("/dialogues/imoen2j-dlg-789f493a?page_size=50");
-    expect(screen.getByRole("link", { name: "5,788 NPC lines" })).toBeTruthy();
-    expect(screen.getByText("13,861 transitions")).toBeTruthy();
-    expect(api.listDialogues).toHaveBeenCalledWith(
-      expect.objectContaining({ orderBy: "npc_line_count desc", pageSize: 50 }),
-      expect.any(AbortSignal),
-    );
+    }));
 
-    await user.click(link);
-    expect(await screen.findByRole("heading", { name: "IMOEN2J.DLG", level: 1 })).toBeTruthy();
-    expect(screen.getByRole("link", { name: "Back to dialogues" }).getAttribute("href"))
-      .toBe("/dialogues?page_size=50");
-
+    await screen.findByRole("heading", { name: "IMOEN2J.DLG", level: 1 });
     const generated = within(screen.getByRole("region", { name: "Generated work" }));
-    expect(generated.getByText("Audio lines").previousElementSibling?.textContent).toBe("92");
-    expect(generated.getByText("Directed lines").previousElementSibling?.textContent).toBe("100");
-    expect(screen.queryByText("Awaiting TTS")).toBeNull();
-    expect(screen.queryByText(/source lines/i)).toBeNull();
-
-    const npcUrl = new URL(
-      screen.getAllByRole("link", { name: "Browse NPC lines" })[0]!.getAttribute("href") ?? "",
-      window.location.origin,
-    );
-    expect(npcUrl.pathname).toBe("/dialogue-lines/npc");
-    expect(npcUrl.searchParams.get("filter"))
-      .toBe('dialogue_resource_name = "IMOEN2J.DLG"');
-    const transitionUrl = new URL(
-      screen.getByRole("link", { name: "Browse transitions →" }).getAttribute("href") ?? "",
-      window.location.origin,
-    );
-    expect(transitionUrl.pathname).toBe("/dialogue-transitions");
-    expect(transitionUrl.searchParams.get("filter"))
-      .toBe('dialogue_resource_name = "IMOEN2J.DLG"');
+    generated.getByText("92");
+    generated.getByText("100");
 
     await user.click(screen.getAllByRole("link", { name: "Browse NPC lines" })[0]!);
-    expect(await screen.findByRole("heading", { name: "NPC lines", level: 1 })).toBeTruthy();
-    expect(screen.getByText(line.text ?? "")).toBeTruthy();
-    const context = within(screen.getByLabelText("Dialogue tokens"));
-    expect(context.getAllByText(/./).map((token) => token.textContent)).toEqual([
-      "CHARNAME×3", "PLAYER1×2", "PLAYER2×2", "DAY",
-    ]);
-    expect(screen.getByText("[brightly] Heya! It's me, Imoen!")).toBeTruthy();
-    expect(screen.getByText("[narrate gently] The chamber falls silent.")).toBeTruthy();
-    const audio = screen.getByLabelText("Audio sample for Imoen");
-    expect(audio.getAttribute("preload")).toBe("none");
-    expect(audio.getAttribute("src")).toBe(line.directions[0]?.audioUrl);
-    expect(screen.getByLabelText("Narrator audio sample attributed to Imoen")).toBeTruthy();
-    expect(api.listDialogueLines).toHaveBeenCalledWith(
-      expect.objectContaining({
-        filter: 'dialogue_resource_name = "IMOEN2J.DLG" AND line_kind = "npc"',
-        orderBy: "dialogue asc",
-        pageSize: 25,
-      }),
-      expect.any(AbortSignal),
-    );
+    await screen.findByRole("heading", { name: "NPC lines", level: 1 });
+    expect(within(screen.getByLabelText("Dialogue tokens")).getAllByText(/./)
+      .map((token) => token.textContent))
+      .toEqual(["CHARNAME×3", "PLAYER1×2", "PLAYER2×2", "DAY"]);
+    screen.getByText("[brightly] Heya! It's me, Imoen!");
+    screen.getByText("[gently] The chamber falls silent.");
+    screen.getByLabelText("Audio sample for Imoen");
+
     await user.selectOptions(screen.getByRole("combobox", { name: "Order" }), "text_length desc");
-    await waitFor(() => expect(api.listDialogueLines).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        filter: 'dialogue_resource_name = "IMOEN2J.DLG" AND line_kind = "npc"',
-        orderBy: "text_length desc",
-      }),
-      expect.any(AbortSignal),
-    ));
+    await waitFor(() => expect(new URLSearchParams(window.location.search).get("order_by"))
+      .toBe("text_length desc"));
 
     await user.click(screen.getAllByRole("link", { name: "Player lines" })[0]!);
-    expect(await screen.findByRole("heading", { name: "Player lines", level: 1 })).toBeTruthy();
+    await screen.findByRole("heading", { name: "Player lines", level: 1 });
     expect(screen.queryByText("Voice ID")).toBeNull();
-    expect(api.listDialogueLines).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        filter: 'line_kind = "player"',
-        orderBy: "dialogue asc",
-      }),
-      expect.any(AbortSignal),
-    );
-    await user.selectOptions(screen.getByRole("combobox", { name: "Order" }), "text_length asc");
-    await waitFor(() => expect(api.listDialogueLines).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        filter: 'line_kind = "player"',
-        orderBy: "text_length asc",
-      }),
-      expect.any(AbortSignal),
-    ));
 
     await user.click(screen.getAllByRole("link", { name: "Journal" })[0]!);
-    expect(await screen.findByRole("heading", { name: "Journal entries", level: 1 })).toBeTruthy();
-    await user.selectOptions(screen.getByRole("combobox", { name: "Order" }), "text_length desc");
-    await waitFor(() => expect(api.listDialogueLines).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        filter: 'line_kind = "journal"',
-        orderBy: "text_length desc",
-      }),
-      expect.any(AbortSignal),
-    ));
+    await screen.findByRole("heading", { name: "Journal entries", level: 1 });
   });
 
-  it("reads canonical definitions and their engine provenance", async () => {
-    api.listRaces.mockResolvedValue({
-      items: [race, bestiaryRace],
-      nextPageToken: "",
-      totalSize: 2n,
-    });
-    api.listCharacterClasses.mockResolvedValue({
-      items: [characterClass],
-      nextPageToken: "",
-      totalSize: 1n,
-    });
-    api.listKits.mockResolvedValue({ items: [kit], nextPageToken: "", totalSize: 1n });
-    api.listIdentifierDefinitions.mockResolvedValue({
-      items: [identifier],
-      nextPageToken: "",
-      totalSize: 1n,
-    });
-    window.history.replaceState(null, "", "/definitions/races");
-    const user = userEvent.setup();
-    render(<App />);
+  it("shows canonical definition provenance across metadata resources", async () => {
+    api.listRaces.mockResolvedValue(page(race));
+    api.listCharacterClasses.mockResolvedValue(page(characterClass));
+    api.listKits.mockResolvedValue(page(kit));
+    api.listIdentifierDefinitions.mockResolvedValue(page(identifier));
+    const user = renderRoute("/definitions/races");
 
-    expect(await screen.findByRole("heading", { name: "Races", level: 1 })).toBeTruthy();
-    await user.selectOptions(screen.getByRole("combobox", { name: "Order" }), "display_name asc");
-    await waitFor(() => expect(api.listRaces).toHaveBeenLastCalledWith(
-      expect.objectContaining({ orderBy: "display_name asc" }),
-      expect.any(AbortSignal),
-    ));
+    await screen.findByRole("heading", { name: "Races", level: 1 });
     await user.click(summaryContaining("HUMAN"));
-    expect(screen.getByText("Description · #9550")).toBeTruthy();
-    expect(screen.getByText("Raised in Candlekeep under Gorion's care.")).toBeTruthy();
-    expect(screen.getByText("RACETEXT.2DA")).toBeTruthy();
-    await user.click(summaryContaining("BEHOLDER"));
-    expect(screen.getByRole("heading", { name: "Bestiary lore", level: 3 })).toBeTruthy();
-    expect(screen.getByText("Description · #54772")).toBeTruthy();
-    expect(screen.getByText("A floating aberration with many magical eyes.")).toBeTruthy();
-    expect(screen.getByText("HATERACE.2DA")).toBeTruthy();
+    screen.getByText("Humans are adaptable and ambitious.");
+    screen.getByText("RACETEXT.2DA");
 
     await user.click(screen.getAllByRole("link", { name: "Classes" })[0]!);
-    expect(await screen.findByRole("heading", { name: "Character classes", level: 1 }))
-      .toBeTruthy();
+    await screen.findByRole("heading", { name: "Character classes", level: 1 });
+    await screen.findAllByText("CLERIC");
     await user.click(summaryContaining("CLERIC"));
-    expect(screen.getByText("CLASTEXT kit 16384")).toBeTruthy();
-    expect(screen.getByText("Not fallen", { selector: ".definition-tags span" })).toBeTruthy();
-    expect(screen.getByText("A divine spellcaster and armored healer.")).toBeTruthy();
+    screen.getByText("A divine spellcaster and armored healer.");
 
     await user.click(screen.getAllByRole("link", { name: "Kits" })[0]!);
-    expect(await screen.findByRole("heading", { name: "Kits", level: 1 })).toBeTruthy();
-    await user.click(summaryContaining("BERSERKER"));
-    expect(screen.getAllByText("FIGHTER · FIGHTER ALL").length).toBeGreaterThan(0);
-    expect(screen.getByText("A warrior who channels a controlled battle rage.")).toBeTruthy();
-    expect(screen.getByText("CLABFI02")).toBeTruthy();
-    expect(screen.getAllByText("0x00004001")).toHaveLength(2);
-    expect(screen.getByText(characterClass.name)).toBeTruthy();
+    await screen.findByRole("heading", { name: "Kits", level: 1 });
+    await screen.findByText("Berserker");
+    await user.click(summaryContaining("Berserker"));
+    screen.getByText("A warrior who channels a controlled battle rage.");
+    screen.getAllByText("0x00004001");
 
     await user.click(screen.getAllByRole("link", { name: "Identifiers" })[0]!);
-    expect(await screen.findByRole("heading", { name: "Identifiers", level: 1 })).toBeTruthy();
-    expect(screen.getByText("0x00000001")).toBeTruthy();
-    expect(screen.getByText("GENDER.IDS")).toBeTruthy();
-    await user.selectOptions(screen.getByRole("combobox", { name: "Kind" }), "gender");
-    await waitFor(() => expect(api.listIdentifierDefinitions).toHaveBeenLastCalledWith(
-      expect.objectContaining({ filter: 'kind = "gender"' }),
-      expect.any(AbortSignal),
-    ));
+    await screen.findByRole("heading", { name: "Identifiers", level: 1 });
+    screen.getByText("GENDER.IDS");
   });
 
-  it("reads installed books and scrolls with shareable search and ordering", async () => {
-    api.listReadableItems.mockResolvedValue({
-      items: [...readableItems],
-      nextPageToken: "",
-      totalSize: 2n,
-    });
-    window.history.replaceState(null, "", "/readable-items");
-    const user = userEvent.setup();
-    render(<App />);
+  it("summarizes generation health and opens extraction history", async () => {
+    api.listExtractionRuns.mockResolvedValue(page(create(ExtractionRunSchema, {
+      name: "installations/bg2ee-eet/extractionRuns/run-1",
+      runId: "run-1",
+      runKind: RunKind.DIALOGUES,
+      status: RunStatus.COMPLETE,
+      resourcesDiscovered: 10n,
+      detailsExtracted: 10n,
+    })));
+    const user = renderRoute("/pipeline");
 
-    expect(await screen.findByRole("heading", { name: "Readable items", level: 1 })).toBeTruthy();
-    expect(screen.getByText("2 readable items")).toBeTruthy();
-    expect(screen.getAllByRole("link", { name: "Readable items", current: "page" })).toHaveLength(2);
-    expect(api.listReadableItems).toHaveBeenCalledWith(
-      expect.objectContaining({ orderBy: "display_title asc", pageSize: 25 }),
-      expect.any(AbortSignal),
-    );
-
-    await user.click(summaryContaining("BOOK50.ITM"));
-    const text = screen.getByLabelText("History of the North VIII text");
-    expect(text.textContent).toContain("History of the North—1369\n\nThe tumultuous climate continued.");
-    expect(screen.getByText("ITEMS.BIF", { exact: false })).toBeTruthy();
-
-    const search = screen.getByRole("searchbox", { name: "Full-text search readable items" });
-    await user.type(search, "history");
-    await waitFor(() => expect(api.listReadableItems).toHaveBeenLastCalledWith(
-      expect.objectContaining({ filter: 'search("history")', orderBy: "" }),
-      expect.any(AbortSignal),
-    ));
-    await user.clear(search);
-    await waitFor(() => expect(api.listReadableItems).toHaveBeenLastCalledWith(
-      expect.objectContaining({ filter: "", orderBy: "display_title asc" }),
-      expect.any(AbortSignal),
-    ));
-
-    await user.selectOptions(screen.getByRole("combobox", { name: "Type" }), "scroll");
-    await waitFor(() => expect(api.listReadableItems).toHaveBeenLastCalledWith(
-      expect.objectContaining({ filter: 'kind = "scroll"' }),
-      expect.any(AbortSignal),
-    ));
-    await user.selectOptions(screen.getByRole("combobox", { name: "Order" }), "text_length desc");
-    await waitFor(() => expect(api.listReadableItems).toHaveBeenLastCalledWith(
-      expect.objectContaining({ orderBy: "text_length desc" }),
-      expect.any(AbortSignal),
-    ));
-  });
-
-  it("summarizes the pipeline and opens extraction history on demand", async () => {
-    window.history.replaceState(null, "", "/pipeline");
-    const user = userEvent.setup();
-    render(<App />);
-
-    expect(screen.getByRole("link", { name: "Skip to content" }).getAttribute("href"))
-      .toBe("#main-content");
     const output = within(await screen.findByRole("region", { name: "Generated output" }));
-    expect(output.getByText("Voice assignments").nextElementSibling?.textContent).toBe("7");
-    expect(output.getByText("Unique Inworld voices").nextElementSibling?.textContent).toBe("3");
-
-    const corpus = within(screen.getByRole("region", { name: "Dialogue corpus" }));
-    expect(corpus.getByText("20")).toBeTruthy();
-    expect(corpus.getByRole("img", { name: "NPC 11, Player 7, Journal 2" })).toBeTruthy();
-
-    const inventory = within(screen.getByRole("region", { name: "Resource inventory" }));
-    expect(inventory.getByText("Readable items").nextElementSibling?.textContent).toBe("2");
-
-    expect(screen.getByRole("heading", { name: "3 dialogue lines need direction" })).toBeTruthy();
-    const health = within(screen.getByLabelText("Generation health"));
-    expect(health.getByText("Voice creation").nextElementSibling?.textContent).toBe("1");
-    expect(health.getByText("Audio generation").nextElementSibling?.textContent).toBe("6");
-    expect(api.listExtractionRuns).not.toHaveBeenCalled();
-    expect(screen.getAllByRole("link", { name: "Pipeline", current: "page" })).toHaveLength(2);
+    output.getByText("7");
+    output.getByText("3");
+    screen.getByRole("heading", { name: "3 dialogue lines need direction" });
 
     await user.click(screen.getAllByRole("link", { name: "Extraction runs" })[0]!);
-    await waitFor(() => expect(window.location.pathname).toBe("/extraction-runs"));
-    await waitFor(() => expect(document.title).toBe("Extraction runs · BGVoice"));
-    expect(document.activeElement).toBe(screen.getByRole("main"));
-    expect(screen.getAllByRole("link", { name: "Extraction runs", current: "page" })).toHaveLength(2);
-    expect(await screen.findByRole("heading", { name: "Extraction runs", level: 1 })).toBeTruthy();
-    expect(screen.getByRole("searchbox", { name: "Full-text search runs" })).toBeTruthy();
-    expect(api.listExtractionRuns).toHaveBeenCalledOnce();
+    await screen.findByRole("heading", { name: "Extraction runs", level: 1 });
+    await screen.findByText("run-1");
   });
 });

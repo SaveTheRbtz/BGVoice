@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from bgvoice.database import PipelineDatabase
 from tests.scenarios import build_scenario_database
 
 
@@ -17,6 +18,20 @@ def anyio_backend() -> str:
 @pytest.fixture(scope="session")
 def scenario_template(tmp_path_factory: pytest.TempPathFactory) -> Path:
     return build_scenario_database(tmp_path_factory.mktemp("scenario") / "pipeline.lancedb")
+
+
+@pytest.fixture(scope="session")
+def empty_database_template(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Create the empty application schema once for isolated mutation tests."""
+    return PipelineDatabase(tmp_path_factory.mktemp("empty") / "pipeline.lancedb").path
+
+
+@pytest.fixture
+def empty_database(empty_database_template: Path, tmp_path: Path) -> PipelineDatabase:
+    """Return an isolated empty database without rebuilding every table and index."""
+    target = tmp_path / "pipeline.lancedb"
+    shutil.copytree(empty_database_template, target)
+    return PipelineDatabase(target)
 
 
 @pytest.fixture

@@ -15,7 +15,7 @@ from bgvoice.direction_audit import (
     DEFAULT_SIMILARITY_THRESHOLD,
     audit_directions,
 )
-from bgvoice.generation import generate, generate_defaults
+from bgvoice.generation import DEFAULT_GENERIC_MAX_LINES, generate
 from bgvoice.iecli import IeCli
 from bgvoice.mod_export import export_mod
 from bgvoice.model_types import RunStatus
@@ -93,11 +93,16 @@ def build_parser() -> argparse.ArgumentParser:
         "generate",
         help="design voices, direct dialogue, and generate missing audio",
     )
-    generation.add_argument(
+    selection = generation.add_mutually_exclusive_group(required=True)
+    selection.add_argument(
         "--voice",
         action="append",
-        required=True,
         help="canonical voice ID or display name; repeat for multiple voices",
+    )
+    selection.add_argument(
+        "--all-sparse",
+        action="store_true",
+        help="generate every voice at or below the generic profile threshold",
     )
     generation.add_argument(
         "--lines-per-voice",
@@ -113,19 +118,14 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="delete and recreate every selected character voice and its audio",
     )
-
-    defaults = commands.add_parser(
-        "generate-defaults",
-        help="voice sparse characters through reusable gender/race profiles",
-    )
-    defaults.add_argument(
-        "--max-lines",
-        type=_positive_int,
-        default=5,
-        help="largest non-empty NPC workload to include (default: 5)",
-    )
-    defaults.add_argument(
-        "--database", type=Path, default=_DEFAULT_DATABASE, help="LanceDB directory"
+    generation.add_argument(
+        "--generic-max-lines",
+        type=_non_negative_int,
+        default=DEFAULT_GENERIC_MAX_LINES,
+        help=(
+            "largest non-empty NPC workload to route through reusable profiles; "
+            f"0 disables reuse (default: {DEFAULT_GENERIC_MAX_LINES})"
+        ),
     )
 
     audit = commands.add_parser(
@@ -185,29 +185,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         summary = PipelineDatabase(args.database).rebuild_attributions()
         print(summary.model_dump_json(indent=2))
         return 0
-    if args.command in {"generate", "generate-defaults"}:
+    if args.command == "generate":
         logging.basicConfig(level=logging.WARNING, format="%(asctime)s %(message)s")
         logging.getLogger("bgvoice.generation_ai").setLevel(logging.INFO)
-        if args.command == "generate":
-            summary = asyncio.run(
-                generate(
-                    args.database,
-                    args.voice,
-                    args.lines_per_voice,
-                    os.environ["OPENAI_API_KEY"],
-                    os.environ["INWORLD_API_KEY"],
-                    recreate_voices=args.recreate_voices,
-                )
+        summary = asyncio.run(
+            generate(
+                args.database,
+                None if args.all_sparse else args.voice,
+                args.lines_per_voice,
+                os.environ["OPENAI_API_KEY"],
+                os.environ["INWORLD_API_KEY"],
+                recreate_voices=args.recreate_voices,
+                generic_max_lines=args.generic_max_lines,
             )
-        else:
-            summary = asyncio.run(
-                generate_defaults(
-                    args.database,
-                    args.max_lines,
-                    os.environ["OPENAI_API_KEY"],
-                    os.environ["INWORLD_API_KEY"],
-                )
-            )
+        )
         print(summary.model_dump_json(indent=2))
         return 0
     if args.command == "audit-directions":
@@ -301,6 +292,13 @@ def _positive_int(value: str) -> int:
     parsed = int(value)
     if parsed < 1:
         raise argparse.ArgumentTypeError("must be at least 1")
+    return parsed
+
+
+def _non_negative_int(value: str) -> int:
+    parsed = int(value)
+    if parsed < 0:
+        raise argparse.ArgumentTypeError("cannot be negative")
     return parsed
 
 

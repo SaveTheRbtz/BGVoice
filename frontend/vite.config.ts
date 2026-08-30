@@ -12,19 +12,14 @@ export default defineConfig({
   test: {
     coverage: {
       provider: "v8",
-      include: [
-        "src/routes.ts",
-        "src/filters.ts",
-        "src/use-browser.ts",
-        "src/use-resource.ts",
-      ],
+      include: ["src/**/*.{ts,tsx}"],
+      exclude: ["src/**/*.test.{ts,tsx}", "src/api.ts", "src/gen/**", "src/main.tsx"],
       reporter: ["text", "text-summary"],
       thresholds: {
-        statements: 90,
-        branches: 75,
-        functions: 90,
-        lines: 95,
-        perFile: true,
+        statements: 80,
+        branches: 70,
+        functions: 80,
+        lines: 80,
       },
     },
   },

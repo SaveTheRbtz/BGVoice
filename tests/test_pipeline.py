@@ -4,7 +4,6 @@ from collections.abc import Callable, Sequence
 from io import BytesIO
 from pathlib import Path
 
-import lancedb
 import pytest
 from PIL import Image
 
@@ -53,6 +52,7 @@ from tests.factories import (
     make_resource,
     metadata_resources,
 )
+from tests.scenarios import rows
 
 pytestmark = pytest.mark.integration
 
@@ -143,10 +143,11 @@ class FakeIeCli:
 
 @pytest.mark.anyio
 async def test_metadata_extraction_publishes_engine_definitions(
+    empty_database: PipelineDatabase,
     tmp_path: Path,
 ) -> None:
     client = MetadataClient(metadata_resources())
-    database = PipelineDatabase(tmp_path / "metadata.lancedb")
+    database = empty_database
     summary = extract_metadata(client, database, tmp_path, workers=6)
     reader = await PipelineReader.open(database.path)
     try:
@@ -157,12 +158,7 @@ async def test_metadata_extraction_publishes_engine_definitions(
         reader.close()
 
     assert summary.status == "complete"
-    run = (
-        lancedb.connect(database.path)
-        .open_table("extraction_runs")
-        .search()
-        .to_pydantic(ExtractionRunRecord)
-    )[0]
+    run = rows(database.path, "extraction_runs", ExtractionRunRecord)[0]
     assert (run.run_kind, run.resources_discovered, run.details_extracted) == (
         RunKind.METADATA,
         len(client.resources),
@@ -178,6 +174,7 @@ async def test_metadata_extraction_publishes_engine_definitions(
 
 
 def test_metadata_extraction_failure_is_finalized_and_propagated(
+    empty_database: PipelineDatabase,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -187,17 +184,12 @@ def test_metadata_extraction_failure_is_finalized_and_propagated(
         raise expected
 
     monkeypatch.setattr(pipeline, "build_metadata", fail)
-    database = PipelineDatabase(tmp_path / "metadata-failure.lancedb")
+    database = empty_database
     with pytest.raises(RuntimeError) as raised:
         extract_metadata(FakeIeCli(), database, tmp_path)
 
     assert raised.value is expected
-    run = (
-        lancedb.connect(database.path)
-        .open_table("extraction_runs")
-        .search()
-        .to_pydantic(ExtractionRunRecord)
-    )[0]
+    run = rows(database.path, "extraction_runs", ExtractionRunRecord)[0]
     assert (run.run_kind, run.status, run.error) == (
         RunKind.METADATA,
         "failed",
@@ -206,6 +198,7 @@ def test_metadata_extraction_failure_is_finalized_and_propagated(
 
 
 def test_portrait_extraction_deduplicates_and_persists_only_referenced_bmps(
+    empty_database: PipelineDatabase,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -219,7 +212,7 @@ def test_portrait_extraction_deduplicates_and_persists_only_referenced_bmps(
         "AERIES.BMP": _bmp(54, 84, (1, 2, 3)),
         "MINSCM.BMP": _bmp(169, 266, (4, 5, 6)),
     }
-    database = PipelineDatabase(tmp_path / "portraits.lancedb")
+    database = empty_database
     monkeypatch.setattr(
         database,
         "referenced_portrait_resrefs",
@@ -253,6 +246,7 @@ def test_portrait_extraction_deduplicates_and_persists_only_referenced_bmps(
 
 
 def test_portrait_extraction_failure_is_finalized_and_propagated(
+    empty_database: PipelineDatabase,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -264,18 +258,13 @@ def test_portrait_extraction_failure_is_finalized_and_propagated(
         raise expected
 
     monkeypatch.setattr(client, "read_raw_resource", fail)
-    database = PipelineDatabase(tmp_path / "portrait-failure.lancedb")
+    database = empty_database
     monkeypatch.setattr(database, "referenced_portrait_resrefs", lambda: {"aeries"})
     with pytest.raises(OSError) as raised:
         extract_portraits(client, database, tmp_path)
 
     assert raised.value is expected
-    run = (
-        lancedb.connect(database.path)
-        .open_table("extraction_runs")
-        .search()
-        .to_pydantic(ExtractionRunRecord)
-    )[0]
+    run = rows(database.path, "extraction_runs", ExtractionRunRecord)[0]
     assert (
         run.run_kind,
         run.status,
@@ -288,6 +277,7 @@ def test_portrait_extraction_failure_is_finalized_and_propagated(
 
 
 def test_readable_extraction_scans_all_items_and_publishes_only_texts(
+    empty_database: PipelineDatabase,
     tmp_path: Path,
 ) -> None:
     client = FakeIeCli()
@@ -299,7 +289,7 @@ def test_readable_extraction_scans_all_items_and_publishes_only_texts(
     ]
     client.failures.add("BROKEN.ITM")
     progress: list[ExtractionProgress] = []
-    database = PipelineDatabase(tmp_path / "readables.lancedb")
+    database = empty_database
 
     summary = extract_readable_items(
         client,
@@ -333,10 +323,13 @@ def test_readable_extraction_scans_all_items_and_publishes_only_texts(
     assert [item.resource_name for item in database.readable_items()] == ["SCROLL.ITM"]
 
 
-def test_character_inventory_can_skip_detail_extraction(tmp_path: Path) -> None:
+def test_character_inventory_can_skip_detail_extraction(
+    empty_database: PipelineDatabase,
+    tmp_path: Path,
+) -> None:
     """Inventory-only mode persists every CRE without invoking dump commands."""
     client = FakeIeCli()
-    database = PipelineDatabase(tmp_path / "pipeline.lancedb")
+    database = empty_database
     summary = extract_characters(client, database, tmp_path, include_details=False)
 
     assert summary.discovered == 2
@@ -355,6 +348,7 @@ def test_character_inventory_can_skip_detail_extraction(tmp_path: Path) -> None:
     ],
 )
 def test_extraction_retries_failures_and_refreshes_completed_resources(
+    empty_database: PipelineDatabase,
     tmp_path: Path,
     extractor: Extractor,
     run_kind: RunKind,
@@ -365,7 +359,7 @@ def test_extraction_retries_failures_and_refreshes_completed_resources(
     client.failures.add(failed_resource)
     progress: list[ExtractionProgress] = []
 
-    database = PipelineDatabase(tmp_path / f"{run_kind}.lancedb")
+    database = empty_database
     first = extractor(client, database, tmp_path, workers=2, progress=progress.append)
     assert first.status == "complete_with_errors"
     assert (first.discovered, first.attempted, first.extracted, first.failed) == (2, 2, 1, 1)
@@ -397,25 +391,20 @@ def test_extraction_retries_failures_and_refreshes_completed_resources(
     ],
 )
 def test_fatal_inventory_errors_are_persisted_and_propagated(
+    empty_database: PipelineDatabase,
     tmp_path: Path,
     extractor: Extractor,
     run_kind: RunKind,
 ) -> None:
     """Discovery failures finalize the durable run before reaching the caller."""
-    path = tmp_path / f"{run_kind}.lancedb"
+    database = empty_database
     client = FakeIeCli()
     client.inventory_failure = run_kind
-    database = PipelineDatabase(path)
 
     with pytest.raises(RuntimeError, match=f"cannot list {run_kind}"):
         extractor(client, database, tmp_path)
 
-    runs = (
-        lancedb.connect(path)
-        .open_table("extraction_runs")
-        .search()
-        .to_pydantic(ExtractionRunRecord)
-    )
+    runs = rows(database.path, "extraction_runs", ExtractionRunRecord)
     assert len(runs) == 1
     run = runs[0]
     assert (run.run_kind, run.status, run.error) == (
@@ -427,11 +416,11 @@ def test_fatal_inventory_errors_are_persisted_and_propagated(
 
 
 def test_fatal_batch_write_preserves_committed_run_progress(
+    empty_database: PipelineDatabase,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    path = tmp_path / "partial.lancedb"
-    database = PipelineDatabase(path)
+    database = empty_database
     client = FakeIeCli()
     original_save = database.apply_detail_batch
     save_count = 0
@@ -452,12 +441,7 @@ def test_fatal_batch_write_preserves_committed_run_progress(
     with pytest.raises(OSError, match="simulated Lance write failure"):
         extract_characters(client, database, tmp_path, workers=1)
 
-    run = (
-        lancedb.connect(path)
-        .open_table("extraction_runs")
-        .search()
-        .to_pydantic(ExtractionRunRecord)
-    )[0]
+    run = rows(database.path, "extraction_runs", ExtractionRunRecord)[0]
     assert (run.status, run.details_attempted, run.details_extracted, run.failures) == (
         "failed",
         2,

@@ -75,6 +75,7 @@ VOICE_CONCURRENCY = 75
 OPENAI_CONCURRENCY = 100
 NARRATOR_VOICE_ID = "narrator"
 DEFAULT_NAMED_RACE_COUNT = 9
+DEFAULT_GENERIC_MAX_LINES = 5
 VOICE_DESIGN_SAMPLE_COUNT = 30
 VOICE_DESIGN_SAMPLE_MIN_CHARS = 50
 
@@ -400,15 +401,11 @@ def _common_default_race_ids(race_ids: Sequence[int]) -> frozenset[int]:
     return frozenset(ranked[:DEFAULT_NAMED_RACE_COUNT])
 
 
-def _bucket_generic_profiles(workloads: Sequence[VoiceWorkload]) -> list[VoiceWorkload]:
+def _bucket_generic_profiles(
+    workloads: Sequence[VoiceWorkload],
+    named_race_ids: frozenset[int],
+) -> list[VoiceWorkload]:
     """Apply the bounded fallback taxonomy only to generic profile generation."""
-    common_races = _common_default_race_ids(
-        [
-            workload.generic_profile.race_id
-            for workload in workloads
-            if workload.generic_profile.race_id is not None
-        ]
-    )
     return [
         replace(
             workload,
@@ -416,12 +413,12 @@ def _bucket_generic_profiles(workloads: Sequence[VoiceWorkload]) -> list[VoiceWo
                 workload.generic_profile,
                 race_id=(
                     workload.generic_profile.race_id
-                    if workload.generic_profile.race_id in common_races
+                    if workload.generic_profile.race_id in named_race_ids
                     else None
                 ),
                 race_name=(
                     workload.generic_profile.race_name
-                    if workload.generic_profile.race_id in common_races
+                    if workload.generic_profile.race_id in named_race_ids
                     else None
                 ),
             ),
@@ -430,8 +427,10 @@ def _bucket_generic_profiles(workloads: Sequence[VoiceWorkload]) -> list[VoiceWo
     ]
 
 
-async def _sparse_voice_ids(reader: PipelineReader, max_lines: int) -> list[str]:
-    assert max_lines > 0, "sparse voice line limit must be positive"
+async def _sparse_voice_races(reader: PipelineReader, max_lines: int) -> dict[str, RaceId]:
+    assert max_lines >= 0, "sparse voice line limit cannot be negative"
+    if max_lines == 0:
+        return {}
     attribution, dialogue_result, line_result = await asyncio.gather(
         reader.attribution_snapshot(),
         reader.dialogues_table.query().to_pydantic(DialogueRecord),
@@ -449,8 +448,8 @@ async def _sparse_voice_ids(reader: PipelineReader, max_lines: int) -> list[str]
         for line in cast(list[DialogueLineRecord], line_result)
         if line.text and line.text.strip()
     )
-    return [
-        voice.voice_id
+    sparse_voices = [
+        voice
         for voice in attribution.voices
         if 0
         < sum(
@@ -463,6 +462,26 @@ async def _sparse_voice_ids(reader: PipelineReader, max_lines: int) -> list[str]
         )
         <= max_lines
     ]
+    if not sparse_voices:
+        return {}
+
+    variant_names = sorted(
+        {name for voice in sparse_voices for name in voice.variant_resource_names}
+    )
+    characters = cast(
+        list[CharacterRecord],
+        await reader.characters_table.query()
+        .where(col("resource_name").isin(variant_names))
+        .to_pydantic(CharacterRecord),
+    )
+    by_name = {character.resource_name.casefold(): character for character in characters}
+    races: dict[str, RaceId] = {}
+    for voice in sparse_voices:
+        members = [by_name[name.casefold()] for name in voice.variant_resource_names]
+        detail = voice_representative(members).detail
+        assert detail is not None
+        races[voice.voice_id] = RaceId(detail.race_id)
+    return races
 
 
 def _voice_evidence(
@@ -555,44 +574,41 @@ def _representative_priority(
 
 async def generate(
     database_path: Path,
-    requested_voices: Sequence[str],
+    requested_voices: Sequence[str] | None,
     lines_per_voice: int | None,
     openai_api_key: str,
     inworld_api_key: str,
     *,
     recreate_voices: bool = False,
+    generic_max_lines: int = DEFAULT_GENERIC_MAX_LINES,
 ) -> GenerationSummary:
-    """Generate selected character voices and every missing downstream artifact."""
-    return await _run_generation(
-        database_path,
-        requested_voices,
-        lines_per_voice,
-        openai_api_key,
-        inworld_api_key,
-        recreate_voices=recreate_voices,
-        use_generic_profiles=False,
-    )
-
-
-async def _run_generation(
-    database_path: Path,
-    requested_voices: Sequence[str],
-    lines_per_voice: int | None,
-    openai_api_key: str,
-    inworld_api_key: str,
-    *,
-    recreate_voices: bool,
-    use_generic_profiles: bool,
-) -> GenerationSummary:
-    """Run all missing generation stages and persist each completed unit."""
+    """Generate selected voices, routing sparse ones through shared profiles."""
     import httpx
 
     reader = await PipelineReader.open(database_path)
     store = await GenerationStore.open(database_path)
     try:
-        workloads = await load_workloads(reader, requested_voices, lines_per_voice)
-        if use_generic_profiles:
-            workloads = _bucket_generic_profiles(workloads)
+        generic_voice_races = await _sparse_voice_races(reader, generic_max_lines)
+        generic_voice_ids = generic_voice_races.keys()
+        selected_voices = (
+            sorted(generic_voice_ids) if requested_voices is None else requested_voices
+        )
+        workloads = await load_workloads(reader, selected_voices, lines_per_voice)
+        named_race_ids = _common_default_race_ids(list(generic_voice_races.values()))
+        generic_workloads = {
+            workload.voice.voice_id: workload
+            for workload in _bucket_generic_profiles(
+                [
+                    workload
+                    for workload in workloads
+                    if workload.voice.voice_id in generic_voice_ids
+                ],
+                named_race_ids,
+            )
+        }
+        workloads = [
+            generic_workloads.get(workload.voice.voice_id, workload) for workload in workloads
+        ]
         history_index = await DialogueHistoryIndex.load(reader)
         async with (
             AsyncOpenAI(api_key=openai_api_key) as openai,
@@ -640,17 +656,13 @@ async def _run_generation(
                 )
                 return profile
 
-            generic_tasks = (
-                {
-                    profile_id: asyncio.create_task(create_generic(generic))
-                    for profile_id, generic in {
-                        workload.generic_profile.id: workload.generic_profile
-                        for workload in workloads
-                    }.items()
-                }
-                if use_generic_profiles
-                else {}
-            )
+            generic_tasks = {
+                profile_id: asyncio.create_task(create_generic(generic))
+                for profile_id, generic in {
+                    workload.generic_profile.id: workload.generic_profile
+                    for workload in generic_workloads.values()
+                }.items()
+            }
 
             narrator_task: asyncio.Task[VoiceProfileRecord] | None = None
 
@@ -688,6 +700,11 @@ async def _run_generation(
 
             async def process(workload: VoiceWorkload) -> VoiceWorkload | None:
                 async with voice_capacity:
+                    generic_task = (
+                        generic_tasks[workload.generic_profile.id]
+                        if workload.voice.voice_id in generic_voice_ids
+                        else None
+                    )
                     voice_ready = False
                     try:
                         await _ensure_character_voice(
@@ -698,11 +715,7 @@ async def _run_generation(
                             openai_capacity,
                             provider_voices,
                             recreate=recreate_voices,
-                            generic_profile=(
-                                generic_tasks[workload.generic_profile.id]
-                                if use_generic_profiles
-                                else None
-                            ),
+                            generic_profile=generic_task,
                         )
                     except Exception as error:
                         await _record_failures(
@@ -729,7 +742,7 @@ async def _run_generation(
                         openai_capacity,
                     )
                     if voice_ready:
-                        if not use_generic_profiles:
+                        if generic_task is None:
                             await _synthesize_workloads(
                                 store,
                                 inworld,
@@ -744,18 +757,21 @@ async def _run_generation(
             processed = await _wait_for_all(
                 [asyncio.create_task(process(workload)) for workload in workloads]
             )
-            if use_generic_profiles:
-                ready = [workload for workload in processed if workload is not None]
-                if ready:
-                    await _synthesize_workloads(
-                        store,
-                        inworld,
-                        ready,
-                        ensure_narrator,
-                        inworld_capacity,
-                        running_audio_ids,
-                    )
-                await _wait_for_all(list(generic_tasks.values()))
+            ready = [
+                workload
+                for workload in processed
+                if workload is not None and workload.voice.voice_id in generic_voice_ids
+            ]
+            if ready:
+                await _synthesize_workloads(
+                    store,
+                    inworld,
+                    ready,
+                    ensure_narrator,
+                    inworld_capacity,
+                    running_audio_ids,
+                )
+            await _wait_for_all(list(generic_tasks.values()))
 
         voice_ids = [workload.voice.voice_id for workload in workloads]
         directions = await store.directed_lines(voice_ids)
@@ -790,29 +806,6 @@ async def _run_generation(
     finally:
         reader.close()
         store.close()
-
-
-async def generate_defaults(
-    database_path: Path,
-    max_lines: int,
-    openai_api_key: str,
-    inworld_api_key: str,
-) -> GenerationSummary:
-    """Generate every sparse canonical voice through shared gender/race defaults."""
-    reader = await PipelineReader.open(database_path)
-    try:
-        voice_ids = await _sparse_voice_ids(reader, max_lines)
-    finally:
-        reader.close()
-    return await _run_generation(
-        database_path,
-        voice_ids,
-        None,
-        openai_api_key,
-        inworld_api_key,
-        recreate_voices=False,
-        use_generic_profiles=True,
-    )
 
 
 async def _ensure_character_voice(

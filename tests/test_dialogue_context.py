@@ -3,22 +3,7 @@
 import bgvoice.dialogue_context as context_module
 from bgvoice.dialogue_context import DialogueHistoryIndex, dialogue_history
 from bgvoice.model_types import DialogueLineKind
-from bgvoice.storage_records import DialogueLineRecord
-
-
-def _line(dialogue: str, state: int) -> DialogueLineRecord:
-    return DialogueLineRecord(
-        id=f"{dialogue}:npc:{state}:-",
-        run_id="run",
-        dialogue_resource_name=dialogue,
-        line_kind=DialogueLineKind.NPC,
-        state_index=state,
-        strref=state,
-        text=f"Line {state}",
-        tokens=[],
-        serialized_size=10,
-        search_text=f"Line {state}",
-    )
+from tests.factories import make_dialogue_line
 
 
 def _context_line(
@@ -87,7 +72,7 @@ def test_dialogue_history_index_preserves_two_hop_edge_selection_and_fallback() 
     ]
     index = DialogueHistoryIndex._from_rows(line_rows, edge_rows)
 
-    assert dialogue_history(index, _line("B.DLG", 2)) == (
+    assert dialogue_history(index, make_dialogue_line("B.DLG", 2)) == (
         "Unspoken scene context:\n"
         "Context turn 1 (earlier):\n"
         "Previous NPC/scene line: Earlier NPC\n"
@@ -96,7 +81,7 @@ def test_dialogue_history_index_preserves_two_hop_edge_selection_and_fallback() 
         "Previous NPC/scene line: Immediate NPC\n"
         "Player response: Second choice"
     )
-    assert dialogue_history(index, _line("F.DLG", 2)) == (
+    assert dialogue_history(index, make_dialogue_line("F.DLG", 2)) == (
         "Unspoken scene context:\n"
         "Previous NPC/scene line: Fallback context\n"
         "Player response: none (automatic scene transition)"

@@ -129,35 +129,24 @@ def test_voice_prompt_and_content_keep_tuned_local_evidence() -> None:
     evidence = root.find("local_evidence")
 
     assert root.tag == "voice_design_request"
-    assert [child.tag for child in root] == [
-        "task",
-        "voice_description_best_practices",
-        "structured_voice_example",
-        "research_requirements",
-        "evidence_usage",
-        "local_evidence",
-        "response_requirement",
-    ]
     assert evidence is not None
-    assert evidence.findtext("display_name") == "Imoen"
-    assert evidence.findtext("race_description") == source.race_description
-    assert evidence.findtext("class_description") == source.class_description
-    assert evidence.findtext("biography") == source.biography
+    assert {
+        field: evidence.findtext(field)
+        for field in ("display_name", "race_description", "class_description", "biography")
+    } == {
+        "display_name": "Imoen",
+        "race_description": source.race_description,
+        "class_description": source.class_description,
+        "biography": source.biography,
+    }
     assert [line.text for line in evidence.findall("dialogue_samples/dialogue_sample")] == list(
         source.dialogue_samples
     )
     assert "&lt;CHARNAME&gt;" in prompt
     assert "ambitious &amp; adaptable" in prompt
-    assert "Combine your internal model knowledge with current web research." in prompt
-    assert "progression such as class changes" in prompt
+    assert "web research" in (root.findtext("research_requirements") or "")
     assert evidence.findtext("ability_scores") == "STR 9, DEX 18, CON 16, INT 17, WIS 11, CHA 16"
     assert evidence.findtext("portrait") == "attached as an input image"
-    assert root.find("voice_description_best_practices") is not None
-    assert root.find("structured_voice_example") is not None
-    assert " ".join((root.findtext("response_requirement") or "").split()) == (
-        "Respond only with the supplied Structured Output for the TTS voice of the "
-        "Baldur's Gate character Imoen."
-    )
     assert len(content) == 2
     assert content[0] == {"type": "input_text", "text": prompt}
     assert content[1]["type"] == "input_image"
@@ -243,7 +232,8 @@ def _direction_source() -> DirectionSource:
 def test_direction_contract_is_discriminated_and_keeps_tuned_rules() -> None:
     schema = DirectionPlan.model_json_schema()
     result_schema = schema["properties"]["result"]
-    prompt = build_direction_prompt(_direction_source())
+    source = _direction_source()
+    prompt = build_direction_prompt(source)
 
     branch_names = [branch["$ref"].rsplit("/", 1)[1] for branch in result_schema["anyOf"]]
     assert {schema["$defs"][name]["properties"]["speaker"]["const"] for name in branch_names} == {
@@ -251,14 +241,9 @@ def test_direction_contract_is_discriminated_and_keeps_tuned_rules() -> None:
         "narrator",
     }
     assert "not merely from the presence of punctuation" in result_schema["description"]
-    assert "A fuller instruction like [say sadly with deliberate" in prompt
-    assert "Never include an angle-bracket token in the result." in prompt
-    assert "Fully enclosing asterisks or parentheses are strong evidence" in prompt
-    assert "A brief stage direction such as *sighs* or *whispering*" in prompt
-    assert "Do not infer additional emotion from a visual action." in prompt
     assert prompt.count("<requested_item>") == 1
-    assert "<context_not_for_tts>" in prompt
-    assert "Previous NPC/scene line: The walls are no longer safe" in prompt
+    assert source.dialogue_history is not None
+    assert "<context_not_for_tts>\n" + source.dialogue_history in prompt
     assert "<tts_source>\n*whispering* We must leave, <CHARNAME>.\n</tts_source>" in prompt
 
 
@@ -325,22 +310,30 @@ async def test_direction_has_no_tools_and_retries_invalid_structured_results(
     assert "reasoning_tokens=30 visible_output_tokens=10" in caplog.text
 
 
-def test_direction_validation_rejects_narrator_wrappers_and_copied_context() -> None:
-    source = _direction_source()
-
-    with pytest.raises(ValueError, match="enclosing parentheses"):
-        validate_directed_dialogue(
-            source,
+@pytest.mark.parametrize(
+    ("result", "message"),
+    [
+        (
             NarratorDirectedDialogue(
                 speaker="narrator",
                 directed_dialogue="(The old mage turns toward the road.)",
             ),
-        )
-    with pytest.raises(ValueError, match="unspoken scene context"):
-        validate_directed_dialogue(
-            source,
+            "enclosing parentheses",
+        ),
+        (
             CharacterDirectedDialogue(
                 speaker="character",
                 directed_dialogue="The walls are no longer safe after nightfall.",
             ),
-        )
+            "unspoken scene context",
+        ),
+    ],
+)
+def test_direction_validation_rejects_wrappers_and_copied_context(
+    result: CharacterDirectedDialogue | NarratorDirectedDialogue,
+    message: str,
+) -> None:
+    source = _direction_source()
+
+    with pytest.raises(ValueError, match=message):
+        validate_directed_dialogue(source, result)

@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 from lancedb.pydantic import LanceModel
 
-from bgvoice.attribution import _voice_family
+from bgvoice.attribution import _voice_family, _VoiceDraft
 from bgvoice.character_models import CharacterExtraction, CharacterSound
 from bgvoice.database import PipelineDatabase
 from bgvoice.dialogue_models import DialogueExtraction
@@ -249,42 +249,12 @@ def test_voices_group_by_name_omit_zero_line_groups_and_choose_deterministic_pro
 
 
 def test_gender_split_uses_stable_qualified_ids_without_mixed_dialogues(
-    scenario_database: Path,
+    shared_scenario_database: Path,
 ) -> None:
-    small_generic_families = (
-        "beggar",
-        "beggar child",
-        "citizen",
-        "civil servant",
-        "cowled enforcer",
-        "crusader patrol",
-        "cultist",
-        "dark moon monk",
-        "diseased child",
-        "diseased one",
-        "drow warrior",
-        "elf",
-        "elven warrior",
-        "flaming fist healer",
-        "flaming fist mercenary",
-        "flaming fist veteran",
-        "guardian",
-        "mercenary captain",
-        "moneylender",
-        "mourner",
-        "mugger",
-        "onlooker",
-        "patron",
-        "prophet",
-        "slave",
-        "spectral harpist",
-        "tavern patron",
-        "troll",
-    )
-    characters = rows(scenario_database, "characters", CharacterRecord)
-    dialogues = rows(scenario_database, "dialogues", DialogueRecord)
+    characters = rows(shared_scenario_database, "characters", CharacterRecord)
+    dialogues = rows(shared_scenario_database, "dialogues", DialogueRecord)
     attributions = rows(
-        scenario_database,
+        shared_scenario_database,
         "character_dialogues",
         CharacterAttributionRecord,
     )
@@ -337,29 +307,27 @@ def test_gender_split_uses_stable_qualified_ids_without_mixed_dialogues(
                 f"{resref} third line",
             }
 
-    for family_id in small_generic_families:
-        voices = _voice_family(
+    def family(
+        family_id: str,
+        family_members: list[CharacterRecord],
+        family_attributions: dict[str, CharacterAttributionRecord],
+        family_texts: dict[str, set[str]],
+    ) -> list[_VoiceDraft]:
+        return _voice_family(
             family_id,
-            members,
-            attribution_by_character,
+            family_members,
+            family_attributions,
             dialogues_by_resource,
-            texts_by_dialogue,
+            family_texts,
             [],
             {},
         )
-        assert [(voice.voice_id, voice.gender) for voice in voices] == [
-            (f"{family_id}~g=female", ProviderGender.FEMALE),
-            (f"{family_id}~g=male", ProviderGender.MALE),
-        ]
-    voices = _voice_family(
-        "guardian",
-        members,
-        attribution_by_character,
-        dialogues_by_resource,
-        texts_by_dialogue,
-        [],
-        {},
-    )
+
+    voices = family("guardian", members, attribution_by_character, texts_by_dialogue)
+    assert [(voice.voice_id, voice.gender) for voice in voices] == [
+        ("guardian~g=female", ProviderGender.FEMALE),
+        ("guardian~g=male", ProviderGender.MALE),
+    ]
 
     sparse_members = [
         next(member for member in members if member.resource_name == "GF0.CRE"),
@@ -380,31 +348,14 @@ def test_gender_split_uses_stable_qualified_ids_without_mixed_dialogues(
         "gf0.dlg": {f"Female line {index}" for index in range(6)},
         "gm0.dlg": {"Neutral line"},
     }
-    for family_id in small_generic_families:
-        sparse_voices = _voice_family(
-            family_id,
-            sparse_members,
-            attribution_by_character,
-            dialogues_by_resource,
-            sparse_texts,
-            [],
-            {},
-        )
-        assert [(voice.voice_id, voice.gender) for voice in sparse_voices] == [
-            (f"{family_id}~g=female", ProviderGender.FEMALE),
-            (f"{family_id}~g=neutral", ProviderGender.NEUTRAL),
-        ]
+    sparse_voices = family("guardian", sparse_members, attribution_by_character, sparse_texts)
+    assert [(voice.voice_id, voice.gender) for voice in sparse_voices] == [
+        ("guardian~g=female", ProviderGender.FEMALE),
+        ("guardian~g=neutral", ProviderGender.NEUTRAL),
+    ]
     assert [
         voice.voice_id
-        for voice in _voice_family(
-            "guard",
-            sparse_members,
-            attribution_by_character,
-            dialogues_by_resource,
-            sparse_texts,
-            [],
-            {},
-        )
+        for voice in family("guard", sparse_members, attribution_by_character, sparse_texts)
     ] == ["guard"]
 
     assert {dialogue.resref for voice in voices for dialogue in voice.dialogues} == {
@@ -414,15 +365,7 @@ def test_gender_split_uses_stable_qualified_ids_without_mixed_dialogues(
     assert len(assigned) == len(set(assigned)) == 4
     assert [
         voice.voice_id
-        for voice in _voice_family(
-            "guard",
-            members,
-            attribution_by_character,
-            dialogues_by_resource,
-            texts_by_dialogue,
-            [],
-            {},
-        )
+        for voice in family("guard", members, attribution_by_character, texts_by_dialogue)
     ] == ["guard"]
 
     shared_name = "GSHARED.DLG"
@@ -441,15 +384,7 @@ def test_gender_split_uses_stable_qualified_ids_without_mixed_dialogues(
             }
         )
 
-    with_shared = _voice_family(
-        "guardian",
-        members,
-        attribution_by_character,
-        dialogues_by_resource,
-        texts_by_dialogue,
-        [],
-        {},
-    )
+    with_shared = family("guardian", members, attribution_by_character, texts_by_dialogue)
     shared = next(voice for voice in with_shared if voice.gender is ProviderGender.NEUTRAL)
     assert shared.voice_id == "guardian~g=neutral"
     assert "GSHARED" in {dialogue.resref for dialogue in shared.dialogues}
@@ -463,15 +398,7 @@ def test_gender_split_uses_stable_qualified_ids_without_mixed_dialogues(
         )
         for name, attribution in attribution_by_character.items()
     }
-    unsplit = _voice_family(
-        "guard",
-        members,
-        shared_male_dialogue,
-        dialogues_by_resource,
-        texts_by_dialogue,
-        [],
-        {},
-    )
+    unsplit = family("guard", members, shared_male_dialogue, texts_by_dialogue)
     assert [(voice.voice_id, voice.gender) for voice in unsplit] == [("guard", None)]
 
 

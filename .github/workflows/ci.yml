@@ -31,7 +31,7 @@ jobs:
           uv run ruff format --check .
           uv run ruff check .
           uv run ty check
-          uv run pytest
+          uv run pytest --cov=bgvoice --cov-report=term-missing:skip-covered
           uv build
 
       - name: Install Node
@@ -49,5 +49,8 @@ jobs:
         working-directory: frontend
         run: |
           pnpm lint
-          pnpm test
+          pnpm test:coverage
           pnpm build
+
+      - name: Lint protobuf schema
+        run: frontend/node_modules/.bin/buf lint
