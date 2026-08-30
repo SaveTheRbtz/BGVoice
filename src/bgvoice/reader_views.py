@@ -4,14 +4,11 @@ from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
-from bgvoice.character_models import (
-    VoiceResource,
-)
+from bgvoice.attribution import voice_representative
 from bgvoice.model_types import (
     AttributionStatus,
     DetailStatus,
     IdentifierKind,
-    VoiceId,
 )
 from bgvoice.reader_metadata import LabelResolver
 from bgvoice.reader_models import (
@@ -298,34 +295,45 @@ def transition_row(
 def voice_row(
     record: VoiceResourceRecord,
     dialogues: Mapping[str, DialogueRecord],
+    characters: Mapping[str, CharacterRecord],
+    labels: LabelResolver,
     generated_voice: GeneratedVoiceRow | None = None,
     directed_line_count: int = 0,
     generated_audio_count: int = 0,
 ) -> VoiceRow:
-    voice = VoiceResource(
-        id=VoiceId(record.voice_id),
-        display_name=record.display_name,
-        prompt=record.prompt,
-        variant_resource_names=record.variant_resource_names,
-        dialogue_resrefs=record.dialogue_resrefs,
-    )
+    members = [
+        characters[name.casefold()]
+        for name in record.variant_resource_names
+        if name.casefold() in characters
+    ]
+    representative = voice_representative(members)
+    detail = representative.detail
+    assert detail is not None
+    prompt = record.prompt
+    for heading, description in (
+        ("Race description", labels.race_description(detail.race_id)),
+        ("Class description", labels.class_description(detail.class_id)),
+    ):
+        prompt += f"\n\n{heading}:\n{description.strip() if description else 'unavailable'}"
     ordered_dialogues = [
         dialogues[resref.casefold()]
-        for resref in voice.dialogue_resrefs
+        for resref in record.dialogue_resrefs
         if resref.casefold() in dialogues
     ]
     return VoiceRow(
-        id=voice.id,
-        display_name=voice.display_name,
-        prompt=voice.prompt,
-        variant_resource_names=voice.variant_resource_names,
+        id=record.voice_id,
+        family_id=record.family_id,
+        gender=record.gender,
+        display_name=record.display_name,
+        prompt=prompt,
+        variant_resource_names=record.variant_resource_names,
         dialogue_resrefs=[row.resref for row in ordered_dialogues],
-        variant_count=voice.variant_count,
+        variant_count=len(record.variant_resource_names),
         dialogue_count=len(ordered_dialogues),
         npc_line_count=sum(
             row.detail.npc_line_count for row in ordered_dialogues if row.detail is not None
         ),
-        serialized_size=len(voice.model_dump_json().encode("utf-8")),
+        serialized_size=len(record.model_dump_json().encode("utf-8")),
         generated_voice=generated_voice,
         directed_line_count=directed_line_count,
         generated_audio_count=generated_audio_count,

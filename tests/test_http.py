@@ -29,10 +29,11 @@ from tests.factories import (
     make_direction,
     make_dump,
     make_generated_audio,
-    make_generated_voice,
     make_generation_failure,
     make_portrait_resource,
     make_resource,
+    make_voice_generation,
+    make_voice_profile,
 )
 from tests.scenarios import finish_empty_stage
 
@@ -94,9 +95,10 @@ def _seed_generated_audio(path: Path) -> DirectedLineRecord:
     line_id = "AERIE.DLG:npc:0:-"
     direction = make_direction("aerie", line_id, directed_dialogue="[warmly] Hello.")
     records = {
-        "generated_voices": make_generated_voice(
+        "voice_profiles": make_voice_profile(
             description="A gentle young adventurer with a warm, earnest delivery."
         ),
+        "voice_generations": make_voice_generation(),
         "directed_lines": direction,
         "generated_audio": make_generated_audio(direction, operation_name="operations/complete"),
     }
@@ -207,6 +209,10 @@ def test_generated_work_is_browsable_filterable_and_playable(
         summary["audioGenerationFailures"],
     ) == ("1", "1", "1")
     assert voice["voiceId"] == "aerie"
+    assert voice["familyId"] == "aerie"
+    assert voice["gender"] == "PROVIDER_GENDER_FEMALE"
+    assert voice["generatedVoice"]["profileId"] == "aerie"
+    assert voice["generatedVoice"]["profileKind"] == "VOICE_PROFILE_KIND_DEDICATED"
     assert voice["generatedVoice"]["inworldVoiceId"] == "voice-aerie"
     assert (voice["directedLineCount"], voice["generatedAudioCount"]) == ("1", "1")
     direction_json = lines[0]["directions"][0]

@@ -113,6 +113,19 @@ enum RunStatus {
   RUN_STATUS_FAILED = 4;
 }
 
+enum ProviderGender {
+  PROVIDER_GENDER_UNSPECIFIED = 0;
+  PROVIDER_GENDER_MALE = 1;
+  PROVIDER_GENDER_FEMALE = 2;
+  PROVIDER_GENDER_NEUTRAL = 3;
+}
+
+enum VoiceProfileKind {
+  VOICE_PROFILE_KIND_UNSPECIFIED = 0;
+  VOICE_PROFILE_KIND_DEDICATED = 1;
+  VOICE_PROFILE_KIND_GENERIC = 2;
+}
+
 message ResourceSource {
   SourceKind kind = 1;
   string path = 2;
@@ -192,6 +205,8 @@ message GeneratedVoice {
   string language_code = 2;
   string inworld_voice_id = 3;
   google.protobuf.Timestamp created_at = 4;
+  string profile_id = 5;
+  VoiceProfileKind profile_kind = 6;
 }
 
 message CharacterDirection {
@@ -232,6 +247,8 @@ message Voice {
   uint64 directed_line_count = 11;
   uint64 generated_audio_count = 12;
   string voice_id = 13;
+  string family_id = 14;
+  optional ProviderGender gender = 15;
 }
 
 message CharacterDialogueSummary {

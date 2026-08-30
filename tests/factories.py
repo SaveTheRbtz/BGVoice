@@ -17,19 +17,23 @@ from bgvoice.model_types import (
     GenerationFailureStage,
     ItmResource,
     PortraitResource,
+    ProviderGender,
+    RaceId,
     RunStatus,
     StringReference,
+    VoiceProfileKind,
 )
 from bgvoice.readable_models import ItmDump
 from bgvoice.storage_records import (
     CharacterDirection,
     DirectedLineRecord,
     GeneratedAudioRecord,
-    GeneratedVoiceRecord,
     GenerationFailureRecord,
     NarratorDirection,
     TtsBatchRecord,
     VoiceDescription,
+    VoiceGenerationRecord,
+    VoiceProfileRecord,
 )
 
 _VOICE_CREATED_AT = "2026-08-27T10:00:00+00:00"
@@ -107,20 +111,36 @@ def make_item_dump(
     )
 
 
-def make_generated_voice(
-    voice_id: str = "aerie",
+def make_voice_profile(
+    profile_id: str = "aerie",
     *,
     inworld_voice_id: str | None = None,
     description: str | None = None,
-) -> GeneratedVoiceRecord:
-    return GeneratedVoiceRecord(
-        voice_id=voice_id,
-        inworld_voice_id=inworld_voice_id or f"voice-{voice_id}",
+    gender: ProviderGender | None = None,
+    race_id: RaceId | None = None,
+    kind: VoiceProfileKind = VoiceProfileKind.DEDICATED,
+) -> VoiceProfileRecord:
+    return VoiceProfileRecord(
+        profile_id=profile_id,
+        kind=kind,
+        gender=gender,
+        race_id=race_id,
+        inworld_voice_id=inworld_voice_id or f"voice-{profile_id}",
         description=VoiceDescription(
-            text=description or f"A clear, expressive voice for {voice_id.title()}.",
+            text=description or f"A clear, expressive voice for {profile_id.title()}.",
             language_code="en-GB",
         ),
         created_at=_VOICE_CREATED_AT,
+    )
+
+
+def make_voice_generation(
+    voice_id: str = "aerie",
+    profile_id: str | None = None,
+) -> VoiceGenerationRecord:
+    return VoiceGenerationRecord(
+        voice_id=voice_id,
+        profile_id=profile_id or voice_id,
     )
 
 

@@ -23,7 +23,6 @@ from bgvoice.storage_records import (
     ExtractionRunRecord,
     FavoredEnemyRecord,
     GeneratedAudioRecord,
-    GeneratedVoiceRecord,
     GenerationFailureRecord,
     HappinessRuleRecord,
     IdentifierDefinitionRecord,
@@ -37,6 +36,8 @@ from bgvoice.storage_records import (
     SoundSlotGroupRecord,
     SoundSlotSuffixRecord,
     TtsBatchRecord,
+    VoiceGenerationRecord,
+    VoiceProfileRecord,
     VoiceResourceRecord,
 )
 
@@ -46,7 +47,8 @@ _READABLE_ITEMS = "readable_items"
 _CHARACTER_SOUNDS = "character_sounds"
 _CHARACTER_DIALOGUES = "character_dialogues"
 _VOICE_RESOURCES = "voice_resources"
-_GENERATED_VOICES = "generated_voices"
+_VOICE_PROFILES = "voice_profiles"
+_VOICE_GENERATIONS = "voice_generations"
 _DIRECTED_LINES = "directed_lines"
 _GENERATED_AUDIO = "generated_audio"
 _TTS_BATCHES = "tts_batches"
@@ -99,7 +101,8 @@ TABLE_NAMES = frozenset(
         _CHARACTER_SOUNDS,
         _CHARACTER_DIALOGUES,
         _VOICE_RESOURCES,
-        _GENERATED_VOICES,
+        _VOICE_PROFILES,
+        _VOICE_GENERATIONS,
         _DIRECTED_LINES,
         _GENERATED_AUDIO,
         _TTS_BATCHES,
@@ -167,7 +170,14 @@ TABLE_INDEXES: dict[str, tuple[IndexSpec, ...]] = {
         IndexSpec("voice_id", BTree(), "voice_resources_voice_id_btree"),
         IndexSpec("search_text", _FTS, "voice_resources_search_fts"),
     ),
-    _GENERATED_VOICES: (IndexSpec("voice_id", BTree(), "generated_voices_voice_id_btree"),),
+    _VOICE_PROFILES: (
+        IndexSpec("profile_id", BTree(), "voice_profiles_profile_id_btree"),
+        IndexSpec("inworld_voice_id", BTree(), "voice_profiles_inworld_voice_id_btree"),
+    ),
+    _VOICE_GENERATIONS: (
+        IndexSpec("voice_id", BTree(), "voice_generations_voice_id_btree"),
+        IndexSpec("profile_id", BTree(), "voice_generations_profile_id_btree"),
+    ),
     _DIRECTED_LINES: (
         IndexSpec("id", BTree(), "directed_lines_id_btree"),
         IndexSpec("voice_id", BTree(), "directed_lines_voice_id_btree"),
@@ -323,7 +333,8 @@ TABLE_MODELS: dict[str, type[LanceModel]] = {
     _CHARACTER_SOUNDS: CharacterSoundRecord,
     _CHARACTER_DIALOGUES: CharacterAttributionRecord,
     _VOICE_RESOURCES: VoiceResourceRecord,
-    _GENERATED_VOICES: GeneratedVoiceRecord,
+    _VOICE_PROFILES: VoiceProfileRecord,
+    _VOICE_GENERATIONS: VoiceGenerationRecord,
     _DIRECTED_LINES: DirectedLineRecord,
     _GENERATED_AUDIO: GeneratedAudioRecord,
     _TTS_BATCHES: TtsBatchRecord,

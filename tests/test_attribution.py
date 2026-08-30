@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 from lancedb.pydantic import LanceModel
 
+from bgvoice.attribution import _voice_family
 from bgvoice.character_models import CharacterExtraction, CharacterSound
 from bgvoice.database import PipelineDatabase
 from bgvoice.dialogue_models import DialogueExtraction
@@ -15,12 +16,15 @@ from bgvoice.model_types import (
     CharacterResourceRole,
     DetailStatus,
     KitIdsValue,
+    ProviderGender,
     ResourceTargetType,
     RunKind,
     RunStatus,
 )
 from bgvoice.storage_records import (
     CharacterAttributionRecord,
+    CharacterRecord,
+    DialogueRecord,
     ExtractionRunRecord,
     VoiceResourceRecord,
 )
@@ -234,6 +238,7 @@ def test_voices_group_by_name_omit_zero_line_groups_and_choose_deterministic_pro
 
     assert [voice.voice_id for voice in voices] == ["hexxat"]
     voice = voices[0]
+    assert (voice.family_id, voice.gender) == ("hexxat", ProviderGender.FEMALE)
     assert voice.variant_resource_names == ["OHHEX25.CRE", "OHHEX8.CRE", "OHHEX9.CRE"]
     assert voice.dialogue_resrefs == ["HEXXA25A", "HEXXAT"]
     assert voice.biography_sound_id == "OHHEX25.CRE:74"
@@ -241,6 +246,233 @@ def test_voices_group_by_name_omit_zero_line_groups_and_choose_deterministic_pro
         "Name: Hexxat\nGender: Female\nRace: Elf\nClass: Cleric Mage\nKit: Berserker\n"
         "Alignment: Lawful Good\n\nBiography:\nA much longer personal biography."
     )
+
+
+def test_gender_split_uses_stable_qualified_ids_without_mixed_dialogues(
+    scenario_database: Path,
+) -> None:
+    small_generic_families = (
+        "beggar",
+        "beggar child",
+        "citizen",
+        "civil servant",
+        "cowled enforcer",
+        "crusader patrol",
+        "cultist",
+        "dark moon monk",
+        "diseased child",
+        "diseased one",
+        "drow warrior",
+        "elf",
+        "elven warrior",
+        "flaming fist healer",
+        "flaming fist mercenary",
+        "flaming fist veteran",
+        "guardian",
+        "mercenary captain",
+        "moneylender",
+        "mourner",
+        "mugger",
+        "onlooker",
+        "patron",
+        "prophet",
+        "slave",
+        "spectral harpist",
+        "tavern patron",
+        "troll",
+    )
+    characters = rows(scenario_database, "characters", CharacterRecord)
+    dialogues = rows(scenario_database, "dialogues", DialogueRecord)
+    attributions = rows(
+        scenario_database,
+        "character_dialogues",
+        CharacterAttributionRecord,
+    )
+    character_seed = next(row for row in characters if row.detail is not None)
+    dialogue_seed = next(row for row in dialogues if row.detail is not None)
+    attribution_seed = attributions[0]
+
+    members: list[CharacterRecord] = []
+    attribution_by_character: dict[str, CharacterAttributionRecord] = {}
+    dialogues_by_resource: dict[str, DialogueRecord] = {}
+    texts_by_dialogue: dict[str, set[str]] = {}
+    for gender, prefix in ((ProviderGender.FEMALE, "F"), (ProviderGender.MALE, "M")):
+        for index in range(2):
+            resref = f"G{prefix}{index}"
+            resource_name = f"{resref}.CRE"
+            dialogue_name = f"{resref}.DLG"
+            detail = character_seed.detail
+            assert detail is not None
+            member = character_seed.model_copy(
+                update={
+                    "resource_name": resource_name,
+                    "resref": resref,
+                    "detail": detail.model_copy(
+                        update={
+                            "display_name": "Guard",
+                            "death_variable": resref,
+                            "dialog_resref": resref,
+                            "gender_id": 2 if gender is ProviderGender.FEMALE else 1,
+                        }
+                    ),
+                }
+            )
+            members.append(member)
+            attribution_by_character[resource_name.casefold()] = attribution_seed.model_copy(
+                update={
+                    "key": CharacterAttributionRecord.key_for("test", resource_name),
+                    "run_id": "test",
+                    "character_resource_name": resource_name,
+                    "declared_dialogue_resrefs": [resref],
+                    "missing_dialogue_resrefs": [],
+                    "resolved_dialogue_resource_names": [dialogue_name],
+                }
+            )
+            dialogues_by_resource[dialogue_name.casefold()] = dialogue_seed.model_copy(
+                update={"resource_name": dialogue_name, "resref": resref}
+            )
+            texts_by_dialogue[dialogue_name.casefold()] = {
+                f"{resref} first line",
+                f"{resref} second line",
+                f"{resref} third line",
+            }
+
+    for family_id in small_generic_families:
+        voices = _voice_family(
+            family_id,
+            members,
+            attribution_by_character,
+            dialogues_by_resource,
+            texts_by_dialogue,
+            [],
+            {},
+        )
+        assert [(voice.voice_id, voice.gender) for voice in voices] == [
+            (f"{family_id}~g=female", ProviderGender.FEMALE),
+            (f"{family_id}~g=male", ProviderGender.MALE),
+        ]
+    voices = _voice_family(
+        "guardian",
+        members,
+        attribution_by_character,
+        dialogues_by_resource,
+        texts_by_dialogue,
+        [],
+        {},
+    )
+
+    sparse_members = [
+        next(member for member in members if member.resource_name == "GF0.CRE"),
+        next(member for member in members if member.resource_name == "GM0.CRE"),
+    ]
+    neutral_detail = sparse_members[1].detail
+    assert neutral_detail is not None
+    sparse_members[1] = sparse_members[1].model_copy(
+        update={"detail": neutral_detail.model_copy(update={"gender_id": 0})}
+    )
+    for index, member in enumerate(sparse_members):
+        detail = member.detail
+        assert detail is not None
+        sparse_members[index] = member.model_copy(
+            update={"detail": detail.model_copy(update={"death_variable": "shared"})}
+        )
+    sparse_texts = {
+        "gf0.dlg": {f"Female line {index}" for index in range(6)},
+        "gm0.dlg": {"Neutral line"},
+    }
+    for family_id in small_generic_families:
+        sparse_voices = _voice_family(
+            family_id,
+            sparse_members,
+            attribution_by_character,
+            dialogues_by_resource,
+            sparse_texts,
+            [],
+            {},
+        )
+        assert [(voice.voice_id, voice.gender) for voice in sparse_voices] == [
+            (f"{family_id}~g=female", ProviderGender.FEMALE),
+            (f"{family_id}~g=neutral", ProviderGender.NEUTRAL),
+        ]
+    assert [
+        voice.voice_id
+        for voice in _voice_family(
+            "guard",
+            sparse_members,
+            attribution_by_character,
+            dialogues_by_resource,
+            sparse_texts,
+            [],
+            {},
+        )
+    ] == ["guard"]
+
+    assert {dialogue.resref for voice in voices for dialogue in voice.dialogues} == {
+        f"G{prefix}{index}" for prefix in ("F", "M") for index in range(2)
+    }
+    assigned = [member.resource_name for voice in voices for member in voice.members]
+    assert len(assigned) == len(set(assigned)) == 4
+    assert [
+        voice.voice_id
+        for voice in _voice_family(
+            "guard",
+            members,
+            attribution_by_character,
+            dialogues_by_resource,
+            texts_by_dialogue,
+            [],
+            {},
+        )
+    ] == ["guard"]
+
+    shared_name = "GSHARED.DLG"
+    dialogues_by_resource[shared_name.casefold()] = dialogue_seed.model_copy(
+        update={"resource_name": shared_name, "resref": "GSHARED"}
+    )
+    texts_by_dialogue[shared_name.casefold()] = {"Shared first line", "Shared second line"}
+    for resource_name in ("GF0.CRE", "GM0.CRE"):
+        key = resource_name.casefold()
+        attribution_by_character[key] = attribution_by_character[key].model_copy(
+            update={
+                "resolved_dialogue_resource_names": [
+                    *attribution_by_character[key].resolved_dialogue_resource_names,
+                    shared_name,
+                ]
+            }
+        )
+
+    with_shared = _voice_family(
+        "guardian",
+        members,
+        attribution_by_character,
+        dialogues_by_resource,
+        texts_by_dialogue,
+        [],
+        {},
+    )
+    shared = next(voice for voice in with_shared if voice.gender is ProviderGender.NEUTRAL)
+    assert shared.voice_id == "guardian~g=neutral"
+    assert "GSHARED" in {dialogue.resref for dialogue in shared.dialogues}
+    assert shared.members
+
+    shared_male_dialogue = {
+        name: (
+            attribution.model_copy(update={"resolved_dialogue_resource_names": ["GM0.DLG"]})
+            if name.startswith("gm")
+            else attribution
+        )
+        for name, attribution in attribution_by_character.items()
+    }
+    unsplit = _voice_family(
+        "guard",
+        members,
+        shared_male_dialogue,
+        dialogues_by_resource,
+        texts_by_dialogue,
+        [],
+        {},
+    )
+    assert [(voice.voice_id, voice.gender) for voice in unsplit] == [("guard", None)]
 
 
 def test_attribution_requires_completed_current_inputs_from_one_install(tmp_path: Path) -> None:

@@ -10,9 +10,11 @@ from bgvoice.model_types import (
     DetailStatus,
     DialogueLineKind,
     IdentifierKind,
+    ProviderGender,
     ReadableItemKind,
     ResourceSource,
     SourceKind,
+    VoiceProfileKind,
 )
 from bgvoice.storage_records import (
     CharacterDirection,
@@ -339,6 +341,8 @@ class DialogueLinePage(ResultPage[DialogueLineRow, LineSort | Literal["relevance
 
 
 class GeneratedVoiceRow(_ReaderModel):
+    profile_id: str
+    kind: VoiceProfileKind
     description: str
     language_code: str
     inworld_voice_id: str
@@ -347,6 +351,8 @@ class GeneratedVoiceRow(_ReaderModel):
 
 class VoiceRow(_ReaderModel):
     id: str
+    family_id: str
+    gender: ProviderGender | None
     display_name: str
     prompt: str
     variant_resource_names: list[str]

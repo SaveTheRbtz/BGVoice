@@ -4,6 +4,7 @@ import asyncio
 import json
 import wave
 from collections import Counter
+from dataclasses import replace
 from datetime import UTC, datetime
 from io import BytesIO
 from pathlib import Path
@@ -16,8 +17,7 @@ import pytest
 import bgvoice.generation as generation_module
 from bgvoice.dialogue_context import DialogueHistoryIndex
 from bgvoice.generation import (
-    DefaultVoiceGender,
-    default_voice_gender,
+    GenericVoiceProfile,
     generate,
     generate_defaults,
     load_workloads,
@@ -44,19 +44,28 @@ from bgvoice.inworld import (
     PublishedVoice,
 )
 from bgvoice.mod_export import export_mod
-from bgvoice.model_types import DialogueLineKind, GenerationFailureStage, RunStatus
+from bgvoice.model_types import (
+    DialogueLineKind,
+    GenerationFailureStage,
+    ProviderGender,
+    RaceId,
+    RunStatus,
+    VoiceProfileKind,
+)
 from bgvoice.reader import PipelineReader
 from bgvoice.storage_records import (
     DialogueLineRecord,
     DirectedLineRecord,
     ExtractionRunRecord,
-    GeneratedVoiceRecord,
+    VoiceProfileRecord,
 )
 from tests.factories import (
     make_direction,
-    make_generated_voice,
+    make_generated_audio,
     make_generation_failure,
     make_tts_batch,
+    make_voice_generation,
+    make_voice_profile,
 )
 from tests.scenarios import rows
 
@@ -149,31 +158,51 @@ async def test_current_voice_workload_uses_attributed_nonempty_npc_lines(
     assert workload.race_description == "The Tel'Quessir."
     assert workload.class_description == "A multiclass spellcaster."
     assert (
-        workload.default_voice.gender,
-        workload.default_voice.race_id,
-        workload.default_voice.race,
-    ) == (DefaultVoiceGender.FEMALE, 2, "Elf")
-    assert workload.default_voice.display_name == "BGVoice Default Female R2 Elf"
+        workload.generic_profile.gender,
+        workload.generic_profile.race_id,
+        workload.generic_profile.race_name,
+    ) == (ProviderGender.FEMALE, RaceId(2), "Elf")
+    assert workload.generic_profile.display_name == "BGVoice Generic · Female · Elf"
 
 
 @pytest.mark.parametrize(
     ("gender_id", "expected"),
     [
-        (1, DefaultVoiceGender.MALE),
-        (2, DefaultVoiceGender.FEMALE),
-        (0, DefaultVoiceGender.NEUTRAL),
-        (4, DefaultVoiceGender.NEUTRAL),
-        (66, DefaultVoiceGender.NEUTRAL),
+        (1, ProviderGender.MALE),
+        (2, ProviderGender.FEMALE),
+        (0, ProviderGender.NEUTRAL),
+        (4, ProviderGender.NEUTRAL),
+        (66, ProviderGender.NEUTRAL),
     ],
 )
-def test_default_voice_gender_collapses_engine_categories(
+def test_provider_gender_collapses_engine_categories(
     gender_id: int,
-    expected: DefaultVoiceGender,
+    expected: ProviderGender,
 ) -> None:
-    assert default_voice_gender(gender_id) is expected
+    assert ProviderGender.from_engine_id(gender_id) is expected
 
 
-def test_default_voice_races_use_nine_named_buckets_and_other() -> None:
+@pytest.mark.parametrize(
+    ("profile", "expected_id"),
+    [
+        (
+            GenericVoiceProfile(ProviderGender.FEMALE, RaceId(2), "Elf"),
+            "generic:gender:female:race:2",
+        ),
+        (
+            GenericVoiceProfile(ProviderGender.NEUTRAL, None, None),
+            "generic:gender:neutral:race:other",
+        ),
+    ],
+)
+def test_generic_profile_identity_uses_bounded_gender_and_race_buckets(
+    profile: GenericVoiceProfile,
+    expected_id: str,
+) -> None:
+    assert profile.id == expected_id
+
+
+def test_generic_voice_races_use_nine_named_buckets_and_other() -> None:
     race_ids = [0] * 100 + [255] * 100
     for race_id in range(1, 13):
         race_ids.extend([race_id] * (20 - race_id))
@@ -196,7 +225,7 @@ async def test_directions_continue_skip_persisted_and_clear_failures(
             lines=(*selected.lines, invalid),
             ability_scores=selected.ability_scores,
             portrait_png=selected.portrait_png,
-            default_voice=selected.default_voice,
+            generic_profile=selected.generic_profile,
             race_description=selected.race_description,
             class_description=selected.class_description,
             dialogue_samples=selected.dialogue_samples,
@@ -484,10 +513,11 @@ class _FakeOpenAI:
         return None
 
 
-class _DefaultVoiceProvider:
+class _GenericVoiceProvider:
     def __init__(self) -> None:
         self.designs = 0
         self.publishes = 0
+        self.updates = 0
 
     async def list_voices(self) -> list[PublishedVoice]:
         return []
@@ -506,8 +536,28 @@ class _DefaultVoiceProvider:
     ) -> PublishedVoice:
         self.publishes += 1
         return PublishedVoice(
-            name="workspaces/test/voices/default-female-elf",
-            voiceId="default-female-elf",
+            name="workspaces/test/voices/generic-female-elf",
+            voiceId="generic-female-elf",
+            displayName=display_name,
+            description=description,
+            langCode="EN_GB",
+            tags=list(tags),
+            source="IVC",
+        )
+
+    async def update_voice(
+        self,
+        voice_id: str,
+        *,
+        display_name: str,
+        description: str,
+        tags: tuple[str, ...],
+        gender: str | None = None,
+    ) -> PublishedVoice:
+        self.updates += 1
+        return PublishedVoice(
+            name=f"workspaces/test/voices/{voice_id}",
+            voiceId=voice_id,
             displayName=display_name,
             description=description,
             langCode="EN_GB",
@@ -517,11 +567,11 @@ class _DefaultVoiceProvider:
 
 
 @pytest.mark.anyio
-async def test_shared_default_generation_is_persisted_and_idempotent(
+async def test_shared_generic_generation_is_persisted_and_idempotent(
     scenario_database: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    provider = _DefaultVoiceProvider()
+    provider = _GenericVoiceProvider()
     synthesized: list[list[str]] = []
 
     async def synthesize(
@@ -567,7 +617,7 @@ async def test_shared_default_generation_is_persisted_and_idempotent(
                 "display_name": "Aerie Copy",
             }
         )
-        master = await store.generated_voice("default:gender:female:race:2")
+        master = await store.voice_profile("generic:gender:female:race:2")
         assert master is not None
         await generation_module._ensure_character_voice(
             cast(Any, object()),
@@ -578,7 +628,7 @@ async def test_shared_default_generation_is_persisted_and_idempotent(
                 lines=workload.lines,
                 ability_scores=workload.ability_scores,
                 portrait_png=workload.portrait_png,
-                default_voice=workload.default_voice,
+                generic_profile=workload.generic_profile,
                 race_description=workload.race_description,
                 class_description=workload.class_description,
                 dialogue_samples=workload.dialogue_samples,
@@ -586,23 +636,25 @@ async def test_shared_default_generation_is_persisted_and_idempotent(
             asyncio.Semaphore(1),
             {},
             recreate=False,
-            default_voice=asyncio.sleep(0, result=master),
+            generic_profile=asyncio.sleep(0, result=master),
         )
         voices = await store.generated_voices()
+        profiles = await store.voice_profiles()
     finally:
         reader.close()
         store.close()
 
-    default_id = "default:gender:female:race:2"
+    generic_id = "generic:gender:female:race:2"
     assert excluded.voices == 0
     assert first.directed_lines == second.directed_lines == 2
-    assert provider.designs == provider.publishes == 1
-    assert {default_id, "aerie", "aerie-copy"} <= voices.keys()
+    assert provider.designs == provider.publishes == provider.updates == 1
+    assert set(voices) == {"aerie", "aerie-copy"}
+    assert generic_id in profiles
     assert {
-        voices[default_id].inworld_voice_id,
         voices["aerie"].inworld_voice_id,
         voices["aerie-copy"].inworld_voice_id,
-    } == {"default-female-elf"}
+    } == {"generic-female-elf"}
+    assert voices["aerie"].profile_id == voices["aerie-copy"].profile_id == generic_id
     assert sum(call["text_format"] is VoiceDesignPlan for call in _FakeResponses.calls) == 1
     assert sum(call["text_format"] is DirectionPlan for call in _FakeResponses.calls) == 2
     assert synthesized == [["aerie"], ["aerie"]]
@@ -617,7 +669,7 @@ class _ReusableVoiceProvider:
                 displayName="Aerie",
                 description="An existing carefully designed voice.",
                 langCode="EN_GB",
-                tags=["bgvoice"],
+                tags=["bgvoice", generation_module.voice_profile_tag("aerie")],
                 source="IVC",
             )
         ]
@@ -678,10 +730,10 @@ class _MixedBatchProvider:
 
 class _RecordingBatchProvider:
     def __init__(self) -> None:
-        self.submitted: list[str] = []
+        self.submitted: list[BatchSynthesisItem] = []
 
     async def submit_batch(self, items: list[BatchSynthesisItem]) -> BatchOperation:
-        self.submitted.extend(item.custom_id for item in items)
+        self.submitted.extend(items)
         return BatchOperation(name="workspaces/test/ttsBatchJobs/new/operations/op")
 
 
@@ -748,46 +800,225 @@ async def test_concurrent_runner_lets_started_work_finish_before_raising() -> No
 
 
 @pytest.mark.anyio
-async def test_provider_voice_is_reused_when_local_generation_is_missing(
+async def test_provider_profile_is_reused_by_stable_tag_when_local_record_is_missing(
     scenario_database: Path,
 ) -> None:
     store = await GenerationStore.open(scenario_database)
     try:
         provider = _ReusableVoiceProvider()
-        record = await generation_module._reuse_existing_voice(
+        catalog = generation_module._provider_voice_catalog(await provider.list_voices())
+        record = await generation_module._reuse_existing_profile(
             store,
-            generation_module._provider_voice_catalog(await provider.list_voices()),
+            catalog,
             "aerie",
-            "Aerie",
+            ProviderGender.FEMALE,
+            None,
+            VoiceProfileKind.DEDICATED,
         )
-        persisted = await store.generated_voice("aerie")
+        persisted = await store.voice_profile("aerie")
     finally:
         store.close()
 
+    assert set(catalog) == {generation_module.voice_profile_tag("aerie")}
     assert record == persisted
     assert record is not None
     assert record.inworld_voice_id == "aerie-existing"
     assert record.description.language_code == "en-GB"
 
 
-def test_provider_voice_catalog_rejects_case_insensitive_name_duplicates() -> None:
-    existing = PublishedVoice(
-        name="workspaces/test/voices/aerie-existing",
-        voiceId="aerie-existing",
-        displayName="Aerie",
-        description="An existing carefully designed voice.",
-        langCode="EN_GB",
-    )
-    duplicate = existing.model_copy(
-        update={
-            "name": "workspaces/test/voices/aerie-copy",
-            "voice_id": "aerie-copy",
-            "display_name": "aERIE",
-        }
-    )
+@pytest.mark.anyio
+async def test_qualified_voice_can_keep_a_matching_legacy_profile(
+    scenario_database: Path,
+) -> None:
+    reader = await PipelineReader.open(scenario_database)
+    store = await GenerationStore.open(scenario_database)
+    try:
+        workload = (await load_workloads(reader, ["Aerie"], 1))[0]
+        profile = make_voice_profile(
+            "legacy-aerie",
+            gender=ProviderGender.FEMALE,
+            kind=VoiceProfileKind.DEDICATED,
+        )
+        await store.upsert_voice_profiles([profile])
+        await store.upsert_voice_generations(
+            [make_voice_generation(workload.voice.voice_id, profile.profile_id)]
+        )
+        result = await generation_module._ensure_character_voice(
+            cast(Any, object()),
+            cast(InworldClient, _ReusableVoiceProvider()),
+            store,
+            workload,
+            asyncio.Semaphore(1),
+            {},
+            recreate=False,
+        )
+    finally:
+        reader.close()
+        store.close()
 
-    with pytest.raises(AssertionError, match="multiple reusable Inworld voices"):
-        generation_module._provider_voice_catalog([existing, duplicate])
+    assert result == profile
+
+
+@pytest.mark.anyio
+async def test_occupied_legacy_profile_gets_a_distinct_stable_dedicated_identity(
+    scenario_database: Path,
+) -> None:
+    reader = await PipelineReader.open(scenario_database)
+    store = await GenerationStore.open(scenario_database)
+    try:
+        workload = (await load_workloads(reader, ["Aerie"], 1))[0]
+        workload = replace(workload, voice=workload.voice.model_copy(update={"gender": None}))
+        legacy = make_voice_profile(
+            workload.voice.voice_id,
+            gender=ProviderGender.FEMALE,
+        )
+        legacy_owner = f"{workload.voice.voice_id}~g=female"
+        await store.upsert_voice_profiles([legacy])
+        await store.upsert_voice_generations(
+            [make_voice_generation(legacy_owner, legacy.profile_id)]
+        )
+
+        provider = _GenericVoiceProvider()
+        generated = await generation_module._ensure_character_voice(
+            cast(Any, _FakeOpenAI(api_key="openai-test")),
+            cast(InworldClient, provider),
+            store,
+            workload,
+            asyncio.Semaphore(1),
+            {},
+            recreate=False,
+        )
+        assignments = await store.voice_generations()
+    finally:
+        reader.close()
+        store.close()
+
+    assert generated.profile_id == f"dedicated:{workload.voice.voice_id}"
+    assert generated.gender is ProviderGender.FEMALE
+    assert assignments == {
+        legacy_owner: make_voice_generation(legacy_owner, legacy.profile_id),
+        workload.voice.voice_id: make_voice_generation(
+            workload.voice.voice_id,
+            generated.profile_id,
+        ),
+    }
+    assert provider.designs == provider.publishes == 1
+
+
+@pytest.mark.anyio
+async def test_force_recreate_keeps_local_state_when_provider_delete_fails(
+    scenario_database: Path,
+) -> None:
+    reader = await PipelineReader.open(scenario_database)
+    store = await GenerationStore.open(scenario_database)
+    try:
+        workload = (await load_workloads(reader, ["Aerie"], 1))[0]
+        voice_id = workload.voice.voice_id
+        profile = make_voice_profile(voice_id, inworld_voice_id="voice-aerie")
+        generation = make_voice_generation(voice_id)
+        direction = make_direction(voice_id, workload.lines[0].id)
+        audio = make_generated_audio(direction, inworld_voice_id=profile.inworld_voice_id)
+        await store.upsert_voice_profiles([profile])
+        await store.upsert_voice_generations([generation])
+        await store.upsert_directed_lines([direction])
+        await store.upsert_generated_audio([audio])
+
+        def reject_delete(request: httpx.Request) -> httpx.Response:
+            assert request.method == "DELETE"
+            assert request.url.path.endswith(f"/{profile.inworld_voice_id}")
+            return httpx.Response(503, text="provider unavailable")
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(reject_delete)) as http:
+            with pytest.raises(httpx.HTTPStatusError, match="503"):
+                await generation_module._ensure_character_voice(
+                    cast(Any, _FakeOpenAI(api_key="openai-test")),
+                    InworldClient(http, "inworld-test"),
+                    store,
+                    workload,
+                    asyncio.Semaphore(1),
+                    {},
+                    recreate=True,
+                )
+
+        assert await store.voice_profile(profile.profile_id) == profile
+        assert await store.voice_generations([voice_id]) == {voice_id: generation}
+        assert await store.directed_lines([voice_id]) == [direction]
+        assert await store.generated_audio([voice_id]) == [audio]
+    finally:
+        reader.close()
+        store.close()
+
+
+@pytest.mark.anyio
+async def test_dedicated_promotion_preserves_directions_and_invalidates_generic_audio(
+    scenario_database: Path,
+) -> None:
+    reader = await PipelineReader.open(scenario_database)
+    store = await GenerationStore.open(scenario_database)
+    try:
+        workload = (await load_workloads(reader, ["Aerie"], 1))[0]
+        generic = make_voice_profile(
+            workload.generic_profile.id,
+            inworld_voice_id="generic-female-elf",
+            gender=ProviderGender.FEMALE,
+            race_id=RaceId(2),
+            kind=VoiceProfileKind.GENERIC,
+        )
+        direction = make_direction(workload.voice.voice_id, workload.lines[0].id)
+        await store.upsert_voice_profiles([generic])
+        await store.upsert_voice_generations(
+            [make_voice_generation(workload.voice.voice_id, generic.profile_id)]
+        )
+        await store.upsert_directed_lines([direction])
+        await store.upsert_generated_audio(
+            [make_generated_audio(direction, inworld_voice_id=generic.inworld_voice_id)]
+        )
+
+        provider = _ReusableVoiceProvider()
+        promoted = await generation_module._ensure_character_voice(
+            cast(Any, object()),
+            cast(InworldClient, provider),
+            store,
+            workload,
+            asyncio.Semaphore(1),
+            generation_module._provider_voice_catalog(await provider.list_voices()),
+            recreate=False,
+        )
+        persisted = await store.generated_voice(workload.voice.voice_id)
+        directions = await store.directed_lines([workload.voice.voice_id])
+        audio = await store.generated_audio([workload.voice.voice_id])
+        generic_still_shared = await store.voice_profile(generic.profile_id)
+    finally:
+        reader.close()
+        store.close()
+
+    assert promoted == persisted
+    assert promoted.kind is VoiceProfileKind.DEDICATED
+    assert promoted.profile_id == workload.voice.voice_id
+    assert directions == [direction]
+    assert audio == []
+    assert generic_still_shared == generic
+
+
+def test_provider_voice_catalog_uses_stable_tags_not_display_names() -> None:
+    voices = [
+        PublishedVoice(
+            name=f"workspaces/test/voices/{profile_id}",
+            voiceId=f"provider-{profile_id}",
+            displayName="Commoner",
+            description="An existing carefully designed voice.",
+            langCode="EN_GB",
+            tags=["bgvoice", generation_module.voice_profile_tag(profile_id)],
+        )
+        for profile_id in ("commoner~g=male", "commoner~g=female")
+    ]
+
+    catalog = generation_module._provider_voice_catalog(voices)
+
+    assert set(catalog) == {
+        generation_module.voice_profile_tag("commoner~g=male"),
+        generation_module.voice_profile_tag("commoner~g=female"),
+    }
 
 
 @pytest.mark.anyio
@@ -831,7 +1062,7 @@ async def test_failed_provider_batch_is_persisted_without_audio(
 
 
 @pytest.mark.anyio
-async def test_synthesis_skips_lines_owned_by_running_batches(
+async def test_synthesis_resolves_assigned_profile_and_skips_running_lines(
     scenario_database: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -840,23 +1071,28 @@ async def test_synthesis_skips_lines_owned_by_running_batches(
     try:
         workload = (await load_workloads(reader, ["Aerie"], 2))[0]
         directions = [make_direction(workload.voice.voice_id, line.id) for line in workload.lines]
-        voice = make_generated_voice(
-            workload.voice.voice_id,
+        profile = make_voice_profile(
+            "shared-female",
             inworld_voice_id="voice-aerie",
             description="A warm, clear voice with steady delivery.",
+            gender=ProviderGender.FEMALE,
+            kind=VoiceProfileKind.GENERIC,
         )
         running = make_tts_batch(
             [directions[0].id],
             operation_name="workspaces/test/ttsBatchJobs/running/operations/op",
         )
-        await store.upsert_generated_voices([voice])
+        await store.upsert_voice_profiles([profile])
+        await store.upsert_voice_generations(
+            [make_voice_generation(workload.voice.voice_id, profile.profile_id)]
+        )
         await store.upsert_directed_lines(directions)
         await store.upsert_batches([running])
 
         async def complete(*_: object) -> None:
             return None
 
-        async def narrator() -> GeneratedVoiceRecord:
+        async def narrator() -> VoiceProfileRecord:
             raise AssertionError("character-only workload must not request the narrator")
 
         provider = _RecordingBatchProvider()
@@ -873,7 +1109,9 @@ async def test_synthesis_skips_lines_owned_by_running_batches(
         reader.close()
         store.close()
 
-    assert provider.submitted == [directions[1].id]
+    assert [(item.custom_id, item.voice_id) for item in provider.submitted] == [
+        (directions[1].id, "voice-aerie")
+    ]
 
 
 @pytest.mark.anyio
@@ -894,7 +1132,7 @@ async def test_mixed_tts_batch_keeps_good_audio_and_clears_failures_on_retry(
         operation_name="workspaces/test/ttsBatchJobs/mixed/operations/op",
     )
     voices = {
-        voice_id: make_generated_voice(
+        voice_id: make_voice_profile(
             voice_id,
             description="A warm, clear voice with steady delivery.",
         )
@@ -910,7 +1148,10 @@ async def test_mixed_tts_batch_keeps_good_audio_and_clears_failures_on_retry(
 
     store = await GenerationStore.open(scenario_database)
     try:
-        await store.upsert_generated_voices(list(voices.values()))
+        await store.upsert_voice_profiles(list(voices.values()))
+        await store.upsert_voice_generations(
+            [make_voice_generation(voice_id) for voice_id in voices]
+        )
         await store.upsert_directed_lines(directions)
         await store.upsert_batches([batch])
         direction_map = {direction.id: direction for direction in directions}
@@ -1027,11 +1268,21 @@ async def test_generation_runs_from_voice_design_through_game_audio(
                 "displayName": display_name,
                 "description": body["description"],
                 "langCode": "EN_GB",
-                "tags": ["bgvoice"],
+                "tags": body["tags"],
                 "source": "IVC",
             }
             published[voice_id] = voice
             published_names.append(display_name)
+            return httpx.Response(200, json=voice)
+        if path.startswith("/voices/v1/voices/") and request.method == "PATCH":
+            voice_id = path.rsplit("/", 1)[1]
+            body = cast(dict[str, Any], json.loads(request.content))
+            voice = published[voice_id]
+            voice.update(
+                displayName=body["displayName"],
+                description=body["description"],
+                tags=body["tags"],
+            )
             return httpx.Response(200, json=voice)
         if path.startswith("/voices/v1/voices/") and request.method == "DELETE":
             voice_id = path.rsplit("/", 1)[1]
@@ -1167,6 +1418,8 @@ async def test_generation_runs_from_voice_design_through_game_audio(
     assert narrator_voice_id in published
     assert published_names == ["Aerie", "Narrator", "Aerie"]
     assert voice_list_requests == 3
+    assert sum(call["text_format"] is VoiceDesignPlan for call in _FakeResponses.calls) == 2
+    assert sum(call["text_format"] is DirectionPlan for call in _FakeResponses.calls) == 2
     assert {record.inworld_voice_id for record in recordings} == {
         voices["aerie"].inworld_voice_id,
         narrator_voice_id,

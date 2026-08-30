@@ -14,8 +14,9 @@ from bgvoice.reader_models import DirectedLineRow, GeneratedVoiceRow
 from bgvoice.storage_records import (
     DirectedLineRecord,
     GeneratedAudioIdentity,
-    GeneratedVoiceRecord,
     TtsBatchRecord,
+    VoiceGenerationRecord,
+    VoiceProfileRecord,
     VoiceResourceRecord,
 )
 
@@ -24,7 +25,7 @@ from bgvoice.storage_records import (
 class GenerationSnapshot:
     """The small generated-data side of application-level browse joins."""
 
-    voices: dict[str, GeneratedVoiceRecord]
+    voices: dict[str, VoiceProfileRecord]
     directions: list[DirectedLineRecord]
     audio: list[GeneratedAudioIdentity]
     batches: list[TtsBatchRecord]
@@ -38,20 +39,32 @@ class GenerationSnapshot:
     @classmethod
     async def load(
         cls,
-        generated_voices_table: AsyncTable,
+        voice_profiles_table: AsyncTable,
+        voice_generations_table: AsyncTable,
         directed_lines_table: AsyncTable,
         generated_audio_table: AsyncTable,
         tts_batches_table: AsyncTable,
         current_voices: list[VoiceResourceRecord],
     ) -> GenerationSnapshot:
-        voice_rows, direction_rows, audio_rows, batch_rows = await asyncio.gather(
-            generated_voices_table.query().to_pydantic(GeneratedVoiceRecord),
+        (
+            profile_rows,
+            generation_rows,
+            direction_rows,
+            audio_rows,
+            batch_rows,
+        ) = await asyncio.gather(
+            voice_profiles_table.query().to_pydantic(VoiceProfileRecord),
+            voice_generations_table.query().to_pydantic(VoiceGenerationRecord),
             directed_lines_table.query().to_pydantic(DirectedLineRecord),
             generated_audio_table.query()
             .select(list(GeneratedAudioIdentity.model_fields))
             .to_pydantic(GeneratedAudioIdentity),
             tts_batches_table.query().to_pydantic(TtsBatchRecord),
         )
+        profiles = {row.profile_id: row for row in cast(list[VoiceProfileRecord], profile_rows)}
+        generations = cast(list[VoiceGenerationRecord], generation_rows)
+        missing = {row.profile_id for row in generations} - profiles.keys()
+        assert not missing, f"voice generations reference missing profiles: {sorted(missing)}"
         directions = cast(list[DirectedLineRecord], direction_rows)
         audio = cast(list[GeneratedAudioIdentity], audio_rows)
         directions_by_line: dict[str, list[DirectedLineRecord]] = defaultdict(list)
@@ -61,9 +74,7 @@ class GenerationSnapshot:
         for row in audio:
             audio_voices_by_line[row.dialogue_line_id].add(row.voice_id.casefold())
         return cls(
-            voices={
-                row.voice_id.casefold(): row for row in cast(list[GeneratedVoiceRecord], voice_rows)
-            },
+            voices={row.voice_id.casefold(): profiles[row.profile_id] for row in generations},
             directions=directions,
             audio=audio,
             batches=cast(list[TtsBatchRecord], batch_rows),
@@ -80,6 +91,8 @@ class GenerationSnapshot:
         if record is None:
             return None
         return GeneratedVoiceRow(
+            profile_id=record.profile_id,
+            kind=record.kind,
             description=record.description.text,
             language_code=record.description.language_code,
             inworld_voice_id=record.inworld_voice_id,

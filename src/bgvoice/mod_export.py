@@ -13,7 +13,7 @@ from lancedb.pydantic import LanceModel
 from lancedb.table import AsyncTable
 from pydantic import BaseModel, ConfigDict, Field
 
-from bgvoice.model_types import DialogueLineKind
+from bgvoice.model_types import DialogueLineKind, ProviderGender
 from bgvoice.reader import PipelineReader
 from bgvoice.storage_records import ExtractionRunRecord, VoiceResourceRecord
 
@@ -60,6 +60,8 @@ class _AudioPayload(LanceModel):
 @dataclass(frozen=True, slots=True)
 class _ContentAsset:
     voice_id: str
+    family_id: str
+    gender: ProviderGender | None
     run_id: str
     text: str
     recording_id: str
@@ -149,29 +151,25 @@ def _content_assets(
     voices: list[VoiceResourceRecord],
 ) -> tuple[list[_ContentAsset], Path]:
     assert recordings, "pipeline database has no generated audio to export"
-    wanted = {record.dialogue_line_id for record in recordings}
-    by_id = {line.id: line for line in lines if line.id in wanted}
-    missing = wanted - by_id.keys()
-    assert not missing, f"generated audio references missing dialogue lines: {sorted(missing)[:5]}"
-
+    by_id = {line.id: line for line in lines}
     voices_by_id = {voice.voice_id: voice for voice in voices}
-    missing_voices = {record.voice_id for record in recordings} - voices_by_id.keys()
-    assert not missing_voices, (
-        f"generated audio references missing voices: {sorted(missing_voices)[:5]}"
-    )
-    for voice in voices_by_id.values():
-        assert voice.voice_id == voice.display_name.casefold(), (
-            f"voice id must be the normalized display name: {voice.voice_id!r}"
-        )
-
+    owned_resrefs = {
+        voice.voice_id: {resref.casefold() for resref in voice.dialogue_resrefs} for voice in voices
+    }
     candidates: list[tuple[_ExportLine, _ExportRecording]] = []
     for recording in recordings:
+        if recording.voice_id not in voices_by_id or recording.dialogue_line_id not in by_id:
+            continue
         line = by_id[recording.dialogue_line_id]
+        line_resref = line.dialogue_resource_name.casefold().removesuffix(".dlg")
+        if line_resref not in owned_resrefs[recording.voice_id]:
+            continue
         assert line.line_kind is DialogueLineKind.NPC, (
             f"generated audio {recording.id} targets unsupported {line.line_kind.value} text"
         )
         assert line.text, f"generated audio {recording.id} targets unresolved dialogue text"
         candidates.append((line, recording))
+    assert candidates, "pipeline database has no generated audio owned by current voices"
 
     candidates.sort(
         key=lambda candidate: (
@@ -193,6 +191,8 @@ def _content_assets(
         assets.append(
             _ContentAsset(
                 voice_id=recording.voice_id,
+                family_id=voices_by_id[recording.voice_id].family_id,
+                gender=voices_by_id[recording.voice_id].gender,
                 run_id=line.run_id,
                 text=line.text,
                 recording_id=recording.id,
@@ -248,8 +248,15 @@ async def _write_mod(
         for index, (voice_id, rows) in enumerate(
             sorted(grouped.items(), key=lambda item: item[0].casefold())
         ):
+            first = rows[0]
             (catalogs / f"{index:06d}.tpa").write_text(
-                _voice_catalog(voice_id, rows, f"{index:06d}"),
+                _voice_catalog(
+                    voice_id,
+                    first.family_id,
+                    first.gender,
+                    rows,
+                    f"{index:06d}",
+                ),
                 encoding="utf-8",
                 newline="\n",
             )
@@ -328,17 +335,33 @@ def _publish_mod(root: Path, destination: Path) -> None:
 
 def _voice_catalog(
     voice_id: str,
+    family_id: str,
+    gender: ProviderGender | None,
     assets: list[_ContentAsset],
     catalog: str,
 ) -> str:
+    assert all(asset.voice_id == voice_id for asset in assets), "catalog mixes voice identities"
+    assert all(asset.family_id == family_id for asset in assets), "catalog mixes voice families"
+    assert all(asset.gender == gender for asset in assets), "catalog mixes voice genders"
+    is_variant = voice_id != family_id
     entries = "\n".join(
         f"OUTER_SPRINT bgv_key {_weidu_string(asset.text)}\n"
         f'OUTER_SPRINT $bgv_recordings(~{catalog}~ "%bgv_key%") ~{asset.sound_resref}~\n'
         "OUTER_SET bgv_packaged_recordings += 1"
         for asset in assets
     )
-    return f"""OUTER_SPRINT bgv_voice {_weidu_string(voice_id)}
-OUTER_SPRINT $bgv_catalog_by_name("%bgv_voice%") ~{catalog}~
+    if is_variant:
+        assert gender is not None, "split-family catalogs require a gender"
+        selector = (
+            f"OUTER_SPRINT bgv_gender ~{gender.value}~\n"
+            f'OUTER_SPRINT $bgv_catalog_by_name_gender("%bgv_family%" "%bgv_gender%") '
+            f"~{catalog}~"
+        )
+    else:
+        selector = f'OUTER_SPRINT $bgv_default_catalog_by_name("%bgv_family%") ~{catalog}~'
+    return f"""OUTER_SPRINT bgv_family {_weidu_string(family_id)}
+OUTER_SPRINT $bgv_packaged_families("%bgv_family%") ~1~
+{selector}
 OUTER_SET bgv_packaged_voices += 1
 {entries}
 """
@@ -374,12 +397,14 @@ This export contains {len(assets):,} canonical recordings covering
 BGVoice replaces the audio on every matched dialogue occurrence.
 
 The installer discovers character dialogue ownership from the target game's CRE,
-CAMPAIGN, INTERDIA, and PDIALOG resources. It patches only an exact character-name
-and resolved-English-text intersection, so DLG names, state numbers, TLK string
-references, EET versions, and installed content mods may differ from the source.
-Missing characters, resources, and changed text are skipped. If one DLG/text could
-belong to different character voices, that occurrence is left unchanged rather than
-guessing. WeiDU prints aggregate coverage totals and manages backups and
+CAMPAIGN, INTERDIA, and PDIALOG resources. It patches only exact character-name and
+resolved-English-text matches. For split families, each CRE-to-DLG ownership supplies
+the gender: single-gender DLGs prefer that catalog with neutral fallback, while mixed
+DLGs use neutral. Unsplit families keep their default catalog. DLG names, state numbers,
+TLK string references, EET versions, and installed content mods may differ from the
+source. Missing characters, resources, and changed text are skipped. If one DLG/text
+could belong to different character families, that occurrence is left unchanged rather
+than guessing. WeiDU prints aggregate coverage totals and manages backups and
 uninstallation. BGVoice works both before and after `EET_end`; installing before it
 lets `EET_end` carry patched source dialogue strings into its final merges. If you
 later change earlier mods, uninstall later components in reverse order and reinstall
@@ -421,19 +446,20 @@ BEGIN
   END ~%MATCH0%~
 END
 
-DEFINE_PATCH_FUNCTION BGVOICE_ADD_OWNER
+DEFINE_PATCH_FUNCTION BGVOICE_ADD_FAMILY_OWNER
 STR_VAR
   dialogue = ~~
-  catalog = ~~
+  family = ~~
+  gender = ~~
 RET_ARRAY
-  bgv_dialogue_owners
+  bgv_family_owners
 BEGIN
   TO_UPPER dialogue
   PATCH_IF (NOT ~%dialogue%~ STRING_EQUAL_CASE ~~)
         AND (NOT ~%dialogue%~ STRING_EQUAL_CASE ~NONE~)
         AND (NOT ~%dialogue%~ STRING_EQUAL_CASE ~***~)
         AND (FILE_EXISTS_IN_GAME ~%dialogue%.DLG~) BEGIN
-    TEXT_SPRINT $bgv_dialogue_owners(~%dialogue%~ ~%catalog%~) ~1~
+    TEXT_SPRINT $bgv_family_owners(~%dialogue%~ ~%family%~ ~%gender%~) ~1~
   END
 END
 
@@ -442,18 +468,21 @@ STR_VAR
   death_variable = ~~
   dialogue = ~~
 RET_ARRAY
-  bgv_dialogue_owners
+  bgv_family_owners
 BEGIN
   TO_UPPER death_variable
   PATCH_IF (~%death_variable%~ STRING_EQUAL_CASE ~IMOEN~)
         OR (~%death_variable%~ STRING_EQUAL_CASE ~IMOEN_~) BEGIN
     TEXT_SPRINT death_variable ~IMOEN2~
   END
-  PATCH_PHP_EACH bgv_catalogs_by_dv AS bgv_owner => bgv_unused BEGIN
+  PATCH_PHP_EACH bgv_family_genders_by_dv AS bgv_owner => bgv_unused BEGIN
     PATCH_IF ~%bgv_owner_0%~ STRING_EQUAL_CASE ~%death_variable%~ BEGIN
-      LPF BGVOICE_ADD_OWNER
-        STR_VAR dialogue = EVAL ~%dialogue%~ catalog = EVAL ~%bgv_owner_1%~
-        RET_ARRAY bgv_dialogue_owners
+      LPF BGVOICE_ADD_FAMILY_OWNER
+        STR_VAR
+          dialogue = EVAL ~%dialogue%~
+          family = EVAL ~%bgv_owner_1%~
+          gender = EVAL ~%bgv_owner_2%~
+        RET_ARRAY bgv_family_owners
       END
     END
   END
@@ -507,9 +536,15 @@ COPY_EXISTING_REGEXP GLOB ~.+\.CRE$~ ~override~
         REPLACE_TEXTUALLY CASE_SENSITIVE EVALUATE_REGEXP ~[ %TAB%]+$~ ~~
       END
       TO_LOWER bgv_name
-      PATCH_IF VARIABLE_IS_SET $bgv_catalog_by_name(~%bgv_name%~) BEGIN
-        TEXT_SPRINT bgv_catalog $bgv_catalog_by_name(~%bgv_name%~)
-        TEXT_SPRINT $bgv_target_names(~%bgv_name%~) ~1~
+      READ_BYTE 0x275 bgv_gender_id
+      PATCH_IF bgv_gender_id = 1 BEGIN
+        TEXT_SPRINT bgv_gender ~male~
+      END ELSE PATCH_IF bgv_gender_id = 2 BEGIN
+        TEXT_SPRINT bgv_gender ~female~
+      END ELSE BEGIN
+        TEXT_SPRINT bgv_gender ~neutral~
+      END
+      PATCH_IF VARIABLE_IS_SET $bgv_packaged_families(~%bgv_name%~) BEGIN
         READ_ASCII 0x280 bgv_death_variable (32) NULL
         READ_ASCII 0x2cc bgv_dialogue (8) NULL
         TO_UPPER bgv_death_variable
@@ -519,11 +554,14 @@ COPY_EXISTING_REGEXP GLOB ~.+\.CRE$~ ~override~
         END
         PATCH_IF (NOT ~%bgv_death_variable%~ STRING_EQUAL_CASE ~~)
               AND (NOT ~%bgv_death_variable%~ STRING_EQUAL_CASE ~NONE~) BEGIN
-          TEXT_SPRINT $bgv_catalogs_by_dv(~%bgv_death_variable%~ ~%bgv_catalog%~) ~1~
+          TEXT_SPRINT $bgv_family_genders_by_dv(~%bgv_death_variable%~ ~%bgv_name%~ ~%bgv_gender%~) ~1~
         END
-        LPF BGVOICE_ADD_OWNER
-          STR_VAR dialogue = EVAL ~%bgv_dialogue%~ catalog = EVAL ~%bgv_catalog%~
-          RET_ARRAY bgv_dialogue_owners
+        LPF BGVOICE_ADD_FAMILY_OWNER
+          STR_VAR
+            dialogue = EVAL ~%bgv_dialogue%~
+            family = EVAL ~%bgv_name%~
+            gender = EVAL ~%bgv_gender%~
+          RET_ARRAY bgv_family_owners
         END
       END
     END
@@ -555,13 +593,13 @@ ACTION_PHP_EACH bgv_banter_tables AS bgv_table => bgv_unused BEGIN
       READ_2DA_ENTRY bgv_row 1 bgv_columns bgv_dialogue
       LPF BGVOICE_ADD_DV_DIALOGUE
         STR_VAR death_variable = EVAL ~%bgv_death_variable%~ dialogue = EVAL ~%bgv_dialogue%~
-        RET_ARRAY bgv_dialogue_owners
+        RET_ARRAY bgv_family_owners
       END
       PATCH_IF bgv_columns > 2 BEGIN
         READ_2DA_ENTRY bgv_row 2 bgv_columns bgv_dialogue
         LPF BGVOICE_ADD_DV_DIALOGUE
           STR_VAR death_variable = EVAL ~%bgv_death_variable%~ dialogue = EVAL ~%bgv_dialogue%~
-          RET_ARRAY bgv_dialogue_owners
+          RET_ARRAY bgv_family_owners
         END
       END
     END
@@ -577,23 +615,23 @@ ACTION_PHP_EACH bgv_party_tables AS bgv_table => bgv_unused BEGIN
       READ_2DA_ENTRY bgv_row 1 bgv_columns bgv_dialogue
       LPF BGVOICE_ADD_DV_DIALOGUE
         STR_VAR death_variable = EVAL ~%bgv_death_variable%~ dialogue = EVAL ~%bgv_dialogue%~
-        RET_ARRAY bgv_dialogue_owners
+        RET_ARRAY bgv_family_owners
       END
       READ_2DA_ENTRY bgv_row 2 bgv_columns bgv_dialogue
       LPF BGVOICE_ADD_DV_DIALOGUE
         STR_VAR death_variable = EVAL ~%bgv_death_variable%~ dialogue = EVAL ~%bgv_dialogue%~
-        RET_ARRAY bgv_dialogue_owners
+        RET_ARRAY bgv_family_owners
       END
       PATCH_IF bgv_columns > 5 BEGIN
         READ_2DA_ENTRY bgv_row 4 bgv_columns bgv_dialogue
         LPF BGVOICE_ADD_DV_DIALOGUE
           STR_VAR death_variable = EVAL ~%bgv_death_variable%~ dialogue = EVAL ~%bgv_dialogue%~
-          RET_ARRAY bgv_dialogue_owners
+          RET_ARRAY bgv_family_owners
         END
         READ_2DA_ENTRY bgv_row 5 bgv_columns bgv_dialogue
         LPF BGVOICE_ADD_DV_DIALOGUE
           STR_VAR death_variable = EVAL ~%bgv_death_variable%~ dialogue = EVAL ~%bgv_dialogue%~
-          RET_ARRAY bgv_dialogue_owners
+          RET_ARRAY bgv_family_owners
         END
       END
     END
@@ -604,34 +642,77 @@ ACTION_IF FILE_EXISTS ~EET_end/lib/tables.tph~ BEGIN
   ACTION_INCLUDE ~EET_end/lib/tables.tph~
   ACTION_PHP_EACH table_append_dlg AS bgv_source => bgv_unused BEGIN
     ACTION_IF NOT ~%bgv_source_1%~ STRING_EQUAL_CASE ~~ BEGIN
-      ACTION_PHP_EACH bgv_dialogue_owners AS bgv_owner => bgv_owner_unused BEGIN
+      ACTION_PHP_EACH bgv_family_owners AS bgv_owner => bgv_owner_unused BEGIN
         ACTION_IF ~%bgv_owner_0%~ STRING_EQUAL_CASE ~%bgv_source_1%~ BEGIN
-          OUTER_SPRINT $bgv_seed_owners(~%bgv_source%~ ~%bgv_owner_1%~) ~1~
+          OUTER_SPRINT $bgv_seed_owners(~%bgv_source%~ ~%bgv_owner_1%~ ~%bgv_owner_2%~) ~1~
         END
       END
     END
   END
   ACTION_PHP_EACH bgv_seed_owners AS bgv_owner => bgv_owner_unused BEGIN
     ACTION_IF FILE_EXISTS_IN_GAME ~%bgv_owner_0%.DLG~ BEGIN
-      OUTER_SPRINT $bgv_dialogue_owners(~%bgv_owner_0%~ ~%bgv_owner_1%~) ~1~
+      OUTER_SPRINT $bgv_family_owners(~%bgv_owner_0%~ ~%bgv_owner_1%~ ~%bgv_owner_2%~) ~1~
     END
   END
 END
 
+// Resolve each DLG/family only after direct CRE and EET alias ownership is known.
+// Unsplit families use their one default catalog. Split families use the matching
+// owner gender first with neutral per-line fallback; mixed owners use only neutral.
+ACTION_PHP_EACH bgv_family_owners AS bgv_owner => bgv_unused BEGIN
+  OUTER_SPRINT $bgv_owner_pairs(~%bgv_owner_0%~ ~%bgv_owner_1%~) ~1~
+  ACTION_IF VARIABLE_IS_SET $bgv_owner_gender(~%bgv_owner_0%~ ~%bgv_owner_1%~) BEGIN
+    ACTION_IF NOT $bgv_owner_gender(~%bgv_owner_0%~ ~%bgv_owner_1%~) STRING_EQUAL_CASE ~%bgv_owner_2%~ BEGIN
+      OUTER_SPRINT $bgv_mixed_owner(~%bgv_owner_0%~ ~%bgv_owner_1%~) ~1~
+    END
+  END ELSE BEGIN
+    OUTER_SPRINT $bgv_owner_gender(~%bgv_owner_0%~ ~%bgv_owner_1%~) ~%bgv_owner_2%~
+  END
+END
+
+ACTION_PHP_EACH bgv_owner_pairs AS bgv_owner => bgv_unused BEGIN
+  OUTER_SPRINT bgv_primary_catalog ~~
+  OUTER_SPRINT bgv_fallback_catalog ~~
+  OUTER_SPRINT bgv_gender $bgv_owner_gender(~%bgv_owner_0%~ ~%bgv_owner_1%~)
+  ACTION_IF VARIABLE_IS_SET $bgv_default_catalog_by_name(~%bgv_owner_1%~) BEGIN
+    OUTER_SPRINT bgv_primary_catalog $bgv_default_catalog_by_name(~%bgv_owner_1%~)
+    OUTER_SPRINT bgv_fallback_catalog ~%bgv_primary_catalog%~
+  END ELSE BEGIN
+    ACTION_IF VARIABLE_IS_SET $bgv_catalog_by_name_gender(~%bgv_owner_1%~ ~neutral~) BEGIN
+      OUTER_SPRINT bgv_fallback_catalog $bgv_catalog_by_name_gender(~%bgv_owner_1%~ ~neutral~)
+    END
+    ACTION_IF NOT VARIABLE_IS_SET $bgv_mixed_owner(~%bgv_owner_0%~ ~%bgv_owner_1%~)
+          AND VARIABLE_IS_SET $bgv_catalog_by_name_gender(~%bgv_owner_1%~ ~%bgv_gender%~) BEGIN
+      OUTER_SPRINT bgv_primary_catalog $bgv_catalog_by_name_gender(~%bgv_owner_1%~ ~%bgv_gender%~)
+    END
+    ACTION_IF ~%bgv_primary_catalog%~ STRING_EQUAL_CASE ~~ BEGIN
+      OUTER_SPRINT bgv_primary_catalog ~%bgv_fallback_catalog%~
+    END
+    ACTION_IF ~%bgv_fallback_catalog%~ STRING_EQUAL_CASE ~~ BEGIN
+      OUTER_SPRINT bgv_fallback_catalog ~%bgv_primary_catalog%~
+    END
+  END
+  ACTION_IF NOT ~%bgv_primary_catalog%~ STRING_EQUAL_CASE ~~ BEGIN
+    OUTER_SPRINT $bgv_dialogue_owners(~%bgv_owner_0%~ ~%bgv_primary_catalog%~) ~%bgv_fallback_catalog%~
+    OUTER_SPRINT $bgv_target_catalogs(~%bgv_primary_catalog%~) ~1~
+    OUTER_SPRINT $bgv_target_catalogs(~%bgv_fallback_catalog%~) ~1~
+  END
+END
+
 OUTER_SET bgv_target_voice_count = 0
-ACTION_PHP_EACH bgv_target_names AS bgv_name => bgv_unused BEGIN
+ACTION_PHP_EACH bgv_target_catalogs AS bgv_catalog => bgv_unused BEGIN
   OUTER_SET bgv_target_voice_count += 1
 END
 
 OUTER_SET bgv_dialogue_count = 0
-ACTION_PHP_EACH bgv_dialogue_owners AS bgv_owner => bgv_owner_unused BEGIN
+ACTION_PHP_EACH bgv_dialogue_owners AS bgv_owner => bgv_fallback_catalog BEGIN
   ACTION_IF NOT VARIABLE_IS_SET $bgv_dialogue_ids(~%bgv_owner_0%~) BEGIN
     OUTER_SET bgv_dialogue_count += 1
     OUTER_SPRINT $bgv_dialogue_ids(~%bgv_owner_0%~) ~%bgv_dialogue_count%~
   END
   OUTER_SPRINT bgv_dialogue_id $bgv_dialogue_ids(~%bgv_owner_0%~)
   OUTER_SPRINT bgv_owner_array ~bgv_owners_%bgv_dialogue_id%~
-  OUTER_SPRINT $EVAL ~%bgv_owner_array%~(~%bgv_owner_1%~) ~1~
+  OUTER_SPRINT $EVAL ~%bgv_owner_array%~(~%bgv_owner_1%~) ~%bgv_fallback_catalog%~
 END
 
 OUTER_SET bgv_shared_dialogues = 0
@@ -654,9 +735,15 @@ ACTION_PHP_EACH bgv_dialogue_ids AS bgv_dialogue => bgv_dialogue_id BEGIN
       READ_STRREF bgv_text_offset bgv_text
       SET bgv_candidate_count = 0
       TEXT_SPRINT bgv_candidate_sound ~~
-      PHP_EACH EVAL ~%bgv_owner_array%~ AS bgv_catalog => bgv_owner_unused BEGIN
+      PHP_EACH EVAL ~%bgv_owner_array%~ AS bgv_catalog => bgv_fallback_catalog BEGIN
         PATCH_IF VARIABLE_IS_SET $bgv_recordings(~%bgv_catalog%~ ~%bgv_text%~) BEGIN
           TEXT_SPRINT bgv_sound $bgv_recordings(~%bgv_catalog%~ ~%bgv_text%~)
+        END ELSE PATCH_IF VARIABLE_IS_SET $bgv_recordings(~%bgv_fallback_catalog%~ ~%bgv_text%~) BEGIN
+          TEXT_SPRINT bgv_sound $bgv_recordings(~%bgv_fallback_catalog%~ ~%bgv_text%~)
+        END ELSE BEGIN
+          TEXT_SPRINT bgv_sound ~~
+        END
+        PATCH_IF NOT ~%bgv_sound%~ STRING_EQUAL_CASE ~~ BEGIN
           PATCH_IF bgv_candidate_count = 0 BEGIN
             TEXT_SPRINT bgv_candidate_sound ~%bgv_sound%~
             SET bgv_candidate_count = 1

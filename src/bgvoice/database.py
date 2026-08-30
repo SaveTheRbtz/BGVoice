@@ -29,9 +29,11 @@ from bgvoice.model_types import (
     DetailStatus,
     DlgResource,
     PortraitImage,
+    ProviderGender,
     RunKind,
     RunStatus,
     TerminalRunStatus,
+    VoiceProfileKind,
     utc_now,
 )
 from bgvoice.pipeline_models import AttributionSummary, DatabaseStats
@@ -57,10 +59,14 @@ from bgvoice.storage_records import (
     CharacterResourceLinkRecord,
     CharacterSoundRecord,
     ClassTextRecord,
+    DialogueLineRecord,
     DialogueRecord,
+    DirectedLineRecord,
     EngineStringRecord,
     ExtractionRunRecord,
     FavoredEnemyRecord,
+    GeneratedAudioIdentity,
+    GenerationFailureRecord,
     HappinessRuleRecord,
     IdentifierDefinitionRecord,
     InteractionRuleRecord,
@@ -73,6 +79,10 @@ from bgvoice.storage_records import (
     SoundsetLineRecord,
     SoundSlotGroupRecord,
     SoundSlotSuffixRecord,
+    TtsBatchRecord,
+    VoiceGenerationRecord,
+    VoiceProfileRecord,
+    VoiceResourceRecord,
 )
 from bgvoice.storage_schema import (
     _BANTER_TIMING_SETTINGS,
@@ -87,9 +97,12 @@ from bgvoice.storage_schema import (
     _DIALOGUE_LINES,
     _DIALOGUE_TRANSITIONS,
     _DIALOGUES,
+    _DIRECTED_LINES,
     _ENGINE_STRINGS,
     _EXTRACTION_RUNS,
     _FAVORED_ENEMIES,
+    _GENERATED_AUDIO,
+    _GENERATION_FAILURES,
     _HAPPINESS_RULES,
     _IDENTIFIER_DEFINITIONS,
     _INTERACTION_RULES,
@@ -102,6 +115,9 @@ from bgvoice.storage_schema import (
     _SOUND_SLOT_GROUPS,
     _SOUND_SLOT_SUFFIXES,
     _SOUNDSET_LINES,
+    _TTS_BATCHES,
+    _VOICE_GENERATIONS,
+    _VOICE_PROFILES,
     _VOICE_RESOURCES,
     TABLE_INDEXES,
     TABLE_MODELS,
@@ -584,12 +600,14 @@ class PipelineDatabase:
                 run_id,
                 self._records(_CHARACTERS, CharacterRecord),
                 self._records(_DIALOGUES, DialogueRecord),
+                self._records(_DIALOGUE_LINES, DialogueLineRecord),
                 self._records(_CHARACTER_SOUNDS, CharacterSoundRecord),
                 self._records(_CHARACTER_RESOURCE_LINKS, CharacterResourceLinkRecord),
                 self._records(_IDENTIFIER_DEFINITIONS, IdentifierDefinitionRecord),
             )
             self._upsert(_CHARACTER_DIALOGUES, "key", build.records)
             self._upsert(_VOICE_RESOURCES, "key", build.voices)
+            self._reconcile_generation(build.voices)
             self.finish_run(
                 run_id,
                 status=RunStatus.COMPLETE,
@@ -602,6 +620,139 @@ class PipelineDatabase:
         except BaseException as error:
             self._fail_attribution_run(run_id, error)
             raise
+
+    def _reconcile_generation(self, voices: Sequence[VoiceResourceRecord]) -> None:
+        """Retain only generation state owned by the new voice publication."""
+        current_voice_ids = {voice.voice_id for voice in voices} | {"narrator"}
+        assignments = self._records(_VOICE_GENERATIONS, VoiceGenerationRecord)
+        profiles = {
+            profile.profile_id: profile
+            for profile in self._records(_VOICE_PROFILES, VoiceProfileRecord)
+        }
+        missing_profiles = {row.profile_id for row in assignments} - profiles.keys()
+        assert not missing_profiles, (
+            f"voice generations reference missing profiles: {sorted(missing_profiles)}"
+        )
+
+        variants = {
+            (voice.family_id, voice.gender): voice.voice_id
+            for voice in voices
+            if voice.voice_id != voice.family_id and voice.gender is not None
+        }
+        assert len(variants) == sum(
+            voice.voice_id != voice.family_id and voice.gender is not None for voice in voices
+        ), "voice publication contains duplicate family/gender variants"
+
+        assigned_voice_ids = {row.voice_id for row in assignments}
+        remapped: list[VoiceGenerationRecord] = []
+        updated_profiles: dict[str, VoiceProfileRecord] = {}
+        stale_assignments = [row for row in assignments if row.voice_id not in current_voice_ids]
+        for assignment in stale_assignments:
+            profile = profiles[assignment.profile_id]
+            neutral_target = variants.get((assignment.voice_id, ProviderGender.NEUTRAL))
+            if neutral_target is not None and profile.kind is VoiceProfileKind.DEDICATED:
+                if neutral_target not in assigned_voice_ids:
+                    remapped.append(
+                        VoiceGenerationRecord(
+                            voice_id=neutral_target,
+                            profile_id=assignment.profile_id,
+                        )
+                    )
+                    updated_profiles[profile.profile_id] = profile.model_copy(
+                        update={"gender": ProviderGender.NEUTRAL}
+                    )
+                    assigned_voice_ids.add(neutral_target)
+                continue
+            if profile.gender is None:
+                continue
+            selector = (assignment.voice_id, profile.gender)
+            if selector not in variants:
+                continue
+            target = variants[selector]
+            if target not in assigned_voice_ids:
+                remapped.append(
+                    VoiceGenerationRecord(voice_id=target, profile_id=assignment.profile_id)
+                )
+                assigned_voice_ids.add(target)
+        dialogue_name_by_resref = {
+            dialogue.resref.casefold(): dialogue.resource_name.casefold()
+            for dialogue in self._records(_DIALOGUES, DialogueRecord)
+        }
+        owned_dialogues = {
+            voice.voice_id: {
+                dialogue_name_by_resref[resref.casefold()] for resref in voice.dialogue_resrefs
+            }
+            for voice in voices
+        }
+        line_dialogues = {
+            line.id: line.dialogue_resource_name.casefold()
+            for line in self._records(_DIALOGUE_LINES, DialogueLineRecord)
+        }
+
+        def owns(voice_id: str, line_id: str) -> bool:
+            return (
+                voice_id in owned_dialogues
+                and line_id in line_dialogues
+                and line_dialogues[line_id] in owned_dialogues[voice_id]
+            )
+
+        directions = self._records(_DIRECTED_LINES, DirectedLineRecord)
+        audio = (
+            self._table(_GENERATED_AUDIO)
+            .search()
+            .select(list(GeneratedAudioIdentity.model_fields))
+            .limit(None)
+            .to_pydantic(GeneratedAudioIdentity)
+        )
+        failures = self._records(_GENERATION_FAILURES, GenerationFailureRecord)
+        stale_direction_ids = [
+            row.id for row in directions if not owns(row.voice_id, row.dialogue_line_id)
+        ]
+        stale_audio_ids = [row.id for row in audio if not owns(row.voice_id, row.dialogue_line_id)]
+        stale_failure_ids = [
+            row.id
+            for row in failures
+            if (row.dialogue_line_id is None and row.voice_id not in current_voice_ids)
+            or (row.dialogue_line_id is not None and not owns(row.voice_id, row.dialogue_line_id))
+        ]
+        running_custom_ids = {
+            custom_id
+            for batch in self._records(_TTS_BATCHES, TtsBatchRecord)
+            if batch.status is RunStatus.RUNNING
+            for custom_id in batch.custom_ids
+        }
+        orphaned = running_custom_ids & set(stale_direction_ids + stale_audio_ids)
+        assert not orphaned, (
+            "cannot reconcile generation while running TTS batches reference stale lines: "
+            f"{sorted(orphaned)}"
+        )
+
+        self._upsert(
+            _VOICE_PROFILES,
+            "profile_id",
+            list(updated_profiles.values()),
+        )
+        self._upsert(_VOICE_GENERATIONS, "voice_id", remapped)
+        self._delete_values(
+            _VOICE_GENERATIONS,
+            "voice_id",
+            [row.voice_id for row in stale_assignments],
+        )
+        self._delete_values(
+            _DIRECTED_LINES,
+            "id",
+            stale_direction_ids,
+        )
+        self._delete_values(
+            _GENERATED_AUDIO,
+            "id",
+            stale_audio_ids,
+        )
+        self._delete_values(
+            _GENERATION_FAILURES,
+            "id",
+            stale_failure_ids,
+        )
 
     def finish_run(
         self,
@@ -726,6 +877,12 @@ class PipelineDatabase:
         model: type[Record],
     ) -> list[Record]:
         return self._table(table_name).search().limit(None).to_pydantic(model)
+
+    def _delete_values(self, table_name: str, column: str, values: Sequence[str]) -> None:
+        table = self._table(table_name)
+        unique = sorted(set(values))
+        for start in range(0, len(unique), 1_000):
+            table.delete(col(column).isin(unique[start : start + 1_000]))
 
     def _batch_inventory[Record: CharacterRecord | DialogueRecord](
         self,

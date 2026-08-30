@@ -20,11 +20,13 @@ from bgvoice.model_types import (
     HappinessAlignment,
     IdentifierKind,
     InteractionKind,
+    ProviderGender,
     ReadableItemKind,
     ResourceSource,
     ResourceTargetType,
     RunKind,
     RunStatus,
+    VoiceProfileKind,
 )
 
 
@@ -252,9 +254,11 @@ class VoiceResourceRecord(_Record):
     key: str = Field(min_length=1)
     run_id: str = Field(min_length=1)
     voice_id: str = Field(min_length=1)
+    family_id: str = Field(min_length=1)
+    gender: ProviderGender | None = Field(default=None, strict=False)
     display_name: str = Field(min_length=1)
     prompt: str = Field(min_length=1)
-    variant_resource_names: list[str] = Field(min_length=1)
+    variant_resource_names: list[str]
     dialogue_resrefs: list[str]
     biography_sound_id: str | None = None
     search_text: str
@@ -282,13 +286,33 @@ class VoiceDescription(BaseModel):
     language_code: Annotated[str, Field(min_length=2, max_length=35)]
 
 
-class GeneratedVoiceRecord(_Record):
-    """One published Inworld voice keyed by its canonical local voice."""
+class VoiceProfileRecord(_Record):
+    """One reusable provider voice and its generated description."""
 
-    voice_id: str = Field(min_length=1)
+    profile_id: str = Field(min_length=1)
+    kind: VoiceProfileKind = Field(strict=False)
+    gender: ProviderGender | None = Field(default=None, strict=False)
+    race_id: int | None = Field(default=None, ge=0, le=0xFF)
     inworld_voice_id: str = Field(min_length=1)
     description: VoiceDescription
     created_at: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_profile(self) -> Self:
+        assert self.kind is not VoiceProfileKind.GENERIC or self.gender is not None, (
+            "generic profiles require a provider gender"
+        )
+        assert self.kind is not VoiceProfileKind.DEDICATED or self.race_id is None, (
+            "dedicated profiles do not use race buckets"
+        )
+        return self
+
+
+class VoiceGenerationRecord(_Record):
+    """Assignment of one logical voice to a reusable provider profile."""
+
+    voice_id: str = Field(min_length=1)
+    profile_id: str = Field(min_length=1)
 
 
 class CharacterDirection(BaseModel):

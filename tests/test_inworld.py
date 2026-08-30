@@ -15,6 +15,7 @@ from bgvoice.inworld import (
     VoiceDesignRequest,
     pack_synthesis_items,
 )
+from bgvoice.model_types import ProviderGender
 
 
 def _item(custom_id: str, characters: int) -> BatchSynthesisItem:
@@ -24,6 +25,15 @@ def _item(custom_id: str, characters: int) -> BatchSynthesisItem:
         voice_id="workspace__imoen",
         language_code="en-GB",
     )
+
+
+def test_voice_profile_tags_are_stable_and_provider_safe() -> None:
+    profile_id = "flaming fist mercenary~g=female"
+
+    assert inworld_module.voice_profile_tag(profile_id) == inworld_module.voice_profile_tag(
+        profile_id
+    )
+    assert len(inworld_module.voice_profile_tag(profile_id)) <= 30
 
 
 @pytest.mark.parametrize(
@@ -154,6 +164,19 @@ async def test_voice_design_publish_and_batch_download_flow_is_typed() -> None:
                     "source": "IVC",
                 },
             )
+        if path == "/voices/v1/voices/workspace__imoen" and request.method == "PATCH":
+            return httpx.Response(
+                200,
+                json={
+                    "name": "workspaces/workspace/voices/imoen",
+                    "voiceId": "workspace__imoen",
+                    "languageCode": "en-GB",
+                    "displayName": "Imoen · Female",
+                    "description": "Bright and warm.",
+                    "tags": ["bgvoice", "bgvoice-id:imoen"],
+                    "source": "IVC",
+                },
+            )
         if path == "/voices/v1/voices/workspace__unused" and request.method == "DELETE":
             return httpx.Response(200, json={})
         if path == "/tts/v1/voice:synthesizeBatch":
@@ -224,6 +247,13 @@ async def test_voice_design_publish_and_batch_download_flow_is_typed() -> None:
             description="Bright and warm.",
             tags=("bgvoice",),
         )
+        updated = await client.update_voice(
+            voice.voice_id,
+            display_name="Imoen · Female",
+            description="Bright and warm.",
+            tags=("bgvoice", "bgvoice-id:imoen"),
+            gender=ProviderGender.FEMALE,
+        )
         await client.delete_voice("workspace__unused")
         items: Sequence[BatchSynthesisItem] = [
             BatchSynthesisItem(
@@ -250,6 +280,7 @@ async def test_voice_design_publish_and_batch_download_flow_is_typed() -> None:
     assert design.language_code == "EN_GB"
     assert existing[0].source == "IVC"
     assert voice.language_code == "en-GB"
+    assert updated.display_name == "Imoen · Female"
     assert audio == b"ID3audio"
     assert results.failed_items == 1
     assert results.results[1].error is not None
@@ -258,7 +289,7 @@ async def test_voice_design_publish_and_batch_download_flow_is_typed() -> None:
     bodies = {
         request.url.path: json.loads(request.content)
         for request in requests
-        if request.method == "POST"
+        if request.method in {"POST", "PATCH"}
     }
     assert bodies["/voices/v1/voices:design"] == {
         "languageCode": "en-GB",
@@ -266,6 +297,14 @@ async def test_voice_design_publish_and_batch_download_flow_is_typed() -> None:
         "previewText": "Heya! It's me, Imoen. Ready when you are.",
         "voiceDesignConfig": {"numberOfSamples": 1},
     }
+    assert bodies["/voices/v1/voices/workspace__imoen"] == {
+        "displayName": "Imoen · Female",
+        "description": "Bright and warm.",
+        "tags": ["bgvoice", "bgvoice-id:imoen"],
+        "gender": "female",
+    }
+    update = next(request for request in requests if request.method == "PATCH")
+    assert update.url.params["updateMask"] == "display_name,description,tags,gender"
     synthesis = bodies["/tts/v1/voice:synthesizeBatch"]["items"][0]["request"]
     assert synthesis == {
         "text": "Heya!",

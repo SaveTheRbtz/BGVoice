@@ -86,6 +86,19 @@ class RunStatus(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     RUN_STATUS_COMPLETE: _ClassVar[RunStatus]
     RUN_STATUS_COMPLETE_WITH_ERRORS: _ClassVar[RunStatus]
     RUN_STATUS_FAILED: _ClassVar[RunStatus]
+
+class ProviderGender(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    PROVIDER_GENDER_UNSPECIFIED: _ClassVar[ProviderGender]
+    PROVIDER_GENDER_MALE: _ClassVar[ProviderGender]
+    PROVIDER_GENDER_FEMALE: _ClassVar[ProviderGender]
+    PROVIDER_GENDER_NEUTRAL: _ClassVar[ProviderGender]
+
+class VoiceProfileKind(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    VOICE_PROFILE_KIND_UNSPECIFIED: _ClassVar[VoiceProfileKind]
+    VOICE_PROFILE_KIND_DEDICATED: _ClassVar[VoiceProfileKind]
+    VOICE_PROFILE_KIND_GENERIC: _ClassVar[VoiceProfileKind]
 SOURCE_KIND_UNSPECIFIED: SourceKind
 SOURCE_KIND_OVERRIDE: SourceKind
 SOURCE_KIND_BIF: SourceKind
@@ -134,6 +147,13 @@ RUN_STATUS_RUNNING: RunStatus
 RUN_STATUS_COMPLETE: RunStatus
 RUN_STATUS_COMPLETE_WITH_ERRORS: RunStatus
 RUN_STATUS_FAILED: RunStatus
+PROVIDER_GENDER_UNSPECIFIED: ProviderGender
+PROVIDER_GENDER_MALE: ProviderGender
+PROVIDER_GENDER_FEMALE: ProviderGender
+PROVIDER_GENDER_NEUTRAL: ProviderGender
+VOICE_PROFILE_KIND_UNSPECIFIED: VoiceProfileKind
+VOICE_PROFILE_KIND_DEDICATED: VoiceProfileKind
+VOICE_PROFILE_KIND_GENERIC: VoiceProfileKind
 
 class ResourceSource(_message.Message):
     __slots__ = ("kind", "path")
@@ -260,16 +280,20 @@ class DialogueReference(_message.Message):
     def __init__(self, name: _Optional[str] = ..., engine_resource_name: _Optional[str] = ..., npc_line_count: _Optional[int] = ...) -> None: ...
 
 class GeneratedVoice(_message.Message):
-    __slots__ = ("description", "language_code", "inworld_voice_id", "created_at")
+    __slots__ = ("description", "language_code", "inworld_voice_id", "created_at", "profile_id", "profile_kind")
     DESCRIPTION_FIELD_NUMBER: _ClassVar[int]
     LANGUAGE_CODE_FIELD_NUMBER: _ClassVar[int]
     INWORLD_VOICE_ID_FIELD_NUMBER: _ClassVar[int]
     CREATED_AT_FIELD_NUMBER: _ClassVar[int]
+    PROFILE_ID_FIELD_NUMBER: _ClassVar[int]
+    PROFILE_KIND_FIELD_NUMBER: _ClassVar[int]
     description: str
     language_code: str
     inworld_voice_id: str
     created_at: _timestamp_pb2.Timestamp
-    def __init__(self, description: _Optional[str] = ..., language_code: _Optional[str] = ..., inworld_voice_id: _Optional[str] = ..., created_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ...) -> None: ...
+    profile_id: str
+    profile_kind: VoiceProfileKind
+    def __init__(self, description: _Optional[str] = ..., language_code: _Optional[str] = ..., inworld_voice_id: _Optional[str] = ..., created_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., profile_id: _Optional[str] = ..., profile_kind: _Optional[_Union[VoiceProfileKind, str]] = ...) -> None: ...
 
 class CharacterDirection(_message.Message):
     __slots__ = ("directed_dialogue",)
@@ -300,7 +324,7 @@ class DirectedLine(_message.Message):
     def __init__(self, id: _Optional[str] = ..., voice: _Optional[str] = ..., voice_display_name: _Optional[str] = ..., character: _Optional[_Union[CharacterDirection, _Mapping]] = ..., narrator: _Optional[_Union[NarratorDirection, _Mapping]] = ..., audio_url: _Optional[str] = ...) -> None: ...
 
 class Voice(_message.Message):
-    __slots__ = ("name", "display_name", "prompt", "characters", "dialogues", "portrait", "npc_line_count", "serialized_size", "biography", "generated_voice", "directed_line_count", "generated_audio_count", "voice_id")
+    __slots__ = ("name", "display_name", "prompt", "characters", "dialogues", "portrait", "npc_line_count", "serialized_size", "biography", "generated_voice", "directed_line_count", "generated_audio_count", "voice_id", "family_id", "gender")
     NAME_FIELD_NUMBER: _ClassVar[int]
     DISPLAY_NAME_FIELD_NUMBER: _ClassVar[int]
     PROMPT_FIELD_NUMBER: _ClassVar[int]
@@ -314,6 +338,8 @@ class Voice(_message.Message):
     DIRECTED_LINE_COUNT_FIELD_NUMBER: _ClassVar[int]
     GENERATED_AUDIO_COUNT_FIELD_NUMBER: _ClassVar[int]
     VOICE_ID_FIELD_NUMBER: _ClassVar[int]
+    FAMILY_ID_FIELD_NUMBER: _ClassVar[int]
+    GENDER_FIELD_NUMBER: _ClassVar[int]
     name: str
     display_name: str
     prompt: str
@@ -327,7 +353,9 @@ class Voice(_message.Message):
     directed_line_count: int
     generated_audio_count: int
     voice_id: str
-    def __init__(self, name: _Optional[str] = ..., display_name: _Optional[str] = ..., prompt: _Optional[str] = ..., characters: _Optional[_Iterable[_Union[CharacterReference, _Mapping]]] = ..., dialogues: _Optional[_Iterable[_Union[DialogueReference, _Mapping]]] = ..., portrait: _Optional[str] = ..., npc_line_count: _Optional[int] = ..., serialized_size: _Optional[int] = ..., biography: _Optional[str] = ..., generated_voice: _Optional[_Union[GeneratedVoice, _Mapping]] = ..., directed_line_count: _Optional[int] = ..., generated_audio_count: _Optional[int] = ..., voice_id: _Optional[str] = ...) -> None: ...
+    family_id: str
+    gender: ProviderGender
+    def __init__(self, name: _Optional[str] = ..., display_name: _Optional[str] = ..., prompt: _Optional[str] = ..., characters: _Optional[_Iterable[_Union[CharacterReference, _Mapping]]] = ..., dialogues: _Optional[_Iterable[_Union[DialogueReference, _Mapping]]] = ..., portrait: _Optional[str] = ..., npc_line_count: _Optional[int] = ..., serialized_size: _Optional[int] = ..., biography: _Optional[str] = ..., generated_voice: _Optional[_Union[GeneratedVoice, _Mapping]] = ..., directed_line_count: _Optional[int] = ..., generated_audio_count: _Optional[int] = ..., voice_id: _Optional[str] = ..., family_id: _Optional[str] = ..., gender: _Optional[_Union[ProviderGender, str]] = ...) -> None: ...
 
 class CharacterDialogueSummary(_message.Message):
     __slots__ = ("declared_dialogue_count", "resolved_dialogue_count", "dialogue_line_count", "npc_line_count", "player_line_count", "journal_line_count", "state_count", "transition_count", "serialized_size")

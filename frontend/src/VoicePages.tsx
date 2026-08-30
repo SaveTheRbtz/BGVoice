@@ -8,6 +8,7 @@ import {
 } from "./browser";
 import { listSearch } from "./filters";
 import { formatCount } from "./format";
+import { ProviderGender, VoiceProfileKind } from "./gen/bgvoice/v1/pipeline_pb";
 import type {
   CharacterReference,
   DialogueReference,
@@ -27,6 +28,16 @@ import { useResource } from "./use-resource";
 
 const DEFAULT_ORDER = "npc_line_count desc";
 const RELATED_PREVIEW_SIZE = 10;
+const GENDER_LABELS: Partial<Record<ProviderGender, string>> = {
+  [ProviderGender.MALE]: "Male",
+  [ProviderGender.FEMALE]: "Female",
+  [ProviderGender.NEUTRAL]: "Neutral",
+};
+const PROFILE_KIND_LABELS: Record<VoiceProfileKind, string> = {
+  [VoiceProfileKind.UNSPECIFIED]: "Unspecified",
+  [VoiceProfileKind.DEDICATED]: "Dedicated",
+  [VoiceProfileKind.GENERIC]: "Generic",
+};
 
 export function VoiceBrowser() {
   const browser = useBrowser<Voice>(DEFAULT_ORDER, listVoices);
@@ -143,7 +154,12 @@ function VoiceRow({ voice, search }: { voice: Voice; search: string }) {
     >
       <VoiceAvatar voice={voice} size="small" />
       <span className="voice-row-copy">
-        <strong>{voice.displayName}</strong>
+        <strong>
+          {voice.displayName}
+          {voice.gender != null && (
+            <> <small className="status-pill">{GENDER_LABELS[voice.gender]}</small></>
+          )}
+        </strong>
         <span>{voice.generatedVoice?.description ?? voice.prompt}</span>
       </span>
       <span className={`status-pill status-${ready ? "complete" : "pending"}`}>
@@ -226,6 +242,10 @@ function VoiceDetail({ voice }: { voice: Voice }) {
           {voice.voiceId !== resourceId(voice.name) && (
             <span className="resource-name">Pipeline ID {voice.voiceId}</span>
           )}
+          <span className="resource-name">Family {voice.familyId}</span>
+          {voice.gender != null && (
+            <span className="resource-name">Gender {GENDER_LABELS[voice.gender]}</span>
+          )}
         </div>
       </header>
       <VoiceLineLinks voice={voice} />
@@ -297,6 +317,10 @@ function VoiceGeneration({ voice }: { voice: Voice }) {
         <>
           <p>{generated.description}</p>
           <dl>
+            <dt>Profile</dt>
+            <dd className="mono">{generated.profileId}</dd>
+            <dt>Profile kind</dt>
+            <dd>{PROFILE_KIND_LABELS[generated.profileKind]}</dd>
             <dt>Inworld voice ID</dt>
             <dd className="mono">{generated.inworldVoiceId}</dd>
             <dt>Created</dt>

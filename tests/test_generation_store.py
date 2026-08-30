@@ -8,7 +8,13 @@ from lancedb.table import AsyncTable
 from pydantic import ValidationError
 
 from bgvoice.generation_store import GenerationStore
-from bgvoice.model_types import GenerationFailureStage, RunStatus
+from bgvoice.model_types import (
+    GenerationFailureStage,
+    ProviderGender,
+    RaceId,
+    RunStatus,
+    VoiceProfileKind,
+)
 from bgvoice.storage_records import (
     GenerationFailureRecord,
     TtsBatchRecord,
@@ -16,9 +22,10 @@ from bgvoice.storage_records import (
 from tests.factories import (
     make_direction,
     make_generated_audio,
-    make_generated_voice,
     make_generation_failure,
     make_tts_batch,
+    make_voice_generation,
+    make_voice_profile,
 )
 
 
@@ -28,18 +35,20 @@ async def test_generated_assets_round_trip_upsert_filter_and_delete(
 ) -> None:
     store = await GenerationStore.open(scenario_database)
     try:
-        imoen_voice = make_generated_voice(
+        imoen_profile = make_voice_profile(
             "imoen",
             inworld_voice_id="voice-imoen-v1",
             description="A bright, warm young adventurer with quick, playful delivery.",
         )
-        gorion_voice = make_generated_voice(
+        gorion_profile = make_voice_profile(
             "gorion",
             description="A calm, learned older mentor with measured and reassuring delivery.",
         )
-        updated_imoen = imoen_voice.model_copy(update={"inworld_voice_id": "voice-imoen-v2"})
-        await store.upsert_generated_voices([imoen_voice, gorion_voice])
-        await store.upsert_generated_voices([updated_imoen])
+        updated_imoen = imoen_profile.model_copy(update={"inworld_voice_id": "voice-imoen-v2"})
+        generations = [make_voice_generation("imoen"), make_voice_generation("gorion")]
+        await store.upsert_voice_profiles([imoen_profile, gorion_profile])
+        await store.upsert_voice_profiles([updated_imoen])
+        await store.upsert_voice_generations(generations)
 
         line_id = "IMOEN2J.DLG:npc:0:-"
         imoen_line = make_direction(
@@ -95,6 +104,8 @@ async def test_generated_assets_round_trip_upsert_filter_and_delete(
         assert voices["imoen"].inworld_voice_id == "voice-imoen-v2"
         assert set(await store.generated_voices(["imoen"])) == {"imoen"}
         assert await store.generated_voice("imoen") == updated_imoen
+        assert await store.voice_profile("imoen") == updated_imoen
+        assert await store.voice_generations(["imoen"]) == {"imoen": generations[0]}
         stored_directions = await store.directed_lines()
         assert {line.id for line in stored_directions if line.character is not None} == {
             imoen_line.id
@@ -131,9 +142,64 @@ async def test_generated_assets_round_trip_upsert_filter_and_delete(
 
         await store.delete_voice_generation("imoen")
         assert set(await store.generated_voices()) == {"gorion"}
-        assert {line.voice_id for line in await store.directed_lines()} == {"gorion"}
+        assert await store.voice_profile("imoen") == updated_imoen
+        assert {line.voice_id for line in await store.directed_lines()} == {"imoen", "gorion"}
         assert {audio.voice_id for audio in await store.generated_audio()} == {"gorion"}
         assert await store.failures() == [gorion_failure]
+        await store.delete_voice_profile("imoen")
+        assert await store.voice_profile("imoen") is None
+    finally:
+        store.close()
+
+
+@pytest.mark.anyio
+async def test_logical_voices_share_one_provider_profile(scenario_database: Path) -> None:
+    store = await GenerationStore.open(scenario_database)
+    try:
+        profile = make_voice_profile(
+            "generic~g=male",
+            inworld_voice_id="voice-generic-male",
+            gender=ProviderGender.MALE,
+            race_id=RaceId(1),
+            kind=VoiceProfileKind.GENERIC,
+        )
+        assignments = [
+            make_voice_generation("cobbler~g=male", profile.profile_id),
+            make_voice_generation("servant~g=male", profile.profile_id),
+        ]
+        with pytest.raises(AssertionError, match="missing profiles"):
+            await store.assign_voice(assignments[0])
+        await store.upsert_voice_profiles([profile])
+        for assignment in assignments:
+            await store.assign_voice(assignment)
+
+        assert await store.generated_voices() == {
+            assignment.voice_id: profile for assignment in assignments
+        }
+        with pytest.raises(AssertionError, match="not exclusively"):
+            await store.assert_exclusive_profile_assignment(
+                profile.profile_id,
+                assignments[0].voice_id,
+            )
+        with pytest.raises(AssertionError, match="still assigned"):
+            await store.delete_voice_profile(profile.profile_id)
+
+        cobbler = assignments[0].voice_id
+        direction = make_direction(cobbler)
+        audio = make_generated_audio(direction, inworld_voice_id=profile.inworld_voice_id)
+        await store.upsert_directed_lines([direction])
+        await store.upsert_generated_audio([audio])
+        dedicated = make_voice_profile(cobbler)
+        await store.upsert_voice_profiles([dedicated])
+        await store.assign_voice(make_voice_generation(cobbler))
+
+        assert await store.generated_voice(cobbler) == dedicated
+        await store.assert_exclusive_profile_assignment(dedicated.profile_id, cobbler)
+        with pytest.raises(AssertionError, match="already assigned"):
+            await store.assign_voice(make_voice_generation("another-cobbler", dedicated.profile_id))
+        assert await store.directed_lines([cobbler]) == [direction]
+        assert await store.generated_audio([cobbler]) == []
+        assert await store.generated_voice(assignments[1].voice_id) == profile
     finally:
         store.close()
 
@@ -159,7 +225,8 @@ async def test_optimize_vacuums_every_generation_table(
     assert optimized == [
         (name, {"cleanup_older_than": timedelta(0)})
         for name in (
-            "generated_voices",
+            "voice_profiles",
+            "voice_generations",
             "directed_lines",
             "generated_audio",
             "tts_batches",

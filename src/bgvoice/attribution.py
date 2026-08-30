@@ -4,14 +4,15 @@ from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from bgvoice.character_models import VoiceResource
 from bgvoice.model_types import (
     BIOGRAPHY_SOUND_SLOT_ID,
     AttributionStatus,
     DetailStatus,
+    DialogueLineKind,
     IdentifierKind,
+    ProviderGender,
     ResourceTargetType,
-    VoiceId,
+    compose_search_text,
 )
 from bgvoice.pipeline_models import AttributionSummary
 from bgvoice.storage_records import (
@@ -19,10 +20,48 @@ from bgvoice.storage_records import (
     CharacterRecord,
     CharacterResourceLinkRecord,
     CharacterSoundRecord,
+    DialogueLineRecord,
     DialogueRecord,
     IdentifierDefinitionRecord,
     VoiceResourceRecord,
 )
+
+_GENERIC_FAMILY_MIN_PROXIES = 10
+_KNOWN_GENERIC_FAMILIES = frozenset(
+    {
+        "beggar",
+        "beggar child",
+        "citizen",
+        "civil servant",
+        "cowled enforcer",
+        "crusader patrol",
+        "cultist",
+        "dark moon monk",
+        "diseased child",
+        "diseased one",
+        "drow warrior",
+        "elf",
+        "elven warrior",
+        "flaming fist healer",
+        "flaming fist mercenary",
+        "flaming fist veteran",
+        "guardian",
+        "mercenary captain",
+        "moneylender",
+        "mourner",
+        "mugger",
+        "onlooker",
+        "patron",
+        "prophet",
+        "slave",
+        "spectral harpist",
+        "tavern patron",
+        "troll",
+    }
+)
+_VOICE_VARIANT_MIN_PROXIES = 2
+_VOICE_VARIANT_MIN_TEXTS = 6
+_NEUTRAL_VARIANT_MIN_DIALOGUES = 2
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,10 +71,29 @@ class AttributionBuild:
     summary: AttributionSummary
 
 
+@dataclass(frozen=True, slots=True)
+class _SpeakerProxy:
+    genders: frozenset[ProviderGender]
+    texts: frozenset[str]
+
+
+@dataclass(frozen=True, slots=True)
+class _VoiceDraft:
+    family_id: str
+    gender: ProviderGender | None
+    voice_id: str
+    display_name: str
+    prompt: str
+    members: tuple[CharacterRecord, ...]
+    dialogues: tuple[DialogueRecord, ...]
+    biography_sound_id: str | None
+
+
 def build_attributions(
     run_id: str,
     characters: Sequence[CharacterRecord],
     dialogues: Sequence[DialogueRecord],
+    dialogue_lines: Sequence[DialogueLineRecord],
     character_sounds: Sequence[CharacterSoundRecord],
     links: Sequence[CharacterResourceLinkRecord],
     identifiers: Sequence[IdentifierDefinitionRecord],
@@ -48,6 +106,7 @@ def build_attributions(
         for voice in _voice_resources(
             characters,
             dialogues,
+            dialogue_lines,
             character_sounds,
             identifiers,
             records,
@@ -192,10 +251,11 @@ def _attribution_summary(
 def _voice_resources(
     characters: Sequence[CharacterRecord],
     dialogues: Sequence[DialogueRecord],
+    dialogue_lines: Sequence[DialogueLineRecord],
     character_sounds: Sequence[CharacterSoundRecord],
     identifiers: Sequence[IdentifierDefinitionRecord],
     attributions: Sequence[CharacterAttributionRecord],
-) -> list[VoiceResource]:
+) -> list[_VoiceDraft]:
     members_by_voice: dict[str, list[CharacterRecord]] = {}
     for character in characters:
         if character.detail is not None:
@@ -207,6 +267,12 @@ def _voice_resources(
         attribution.character_resource_name.casefold(): attribution for attribution in attributions
     }
     dialogues_by_resource = {dialogue.resource_name.casefold(): dialogue for dialogue in dialogues}
+    texts_by_dialogue: dict[str, set[str]] = {}
+    for line in dialogue_lines:
+        if line.line_kind is DialogueLineKind.NPC and line.text and line.text.strip():
+            texts_by_dialogue.setdefault(line.dialogue_resource_name.casefold(), set()).add(
+                line.text
+            )
     labels: dict[tuple[IdentifierKind, int], str] = {}
     for definition in identifiers:
         display_names = [
@@ -215,50 +281,243 @@ def _voice_resources(
         ]
         labels[(definition.kind, definition.value)] = " / ".join(display_names)
 
-    resources = (
-        _voice_resource(
-            voice_id,
+    families = (
+        _voice_family(
+            family_id,
             members,
             attribution_by_character,
             dialogues_by_resource,
+            texts_by_dialogue,
             character_sounds,
             labels,
         )
-        for voice_id, members in sorted(members_by_voice.items())
+        for family_id, members in sorted(members_by_voice.items())
     )
-    return [resource for resource in resources if resource is not None]
+    return [resource for family in families for resource in family]
 
 
-def _voice_resource(
-    voice_id: str,
+def _voice_family(
+    family_id: str,
     members: Sequence[CharacterRecord],
     attribution_by_character: dict[str, CharacterAttributionRecord],
     dialogues_by_resource: dict[str, DialogueRecord],
+    texts_by_dialogue: dict[str, set[str]],
     character_sounds: Sequence[CharacterSoundRecord],
     labels: dict[tuple[IdentifierKind, int], str],
-) -> VoiceResource | None:
+) -> list[_VoiceDraft]:
     members = sorted(members, key=lambda member: member.resource_name.casefold())
     dialogues = _voice_dialogues(members, attribution_by_character, dialogues_by_resource)
     if not dialogues:
-        return None
+        return []
 
+    split = _gender_split(family_id, members, attribution_by_character, texts_by_dialogue)
+    if split is None:
+        representative = voice_representative(members)
+        detail = representative.detail
+        assert detail is not None
+        contributing_genders = {
+            ProviderGender.from_engine_id(member.detail.gender_id)
+            for member in members
+            if member.detail is not None
+            and any(
+                name.casefold() in texts_by_dialogue
+                for name in attribution_by_character[
+                    member.resource_name.casefold()
+                ].resolved_dialogue_resource_names
+            )
+        }
+        return [
+            _voice_draft(
+                family_id,
+                next(iter(contributing_genders)) if len(contributing_genders) == 1 else None,
+                family_id,
+                detail.display_name,
+                members,
+                dialogues,
+                character_sounds,
+                labels,
+            )
+        ]
+
+    exclusive_dialogues, mixed_dialogues = split
+    dialogue_by_name = {dialogue.resource_name.casefold(): dialogue for dialogue in dialogues}
+    dialogues_by_gender = {
+        gender: set(dialogue_names) for gender, dialogue_names in exclusive_dialogues.items()
+    }
+    if mixed_dialogues:
+        dialogues_by_gender.setdefault(ProviderGender.NEUTRAL, set()).update(mixed_dialogues)
+    drafts: list[_VoiceDraft] = []
+    for gender in sorted(dialogues_by_gender, key=lambda value: value.value):
+        dialogue_names = dialogues_by_gender[gender]
+        voice_members = [
+            member
+            for member in members
+            if dialogue_names
+            & {
+                name.casefold()
+                for name in attribution_by_character[
+                    member.resource_name.casefold()
+                ].resolved_dialogue_resource_names
+            }
+        ]
+        representative = voice_representative(voice_members)
+        detail = representative.detail
+        assert detail is not None
+        drafts.append(
+            _voice_draft(
+                family_id,
+                gender,
+                f"{family_id}~g={gender.value}",
+                f"{detail.display_name} · {gender.value.title()}",
+                voice_members,
+                [dialogue_by_name[name] for name in sorted(dialogue_names)],
+                character_sounds,
+                labels,
+            )
+        )
+    return drafts
+
+
+def _voice_draft(
+    family_id: str,
+    gender: ProviderGender | None,
+    voice_id: str,
+    display_name: str,
+    members: Sequence[CharacterRecord],
+    dialogues: Sequence[DialogueRecord],
+    character_sounds: Sequence[CharacterSoundRecord],
+    labels: dict[tuple[IdentifierKind, int], str],
+) -> _VoiceDraft:
     representative = voice_representative(members)
-    detail = representative.detail
-    assert detail is not None
     biography = _voice_biography(members, character_sounds)
-    prompt = _voice_prompt(representative, labels)
+    prompt = _voice_prompt(representative, gender, labels)
     if biography is not None:
         biography_text = biography.text
         assert biography_text is not None
         prompt = f"{prompt}\n\nBiography:\n{biography_text.strip()}"
-    return VoiceResource(
-        id=VoiceId(voice_id),
-        display_name=detail.display_name,
+    return _VoiceDraft(
+        family_id=family_id,
+        gender=gender,
+        voice_id=voice_id,
+        display_name=display_name,
         prompt=prompt,
-        variant_resource_names=[member.resource_name for member in members],
-        dialogue_resrefs=[dialogue.resref for dialogue in dialogues],
+        members=tuple(members),
+        dialogues=tuple(dialogues),
         biography_sound_id=biography.id if biography is not None else None,
     )
+
+
+def _gender_split(
+    family_id: str,
+    members: Sequence[CharacterRecord],
+    attribution_by_character: dict[str, CharacterAttributionRecord],
+    texts_by_dialogue: dict[str, set[str]],
+) -> tuple[dict[ProviderGender, frozenset[str]], frozenset[str]] | None:
+    proxies = _speaker_proxies(members, attribution_by_character, texts_by_dialogue)
+    if not proxies:
+        return None
+    known_generic = family_id in _KNOWN_GENERIC_FAMILIES
+    if not known_generic and len(proxies) < _GENERIC_FAMILY_MIN_PROXIES:
+        return None
+
+    family_texts = set().union(*(proxy.texts for proxy in proxies))
+    largest_proxy = max(len(proxy.texts) for proxy in proxies)
+    if not known_generic and largest_proxy * 3 >= len(family_texts) * 2:
+        return None
+
+    owners: dict[str, set[ProviderGender]] = {}
+    for member in members:
+        detail = member.detail
+        assert detail is not None
+        gender = ProviderGender.from_engine_id(detail.gender_id)
+        attribution = attribution_by_character[member.resource_name.casefold()]
+        for name in attribution.resolved_dialogue_resource_names:
+            dialogue_name = name.casefold()
+            if dialogue_name in texts_by_dialogue:
+                owners.setdefault(dialogue_name, set()).add(gender)
+
+    exclusive: dict[ProviderGender, frozenset[str]] = {}
+    for gender in ProviderGender:
+        pure_proxies = sum(proxy.genders == {gender} for proxy in proxies)
+        dialogue_names = frozenset(name for name, genders in owners.items() if genders == {gender})
+        texts = set().union(*(texts_by_dialogue[name] for name in dialogue_names))
+        if texts and (
+            known_generic
+            or (
+                pure_proxies >= _VOICE_VARIANT_MIN_PROXIES
+                and len(texts) >= _VOICE_VARIANT_MIN_TEXTS
+                and (
+                    gender is not ProviderGender.NEUTRAL
+                    or len(dialogue_names) >= _NEUTRAL_VARIANT_MIN_DIALOGUES
+                )
+            )
+        ):
+            exclusive[gender] = dialogue_names
+
+    if len(exclusive) < 2:
+        return None
+    all_dialogues = frozenset(owners)
+    specialized = frozenset(name for names in exclusive.values() for name in names)
+    return exclusive, all_dialogues - specialized
+
+
+def _speaker_proxies(
+    members: Sequence[CharacterRecord],
+    attribution_by_character: dict[str, CharacterAttributionRecord],
+    texts_by_dialogue: dict[str, set[str]],
+) -> list[_SpeakerProxy]:
+    groups: list[tuple[set[tuple[str, str]], list[CharacterRecord]]] = []
+    for member in members:
+        attribution = attribution_by_character[member.resource_name.casefold()]
+        dialogue_names = {
+            name.casefold()
+            for name in attribution.resolved_dialogue_resource_names
+            if name.casefold() in texts_by_dialogue
+        }
+        if not dialogue_names:
+            continue
+        detail = member.detail
+        assert detail is not None
+        tokens = {("dialogue", name) for name in dialogue_names}
+        death_variable = (detail.death_variable or "").strip().casefold()
+        if death_variable and death_variable != "none":
+            tokens.add(("death_variable", death_variable))
+
+        matches = [index for index, (known, _members) in enumerate(groups) if known & tokens]
+        if not matches:
+            groups.append((tokens, [member]))
+            continue
+        target = matches[0]
+        groups[target][0].update(tokens)
+        groups[target][1].append(member)
+        for index in reversed(matches[1:]):
+            groups[target][0].update(groups[index][0])
+            groups[target][1].extend(groups[index][1])
+            groups.pop(index)
+
+    proxies: list[_SpeakerProxy] = []
+    for _tokens, proxy_members in groups:
+        dialogue_names = frozenset(
+            name.casefold()
+            for member in proxy_members
+            for name in attribution_by_character[
+                member.resource_name.casefold()
+            ].resolved_dialogue_resource_names
+            if name.casefold() in texts_by_dialogue
+        )
+        proxies.append(
+            _SpeakerProxy(
+                genders=frozenset(
+                    ProviderGender.from_engine_id(member.detail.gender_id)
+                    for member in proxy_members
+                    if member.detail is not None
+                ),
+                texts=frozenset(
+                    text for name in dialogue_names for text in texts_by_dialogue[name]
+                ),
+            )
+        )
+    return proxies
 
 
 def _voice_dialogues(
@@ -338,13 +597,19 @@ def _voice_metadata(character: CharacterRecord) -> tuple[int, int, int, int | No
 
 def _voice_prompt(
     character: CharacterRecord,
+    gender: ProviderGender | None,
     labels: dict[tuple[IdentifierKind, int], str],
 ) -> str:
     detail = character.detail
     assert detail is not None
+    gender_name = (
+        gender.value.title()
+        if gender is not None
+        else labels.get((IdentifierKind.GENDER, detail.gender_id), str(detail.gender_id))
+    )
     lines = [
         f"Name: {detail.display_name}",
-        f"Gender: {labels.get((IdentifierKind.GENDER, detail.gender_id), str(detail.gender_id))}",
+        f"Gender: {gender_name}",
         f"Race: {labels.get((IdentifierKind.RACE, detail.race_id), str(detail.race_id))}",
         f"Class: {labels.get((IdentifierKind.CLASS, detail.class_id), str(detail.class_id))}",
     ]
@@ -359,17 +624,26 @@ def _voice_prompt(
 
 def _voice_resource_record(
     run_id: str,
-    resource: VoiceResource,
+    resource: _VoiceDraft,
 ) -> VoiceResourceRecord:
-    voice_id = str(resource.id)
     return VoiceResourceRecord(
-        key=VoiceResourceRecord.key_for(run_id, voice_id),
+        key=VoiceResourceRecord.key_for(run_id, resource.voice_id),
         run_id=run_id,
-        voice_id=voice_id,
+        voice_id=resource.voice_id,
+        family_id=resource.family_id,
+        gender=resource.gender,
         display_name=resource.display_name,
         prompt=resource.prompt,
-        variant_resource_names=resource.variant_resource_names,
-        dialogue_resrefs=resource.dialogue_resrefs,
+        variant_resource_names=[member.resource_name for member in resource.members],
+        dialogue_resrefs=[dialogue.resref for dialogue in resource.dialogues],
         biography_sound_id=resource.biography_sound_id,
-        search_text=resource.search_text,
+        search_text=compose_search_text(
+            resource.voice_id,
+            resource.family_id,
+            resource.display_name,
+            resource.prompt,
+            resource.biography_sound_id,
+            *(member.resource_name for member in resource.members),
+            *(dialogue.resref for dialogue in resource.dialogues),
+        ),
     )

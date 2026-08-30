@@ -111,12 +111,12 @@ def build_parser() -> argparse.ArgumentParser:
     generation.add_argument(
         "--recreate-voices",
         action="store_true",
-        help="delete and recreate every selected character voice, direction, and audio",
+        help="delete and recreate every selected character voice and its audio",
     )
 
     defaults = commands.add_parser(
         "generate-defaults",
-        help="voice every character with a small workload through shared gender/race defaults",
+        help="voice sparse characters through reusable gender/race profiles",
     )
     defaults.add_argument(
         "--max-lines",

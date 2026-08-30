@@ -14,10 +14,12 @@ from bgvoice.model_types import (
     DetailStatus,
     DialogueLineKind,
     IdentifierKind,
+    ProviderGender,
     ReadableItemKind,
     RunKind,
     RunStatus,
     SourceKind,
+    VoiceProfileKind,
 )
 from bgvoice.reader import PipelineReader
 from bgvoice.reader_metadata import LabelResolver
@@ -105,6 +107,15 @@ _RUN_STATUS: Final[dict[RunStatus, pb.RunStatus]] = {
     RunStatus.COMPLETE_WITH_ERRORS: pb.RUN_STATUS_COMPLETE_WITH_ERRORS,
     RunStatus.FAILED: pb.RUN_STATUS_FAILED,
 }
+_PROVIDER_GENDER: Final[dict[ProviderGender, pb.ProviderGender]] = {
+    ProviderGender.MALE: pb.PROVIDER_GENDER_MALE,
+    ProviderGender.FEMALE: pb.PROVIDER_GENDER_FEMALE,
+    ProviderGender.NEUTRAL: pb.PROVIDER_GENDER_NEUTRAL,
+}
+_VOICE_PROFILE_KIND: Final[dict[VoiceProfileKind, pb.VoiceProfileKind]] = {
+    VoiceProfileKind.DEDICATED: pb.VOICE_PROFILE_KIND_DEDICATED,
+    VoiceProfileKind.GENERIC: pb.VOICE_PROFILE_KIND_GENERIC,
+}
 
 
 def attribution_publication(
@@ -164,6 +175,7 @@ def voice(
     message = pb.Voice(
         name=resource_name(Collection.VOICES, row.id),
         voice_id=row.id,
+        family_id=row.family_id,
         display_name=row.display_name,
         prompt=row.prompt,
         npc_line_count=row.npc_line_count,
@@ -175,12 +187,16 @@ def voice(
         generated = row.generated_voice
         message.generated_voice.CopyFrom(
             pb.GeneratedVoice(
+                profile_id=generated.profile_id,
+                profile_kind=_VOICE_PROFILE_KIND[generated.kind],
                 description=generated.description,
                 language_code=generated.language_code,
                 inworld_voice_id=generated.inworld_voice_id,
                 created_at=timestamp(generated.created_at),
             )
         )
+    if row.gender is not None:
+        message.gender = _PROVIDER_GENDER[row.gender]
 
     for name in row.variant_resource_names:
         dialogue_names = attributions[name.casefold()].resolved_dialogue_resource_names

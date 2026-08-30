@@ -22,6 +22,8 @@ import {
   ReadableItemKind,
   ReadableItemSchema,
   VoiceSchema,
+  ProviderGender,
+  VoiceProfileKind,
   SourceKind,
 } from "./gen/bgvoice/v1/pipeline_pb";
 
@@ -49,6 +51,8 @@ const installation = create(InstallationSchema, {
 const voice = create(VoiceSchema, {
   name: "installations/bg2ee-eet/voices/imoen-befd8070",
   voiceId: "imoen",
+  familyId: "imoen",
+  gender: ProviderGender.FEMALE,
   displayName: "Imoen",
   prompt: "Warm, quick-witted and mischievous. Keep an easy Amnian cadence.",
   characters: [
@@ -63,6 +67,8 @@ const voice = create(VoiceSchema, {
   directedLineCount: 100n,
   generatedAudioCount: 92n,
   generatedVoice: {
+    profileId: "imoen",
+    profileKind: VoiceProfileKind.DEDICATED,
     description: "Youthful, warm and quick-witted, with a mischievous Amnian lilt.",
     languageCode: "en-GB",
     inworldVoiceId: "voice-imoen",
@@ -343,6 +349,9 @@ describe("application jobs", () => {
       .toBe("/voices?page_size=50");
     expect(screen.getByText(voice.prompt)).toBeTruthy();
     expect(screen.getByText(voice.generatedVoice?.description ?? "")).toBeTruthy();
+    expect(screen.getByText("Family imoen")).toBeTruthy();
+    expect(screen.getByText("Gender Female")).toBeTruthy();
+    expect(screen.getByText("Dedicated")).toBeTruthy();
     expect(screen.getByText("voice-imoen")).toBeTruthy();
     const allLines = new URL(
       screen.getByRole("link", { name: "All NPC lines" }).getAttribute("href") ?? "",

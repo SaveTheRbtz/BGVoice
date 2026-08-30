@@ -1,6 +1,7 @@
 """Typed asynchronous access to the Inworld voice and batch TTS APIs."""
 
 import asyncio
+import hashlib
 from collections.abc import Sequence
 from datetime import datetime
 from typing import Annotated
@@ -9,7 +10,7 @@ from urllib.parse import quote
 import httpx
 from pydantic import BaseModel, ConfigDict, Field
 
-from bgvoice.model_types import StrictModel
+from bgvoice.model_types import ProviderGender, StrictModel
 
 INWORLD_TTS_MODEL = "inworld-tts-2"
 INWORLD_AUDIO_ENCODING = "WAV"
@@ -32,6 +33,13 @@ def _raise_for_status(response: httpx.Response) -> None:
     except httpx.HTTPStatusError as error:
         error.add_note(response.text)
         raise
+
+
+def voice_profile_tag(profile_id: str) -> str:
+    """Return a stable provider tag within Inworld's 30-character limit."""
+    assert profile_id, "voice profile ID is required"
+    digest = hashlib.blake2s(profile_id.encode(), digest_size=9).hexdigest()
+    return f"bgvoice-id:{digest}"
 
 
 class VoiceDesignRequest(StrictModel):
@@ -219,6 +227,35 @@ class InworldClient:
                 "description": description,
                 "tags": list(tags),
             },
+        )
+        _raise_for_status(response)
+        return PublishedVoice.model_validate_json(response.content)
+
+    async def update_voice(
+        self,
+        voice_id: str,
+        *,
+        display_name: str,
+        description: str,
+        tags: Sequence[str],
+        gender: ProviderGender | None = None,
+    ) -> PublishedVoice:
+        """Update mutable metadata without replacing a provider voice."""
+        assert voice_id, "voice ID is required"
+        body: dict[str, str | list[str]] = {
+            "displayName": display_name,
+            "description": description,
+            "tags": list(tags),
+        }
+        fields = ["display_name", "description", "tags"]
+        if gender is not None:
+            body["gender"] = gender
+            fields.append("gender")
+        response = await self._http.patch(
+            f"{_API_ROOT}/voices/v1/voices/{quote(voice_id, safe='')}",
+            headers=self._headers,
+            params={"updateMask": ",".join(fields)},
+            json=body,
         )
         _raise_for_status(response)
         return PublishedVoice.model_validate_json(response.content)

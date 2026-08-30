@@ -63,6 +63,26 @@ class GenerationFailureStage(StrEnum):
     AUDIO_GENERATION = "audio_generation"
 
 
+class ProviderGender(StrEnum):
+    """Inworld's normalized gender vocabulary."""
+
+    MALE = "male"
+    FEMALE = "female"
+    NEUTRAL = "neutral"
+
+    @classmethod
+    def from_engine_id(cls, gender_id: int) -> Self:
+        """Collapse Infinity Engine creature genders into provider buckets."""
+        return cls({1: "male", 2: "female"}.get(gender_id, "neutral"))
+
+
+class VoiceProfileKind(StrEnum):
+    """Whether a provider voice belongs to one speaker or a reusable bucket."""
+
+    DEDICATED = "dedicated"
+    GENERIC = "generic"
+
+
 type TerminalRunStatus = Literal[
     RunStatus.COMPLETE,
     RunStatus.COMPLETE_WITH_ERRORS,
@@ -104,8 +124,6 @@ KitIdsValue = NewType("KitIdsValue", int)
 ClassTextKitId = NewType("ClassTextKitId", int)
 KitListRowId = NewType("KitListRowId", int)
 SoundSlotId = NewType("SoundSlotId", int)
-VoiceId = NewType("VoiceId", str)
-
 BIOGRAPHY_SOUND_SLOT_ID = SoundSlotId(74)
 
 type RaceIdField = Annotated[RaceId, Field(ge=0, le=0xFF)]

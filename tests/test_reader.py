@@ -19,6 +19,7 @@ from bgvoice.model_types import (
     RunKind,
     RunStatus,
     SourceKind,
+    VoiceProfileKind,
 )
 from bgvoice.reader import PipelineReader
 from bgvoice.reader_generation import GenerationSnapshot
@@ -44,10 +45,11 @@ from tests.factories import (
     make_direction,
     make_dump,
     make_generated_audio,
-    make_generated_voice,
     make_generation_failure,
     make_resource,
     make_tts_batch,
+    make_voice_generation,
+    make_voice_profile,
 )
 
 
@@ -93,13 +95,15 @@ async def test_stats_report_the_published_pipeline_generation(
 
 
 def test_generation_counts_distinguish_assignments_from_inworld_voices() -> None:
+    shared = make_voice_profile(
+        "shared",
+        inworld_voice_id="shared-provider-voice",
+        description="A clear reusable voice description for this focused test.",
+    )
     records = {
-        voice_id: make_generated_voice(
-            voice_id,
-            inworld_voice_id=("shared-provider-voice" if voice_id != "default:male" else "default"),
-            description="A clear reusable voice description for this focused test.",
-        )
-        for voice_id in ("aerie", "minsc", "default:male")
+        "aerie": shared,
+        "minsc": shared,
+        "default:male": make_voice_profile("default:male", inworld_voice_id="default"),
     }
     snapshot = GenerationSnapshot(
         voices=records,
@@ -118,6 +122,8 @@ def test_generation_counts_distinguish_assignments_from_inworld_voices() -> None
             key=VoiceResourceRecord.key_for("attribution", voice_id),
             run_id="attribution",
             voice_id=voice_id,
+            family_id=voice_id,
+            gender=None,
             display_name=voice_id.title(),
             prompt=f"Name: {voice_id.title()}",
             variant_resource_names=[f"{voice_id.upper()}.CRE"],
@@ -324,6 +330,8 @@ async def test_dialogue_line_voice_sound_and_transition_queries(
     )
     assert (voices.total, voices.sort, voices.items[0].id) == (1, "npc_line_count", "aerie")
     assert (voices.items[0].npc_line_count, voices.items[0].dialogue_resrefs) == (2, ["AERIE"])
+    assert "Race description:\nThe Tel'Quessir." in voices.items[0].prompt
+    assert "Class description:\nA multiclass spellcaster." in voices.items[0].prompt
     assert (sounds.total, sounds.sort, sounds.items[0].character_resource_name) == (
         1,
         "relevance",
@@ -351,18 +359,21 @@ async def test_generation_progress_enriches_and_filters_source_resources(
     direction = make_direction("aerie", line_id, directed_dialogue="[warmly] Hello.")
     store = await GenerationStore.open(scenario_database)
     try:
-        await store.upsert_generated_voices(
+        await store.upsert_voice_profiles(
             [
-                make_generated_voice(
+                make_voice_profile(
                     "aerie",
                     description="A gentle young adventurer with a warm, earnest delivery.",
                 ),
-                make_generated_voice(
+                make_voice_profile(
                     "narrator",
                     inworld_voice_id="voice-narrator",
                     description="A restrained storyteller with a clear and neutral delivery.",
                 ),
             ]
+        )
+        await store.upsert_voice_generations(
+            [make_voice_generation("aerie"), make_voice_generation("narrator")]
         )
         await store.upsert_directed_lines([direction])
         await store.upsert_generated_audio([make_generated_audio(direction)])
@@ -410,6 +421,10 @@ async def test_generation_progress_enriches_and_filters_source_resources(
         reader.close()
 
     assert voice.generated_voice is not None
+    assert (
+        voice.generated_voice.profile_id,
+        voice.generated_voice.kind,
+    ) == ("aerie", VoiceProfileKind.DEDICATED)
     assert voice.generated_voice.inworld_voice_id == "voice-aerie"
     assert (voice.directed_line_count, voice.generated_audio_count) == (1, 1)
     assert (dialogue.directed_line_count, dialogue.generated_audio_count) == (1, 1)

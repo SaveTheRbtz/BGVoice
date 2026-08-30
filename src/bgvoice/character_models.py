@@ -27,10 +27,8 @@ from bgvoice.model_types import (
     UInt8,
     UInt16,
     UInt32,
-    VoiceId,
     WireResRef,
     clean_display_name,
-    compose_search_text,
     cre_kit_value_from_bytes,
     kit_ids_value_from_cre,
     optional_resref,
@@ -252,30 +250,4 @@ class CharacterExtraction(StrictModel):
                 if reference.strref != 0xFFFF_FFFF
             ],
             serialized_size=len(dump.model_dump_json().encode("utf-8")),
-        )
-
-
-class VoiceResource(StrictModel):
-    """One named speaker with its concrete CREs and addressable NPC dialogue."""
-
-    id: VoiceId
-    display_name: str = Field(min_length=1)
-    prompt: str = Field(min_length=1)
-    variant_resource_names: list[Annotated[str, Field(min_length=1)]] = Field(min_length=1)
-    dialogue_resrefs: list[Annotated[str, Field(min_length=1, max_length=8)]]
-    biography_sound_id: str | None = None
-
-    @property
-    def variant_count(self) -> int:
-        return len(self.variant_resource_names)
-
-    @property
-    def search_text(self) -> str:
-        return compose_search_text(
-            self.id,
-            self.display_name,
-            self.prompt,
-            self.biography_sound_id,
-            *self.variant_resource_names,
-            *self.dialogue_resrefs,
         )

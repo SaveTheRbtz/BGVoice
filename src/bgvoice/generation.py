@@ -5,7 +5,6 @@ import logging
 from collections import Counter
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
-from enum import StrEnum
 from hashlib import sha256
 from pathlib import Path
 from typing import cast
@@ -34,11 +33,15 @@ from bgvoice.inworld import (
     PublishedVoice,
     VoiceDesignRequest,
     pack_synthesis_items,
+    voice_profile_tag,
 )
 from bgvoice.model_types import (
     DialogueLineKind,
     GenerationFailureStage,
+    ProviderGender,
+    RaceId,
     RunStatus,
+    VoiceProfileKind,
     utc_now,
 )
 from bgvoice.reader import PipelineReader
@@ -51,12 +54,13 @@ from bgvoice.storage_records import (
     DialogueRecord,
     DirectedLineRecord,
     GeneratedAudioRecord,
-    GeneratedVoiceRecord,
     GenerationFailureRecord,
     NarratorDirection,
     PortraitImageRecord,
     TtsBatchRecord,
     VoiceDescription,
+    VoiceGenerationRecord,
+    VoiceProfileRecord,
     VoiceResourceRecord,
 )
 
@@ -100,52 +104,35 @@ class GenerationSummary(_StructuredOutput):
     audio_generation_failures: int
 
 
-class DefaultVoiceGender(StrEnum):
-    MALE = "male"
-    FEMALE = "female"
-    NEUTRAL = "neutral"
-
-
-def default_voice_gender(gender_id: int) -> DefaultVoiceGender:
-    """Collapse Infinity Engine creature genders into Inworld's three categories."""
-    match gender_id:
-        case 1:
-            return DefaultVoiceGender.MALE
-        case 2:
-            return DefaultVoiceGender.FEMALE
-        case _:
-            return DefaultVoiceGender.NEUTRAL
-
-
 @dataclass(frozen=True, slots=True)
-class DefaultVoice:
-    """One reusable provider voice for a bounded gender/race bucket."""
+class GenericVoiceProfile:
+    """Transient identity and presentation for one reusable provider voice."""
 
-    gender: DefaultVoiceGender
-    race_id: int | None
-    race: str
+    gender: ProviderGender
+    race_id: RaceId | None
+    race_name: str | None
 
     @property
-    def voice_id(self) -> str:
+    def id(self) -> str:
         race = self.race_id if self.race_id is not None else "other"
-        return f"default:gender:{self.gender}:race:{race}"
+        return f"generic:gender:{self.gender}:race:{race}"
 
     @property
     def display_name(self) -> str:
-        race = f"R{self.race_id} {self.race}" if self.race_id is not None else "Other Race"
-        return f"BGVoice Default {self.gender.title()} {race}"
+        race = self.race_name or "Other Race"
+        return f"BGVoice Generic · {self.gender.title()} · {race}"
 
     @property
     def archetype(self) -> str:
-        return f"unnamed {self.gender} {self.race} character"
+        return f"unnamed {self.gender} {self.race_name or 'other-race'} character"
 
 
 @dataclass(frozen=True, slots=True)
 class VoiceEvidence:
     ability_scores: CharacterAbilityScores
     portrait_png: bytes | None
-    gender: DefaultVoiceGender
-    race_id: int
+    gender: ProviderGender
+    race_id: RaceId
     race: str
     race_description: str | None
     class_description: str | None
@@ -157,7 +144,7 @@ class VoiceWorkload:
     lines: tuple[DialogueLineRecord, ...]
     ability_scores: CharacterAbilityScores
     portrait_png: bytes | None
-    default_voice: DefaultVoice
+    generic_profile: GenericVoiceProfile
     race_description: str | None
     class_description: str | None
     dialogue_samples: tuple[str, ...]
@@ -306,17 +293,17 @@ async def load_workloads(
 
     for requested in requested_voices:
         folded = requested.casefold()
-        matches = [
+        exact = [voice for voice in attribution.voices if voice.voice_id.casefold() == folded]
+        matches = exact or [
             voice
             for voice in attribution.voices
-            if folded in (voice.voice_id.casefold(), voice.display_name.casefold())
+            if folded in (voice.family_id.casefold(), voice.display_name.casefold())
         ]
-        assert len(matches) == 1, f"voice {requested!r} resolved to {len(matches)} resources"
-        voice = matches[0]
-        if voice.voice_id in selected_voice_ids:
-            continue
-        selected_voice_ids.add(voice.voice_id)
-        voices.append(voice)
+        assert matches, f"voice {requested!r} did not resolve to a current resource"
+        for voice in sorted(matches, key=lambda item: item.voice_id.casefold()):
+            if voice.voice_id not in selected_voice_ids:
+                selected_voice_ids.add(voice.voice_id)
+                voices.append(voice)
     if not voices:
         return []
 
@@ -393,10 +380,10 @@ async def load_workloads(
                 lines=lines,
                 ability_scores=evidence.ability_scores,
                 portrait_png=evidence.portrait_png,
-                default_voice=DefaultVoice(
+                generic_profile=GenericVoiceProfile(
                     gender=evidence.gender,
                     race_id=evidence.race_id,
-                    race=evidence.race,
+                    race_name=evidence.race,
                 ),
                 race_description=evidence.race_description,
                 class_description=evidence.class_description,
@@ -413,29 +400,29 @@ def _common_default_race_ids(race_ids: Sequence[int]) -> frozenset[int]:
     return frozenset(ranked[:DEFAULT_NAMED_RACE_COUNT])
 
 
-def _bucket_default_voices(workloads: Sequence[VoiceWorkload]) -> list[VoiceWorkload]:
-    """Apply the bounded fallback taxonomy only to shared-default generation."""
+def _bucket_generic_profiles(workloads: Sequence[VoiceWorkload]) -> list[VoiceWorkload]:
+    """Apply the bounded fallback taxonomy only to generic profile generation."""
     common_races = _common_default_race_ids(
         [
-            workload.default_voice.race_id
+            workload.generic_profile.race_id
             for workload in workloads
-            if workload.default_voice.race_id is not None
+            if workload.generic_profile.race_id is not None
         ]
     )
     return [
         replace(
             workload,
-            default_voice=replace(
-                workload.default_voice,
+            generic_profile=replace(
+                workload.generic_profile,
                 race_id=(
-                    workload.default_voice.race_id
-                    if workload.default_voice.race_id in common_races
+                    workload.generic_profile.race_id
+                    if workload.generic_profile.race_id in common_races
                     else None
                 ),
-                race=(
-                    workload.default_voice.race
-                    if workload.default_voice.race_id in common_races
-                    else "other"
+                race_name=(
+                    workload.generic_profile.race_name
+                    if workload.generic_profile.race_id in common_races
+                    else None
                 ),
             ),
         )
@@ -452,7 +439,7 @@ async def _sparse_voice_ids(reader: PipelineReader, max_lines: int) -> list[str]
         .where(col("line_kind") == lit(DialogueLineKind.NPC))
         .to_pydantic(DialogueLineRecord),
     )
-    assert attribution.run is not None, "default voice generation requires published attribution"
+    assert attribution.run is not None, "generic voice generation requires published attribution"
     dialogues = {
         row.resref.casefold(): row.resource_name
         for row in cast(list[DialogueRecord], dialogue_result)
@@ -527,8 +514,12 @@ def _voice_evidence(
     return VoiceEvidence(
         ability_scores=ability_scores,
         portrait_png=portrait,
-        gender=default_voice_gender(default_detail.gender_id),
-        race_id=default_detail.race_id,
+        gender=(
+            voice.gender
+            if voice.gender is not None
+            else ProviderGender.from_engine_id(default_detail.gender_id)
+        ),
+        race_id=RaceId(default_detail.race_id),
         race=labels.race_label(default_detail.race_id),
         race_description=labels.race_description(default_detail.race_id),
         class_description=labels.class_description(default_detail.class_id),
@@ -579,7 +570,7 @@ async def generate(
         openai_api_key,
         inworld_api_key,
         recreate_voices=recreate_voices,
-        shared_defaults=False,
+        use_generic_profiles=False,
     )
 
 
@@ -591,7 +582,7 @@ async def _run_generation(
     inworld_api_key: str,
     *,
     recreate_voices: bool,
-    shared_defaults: bool,
+    use_generic_profiles: bool,
 ) -> GenerationSummary:
     """Run all missing generation stages and persist each completed unit."""
     import httpx
@@ -600,8 +591,8 @@ async def _run_generation(
     store = await GenerationStore.open(database_path)
     try:
         workloads = await load_workloads(reader, requested_voices, lines_per_voice)
-        if shared_defaults:
-            workloads = _bucket_default_voices(workloads)
+        if use_generic_profiles:
+            workloads = _bucket_generic_profiles(workloads)
         history_index = await DialogueHistoryIndex.load(reader)
         async with (
             AsyncOpenAI(api_key=openai_api_key) as openai,
@@ -621,15 +612,14 @@ async def _run_generation(
             }
             provider_voices = _provider_voice_catalog(await inworld.list_voices())
 
-            async def create_default(
-                default_voice: DefaultVoice,
-            ) -> GeneratedVoiceRecord | None:
+            async def create_generic(generic: GenericVoiceProfile) -> VoiceProfileRecord | None:
+                profile_id = generic.id
                 try:
-                    voice = await _ensure_default_voice(
+                    profile = await _ensure_generic_profile(
                         openai,
                         inworld,
                         store,
-                        default_voice,
+                        generic,
                         openai_capacity,
                         provider_voices,
                     )
@@ -637,7 +627,7 @@ async def _run_generation(
                     await _record_failures(
                         store,
                         GenerationFailureStage.VOICE_CREATION,
-                        default_voice.voice_id,
+                        profile_id,
                         [None],
                         error,
                     )
@@ -645,23 +635,26 @@ async def _run_generation(
                 await _clear_failures(
                     store,
                     GenerationFailureStage.VOICE_CREATION,
-                    default_voice.voice_id,
+                    profile_id,
                     [None],
                 )
-                return voice
+                return profile
 
-            default_tasks = (
+            generic_tasks = (
                 {
-                    default_voice: asyncio.create_task(create_default(default_voice))
-                    for default_voice in {workload.default_voice for workload in workloads}
+                    profile_id: asyncio.create_task(create_generic(generic))
+                    for profile_id, generic in {
+                        workload.generic_profile.id: workload.generic_profile
+                        for workload in workloads
+                    }.items()
                 }
-                if shared_defaults
+                if use_generic_profiles
                 else {}
             )
 
-            narrator_task: asyncio.Task[GeneratedVoiceRecord] | None = None
+            narrator_task: asyncio.Task[VoiceProfileRecord] | None = None
 
-            async def create_narrator() -> GeneratedVoiceRecord:
+            async def create_narrator() -> VoiceProfileRecord:
                 try:
                     voice = await _ensure_narrator_voice(
                         inworld,
@@ -685,7 +678,7 @@ async def _run_generation(
                 )
                 return voice
 
-            async def ensure_narrator() -> GeneratedVoiceRecord:
+            async def ensure_narrator() -> VoiceProfileRecord:
                 nonlocal narrator_task
                 if narrator_task is None:
                     narrator_task = asyncio.create_task(create_narrator())
@@ -705,8 +698,10 @@ async def _run_generation(
                             openai_capacity,
                             provider_voices,
                             recreate=recreate_voices,
-                            default_voice=(
-                                default_tasks[workload.default_voice] if shared_defaults else None
+                            generic_profile=(
+                                generic_tasks[workload.generic_profile.id]
+                                if use_generic_profiles
+                                else None
                             ),
                         )
                     except Exception as error:
@@ -734,7 +729,7 @@ async def _run_generation(
                         openai_capacity,
                     )
                     if voice_ready:
-                        if not shared_defaults:
+                        if not use_generic_profiles:
                             await _synthesize_workloads(
                                 store,
                                 inworld,
@@ -749,7 +744,7 @@ async def _run_generation(
             processed = await _wait_for_all(
                 [asyncio.create_task(process(workload)) for workload in workloads]
             )
-            if shared_defaults:
+            if use_generic_profiles:
                 ready = [workload for workload in processed if workload is not None]
                 if ready:
                     await _synthesize_workloads(
@@ -760,7 +755,7 @@ async def _run_generation(
                         inworld_capacity,
                         running_audio_ids,
                     )
-                await _wait_for_all(list(default_tasks.values()))
+                await _wait_for_all(list(generic_tasks.values()))
 
         voice_ids = [workload.voice.voice_id for workload in workloads]
         directions = await store.directed_lines(voice_ids)
@@ -816,7 +811,7 @@ async def generate_defaults(
         openai_api_key,
         inworld_api_key,
         recreate_voices=False,
-        shared_defaults=True,
+        use_generic_profiles=True,
     )
 
 
@@ -829,47 +824,56 @@ async def _ensure_character_voice(
     provider_voices: Mapping[str, PublishedVoice],
     *,
     recreate: bool,
-    default_voice: Awaitable[GeneratedVoiceRecord | None] | None = None,
-) -> GeneratedVoiceRecord:
-    existing = await store.generated_voice(workload.voice.voice_id)
+    generic_profile: Awaitable[VoiceProfileRecord | None] | None = None,
+) -> VoiceProfileRecord:
+    voice_id = workload.voice.voice_id
+    existing = await store.generated_voice(voice_id)
     if recreate:
-        named_voice = provider_voices.get(workload.voice.display_name.casefold())
-        provider_ids = set() if named_voice is None else {named_voice.voice_id}
-        stored = await store.generated_voices()
-        if (
-            existing is not None
-            and sum(
-                voice.inworld_voice_id == existing.inworld_voice_id for voice in stored.values()
-            )
-            == 1
-            and any(
-                voice.voice_id == existing.inworld_voice_id for voice in provider_voices.values()
-            )
-        ):
-            provider_ids.add(existing.inworld_voice_id)
-        await store.delete_voice_generation(workload.voice.voice_id)
-        for provider_id in sorted(provider_ids):
-            await inworld.delete_voice(provider_id)
+        if existing is not None and existing.kind is VoiceProfileKind.DEDICATED:
+            await store.assert_exclusive_profile_assignment(existing.profile_id, voice_id)
+            await inworld.delete_voice(existing.inworld_voice_id)
+        await store.delete_voice_generation(voice_id)
+        if existing is not None and existing.kind is VoiceProfileKind.DEDICATED:
+            await store.delete_voice_profile(existing.profile_id)
         existing = None
-    if existing is not None:
-        return existing
-    if not recreate:
-        reused = await _reuse_existing_voice(
+    matching_existing = existing is not None and (
+        (generic_profile is not None and existing.profile_id == workload.generic_profile.id)
+        or (
+            generic_profile is None
+            and existing.kind is VoiceProfileKind.DEDICATED
+            and (workload.voice.gender is None or existing.gender is workload.voice.gender)
+        )
+    )
+    if matching_existing:
+        assert existing is not None
+        if existing.kind is VoiceProfileKind.GENERIC:
+            return existing
+        if await store.profile_voice_ids(existing.profile_id) == {voice_id}:
+            return existing
+    if generic_profile is not None:
+        profile = await generic_profile
+        assert profile is not None, f"generic profile unavailable for {voice_id}"
+        await store.assign_voice(
+            VoiceGenerationRecord(voice_id=voice_id, profile_id=profile.profile_id)
+        )
+        return profile
+
+    profile_id = await _dedicated_profile_id(store, voice_id)
+    profile = await store.voice_profile(profile_id)
+    if profile is None and not recreate:
+        profile = await _reuse_existing_profile(
             store,
             provider_voices,
-            workload.voice.voice_id,
-            workload.voice.display_name,
+            profile_id,
+            workload.generic_profile.gender,
+            None,
+            VoiceProfileKind.DEDICATED,
         )
-        if reused is not None:
-            return reused
-    if default_voice is not None:
-        shared = await default_voice
-        assert shared is not None, (
-            f"default voice unavailable for {workload.default_voice.archetype}"
+    if profile is not None:
+        await store.assign_voice(
+            VoiceGenerationRecord(voice_id=voice_id, profile_id=profile.profile_id)
         )
-        assigned = shared.model_copy(update={"voice_id": workload.voice.voice_id})
-        await store.upsert_generated_voices([assigned])
-        return assigned
+        return profile
 
     metadata, biography = _metadata_and_biography(workload.voice.prompt)
     async with openai_capacity:
@@ -887,44 +891,78 @@ async def _ensure_character_voice(
             ),
             model=VOICE_DESIGN_MODEL,
         )
-    return await _publish_voice(
+    profile = await _publish_profile(
         inworld,
         store,
-        workload.voice.voice_id,
+        profile_id,
+        workload.generic_profile.gender,
+        None,
+        VoiceProfileKind.DEDICATED,
         workload.voice.display_name,
         description=plan.profile.render(),
         language_code=plan.language_code,
         preview_text=plan.preview_text,
     )
+    await store.assign_voice(
+        VoiceGenerationRecord(voice_id=voice_id, profile_id=profile.profile_id)
+    )
+    return profile
 
 
-async def _ensure_default_voice(
+async def _dedicated_profile_id(store: GenerationStore, voice_id: str) -> str:
+    """Keep legacy profile IDs unless another logical voice already owns one."""
+    profile = await store.voice_profile(voice_id)
+    assigned_voice_ids = await store.profile_voice_ids(voice_id)
+    if profile is None:
+        assert not assigned_voice_ids, f"voice profile {voice_id!r} is missing"
+        return voice_id
+    if profile.kind is VoiceProfileKind.DEDICATED and not (assigned_voice_ids - {voice_id}):
+        return voice_id
+
+    profile_id = f"dedicated:{voice_id}"
+    profile = await store.voice_profile(profile_id)
+    assigned_voice_ids = await store.profile_voice_ids(profile_id)
+    assert profile is None or profile.kind is VoiceProfileKind.DEDICATED, (
+        f"fallback voice profile {profile_id!r} is not dedicated"
+    )
+    assert not (assigned_voice_ids - {voice_id}), (
+        f"fallback voice profile {profile_id!r} is already assigned to "
+        f"{sorted(assigned_voice_ids - {voice_id})}"
+    )
+    return profile_id
+
+
+async def _ensure_generic_profile(
     openai: AsyncOpenAI,
     inworld: InworldClient,
     store: GenerationStore,
-    default_voice: DefaultVoice,
+    generic: GenericVoiceProfile,
     openai_capacity: asyncio.Semaphore,
     provider_voices: Mapping[str, PublishedVoice],
-) -> GeneratedVoiceRecord:
-    existing = await store.generated_voice(default_voice.voice_id)
+) -> VoiceProfileRecord:
+    profile_id = generic.id
+    existing = await store.voice_profile(profile_id)
     if existing is not None:
         return existing
-    reused = await _reuse_existing_voice(
+    reused = await _reuse_existing_profile(
         store,
         provider_voices,
-        default_voice.voice_id,
-        default_voice.display_name,
+        profile_id,
+        generic.gender,
+        generic.race_id,
+        VoiceProfileKind.GENERIC,
     )
     if reused is not None:
         return reused
+    race = generic.race_name or "other-race"
     async with openai_capacity:
         plan = await create_voice_design_plan(
             openai,
             VoiceDesignSource(
-                display_name=default_voice.archetype,
+                display_name=generic.archetype,
                 metadata=(
                     "Reusable fallback for characters with very little dialogue.\n"
-                    f"Gender: {default_voice.gender}\nRace: {default_voice.race}"
+                    f"Gender: {generic.gender}\nRace: {race}"
                 ),
                 race_description=None,
                 class_description=None,
@@ -935,11 +973,14 @@ async def _ensure_default_voice(
             ),
             model=VOICE_DESIGN_MODEL,
         )
-    return await _publish_voice(
+    return await _publish_profile(
         inworld,
         store,
-        default_voice.voice_id,
-        default_voice.display_name,
+        profile_id,
+        generic.gender,
+        generic.race_id,
+        VoiceProfileKind.GENERIC,
+        generic.display_name,
         description=plan.profile.render(),
         language_code=plan.language_code,
         preview_text=plan.preview_text,
@@ -952,16 +993,19 @@ def _metadata_and_biography(prompt: str) -> tuple[str, str | None]:
     return metadata.strip(), cleaned_biography or None
 
 
-async def _publish_voice(
+async def _publish_profile(
     inworld: InworldClient,
     store: GenerationStore,
-    voice_id: str,
+    profile_id: str,
+    gender: ProviderGender | None,
+    race_id: RaceId | None,
+    kind: VoiceProfileKind,
     display_name: str,
     *,
     description: str,
     language_code: str,
     preview_text: str,
-) -> GeneratedVoiceRecord:
+) -> VoiceProfileRecord:
     design = await inworld.design_voice(
         VoiceDesignRequest(
             language_code=language_code,
@@ -973,15 +1017,26 @@ async def _publish_voice(
         design.preview_voices[0].voice_id,
         display_name=display_name,
         description=description,
-        tags=("bgvoice",),
+        tags=("bgvoice", voice_profile_tag(profile_id)),
     )
-    record = GeneratedVoiceRecord(
-        voice_id=voice_id,
+    if gender is not None:
+        published = await inworld.update_voice(
+            published.voice_id,
+            display_name=display_name,
+            description=description,
+            tags=("bgvoice", voice_profile_tag(profile_id)),
+            gender=gender,
+        )
+    record = VoiceProfileRecord(
+        profile_id=profile_id,
+        kind=kind,
+        gender=gender,
+        race_id=race_id,
         inworld_voice_id=published.voice_id,
         description=VoiceDescription(text=description, language_code=language_code),
         created_at=utc_now().isoformat(),
     )
-    await store.upsert_generated_voices([record])
+    await store.upsert_voice_profiles([record])
     return record
 
 
@@ -989,60 +1044,81 @@ async def _ensure_narrator_voice(
     inworld: InworldClient,
     store: GenerationStore,
     provider_voices: Mapping[str, PublishedVoice],
-) -> GeneratedVoiceRecord:
+) -> VoiceProfileRecord:
     existing = await store.generated_voice(NARRATOR_VOICE_ID)
     if existing is not None:
         return existing
-    reused = await _reuse_existing_voice(
+    reused = await _reuse_existing_profile(
         store,
         provider_voices,
         NARRATOR_VOICE_ID,
-        _NARRATOR_DISPLAY_NAME,
+        ProviderGender.MALE,
+        None,
+        VoiceProfileKind.DEDICATED,
     )
     if reused is not None:
+        await store.assign_voice(
+            VoiceGenerationRecord(
+                voice_id=NARRATOR_VOICE_ID,
+                profile_id=reused.profile_id,
+            )
+        )
         return reused
-    return await _publish_voice(
+    profile = await _publish_profile(
         inworld,
         store,
         NARRATOR_VOICE_ID,
+        ProviderGender.MALE,
+        None,
+        VoiceProfileKind.DEDICATED,
         _NARRATOR_DISPLAY_NAME,
         description=_NARRATOR_DESCRIPTION,
         language_code="en-GB",
         preview_text=_NARRATOR_PREVIEW,
     )
+    await store.assign_voice(
+        VoiceGenerationRecord(voice_id=NARRATOR_VOICE_ID, profile_id=profile.profile_id)
+    )
+    return profile
 
 
-async def _reuse_existing_voice(
+async def _reuse_existing_profile(
     store: GenerationStore,
     provider_voices: Mapping[str, PublishedVoice],
-    voice_id: str,
-    display_name: str,
-) -> GeneratedVoiceRecord | None:
-    voice = provider_voices.get(display_name.casefold())
+    profile_id: str,
+    gender: ProviderGender | None,
+    race_id: RaceId | None,
+    kind: VoiceProfileKind,
+) -> VoiceProfileRecord | None:
+    voice = provider_voices.get(voice_profile_tag(profile_id))
     if voice is None:
         return None
     language = voice.language_code or voice.legacy_language_code
     assert language is not None, f"Inworld voice {voice.voice_id!r} has no language"
     parts = language.replace("_", "-").split("-")
     language_code = "-".join((parts[0].lower(), *(part.upper() for part in parts[1:])))
-    record = GeneratedVoiceRecord(
-        voice_id=voice_id,
+    record = VoiceProfileRecord(
+        profile_id=profile_id,
+        kind=kind,
+        gender=gender,
+        race_id=race_id,
         inworld_voice_id=voice.voice_id,
         description=VoiceDescription(text=voice.description, language_code=language_code),
         created_at=utc_now().isoformat(),
     )
-    await store.upsert_generated_voices([record])
+    await store.upsert_voice_profiles([record])
     return record
 
 
 def _provider_voice_catalog(voices: Sequence[PublishedVoice]) -> dict[str, PublishedVoice]:
     catalog: dict[str, PublishedVoice] = {}
     for voice in voices:
-        key = voice.display_name.casefold()
-        assert key not in catalog, (
-            f"multiple reusable Inworld voices are named {voice.display_name!r}"
-        )
-        catalog[key] = voice
+        profile_tags = [tag for tag in voice.tags if tag.startswith("bgvoice-id:")]
+        assert len(profile_tags) <= 1, f"Inworld voice {voice.voice_id!r} has multiple BGVoice IDs"
+        if profile_tags:
+            profile_tag = profile_tags[0]
+            assert profile_tag not in catalog, f"duplicate Inworld profile tag {profile_tag!r}"
+            catalog[profile_tag] = voice
     return catalog
 
 
@@ -1129,7 +1205,7 @@ async def _synthesize_workloads(
     store: GenerationStore,
     inworld: InworldClient,
     workloads: Sequence[VoiceWorkload],
-    ensure_narrator: Callable[[], Awaitable[GeneratedVoiceRecord]],
+    ensure_narrator: Callable[[], Awaitable[VoiceProfileRecord]],
     capacity: asyncio.Semaphore,
     running_audio_ids: set[str],
 ) -> None:
@@ -1256,7 +1332,7 @@ async def _complete_batch(
     inworld: InworldClient,
     batch: TtsBatchRecord,
     directions: Mapping[str, DirectedLineRecord],
-    voices: Mapping[str, GeneratedVoiceRecord],
+    voices: Mapping[str, VoiceProfileRecord],
 ) -> None:
     operation = await inworld.poll_operation(batch.operation_name)
     if operation.error is not None:

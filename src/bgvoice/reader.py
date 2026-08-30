@@ -146,7 +146,8 @@ class PipelineReader:
     portrait_images_table: AsyncTable
     character_dialogues_table: AsyncTable
     voices_table: AsyncTable
-    generated_voices_table: AsyncTable
+    voice_profiles_table: AsyncTable
+    voice_generations_table: AsyncTable
     directed_lines_table: AsyncTable
     generated_audio_table: AsyncTable
     tts_batches_table: AsyncTable
@@ -193,7 +194,8 @@ class PipelineReader:
             tables["portrait_images"],
             tables["character_dialogues"],
             tables["voice_resources"],
-            tables["generated_voices"],
+            tables["voice_profiles"],
+            tables["voice_generations"],
             tables["directed_lines"],
             tables["generated_audio"],
             tables["tts_batches"],
@@ -284,7 +286,8 @@ class PipelineReader:
     ) -> GenerationSnapshot:
         current = attribution or await self.attribution_snapshot()
         return await GenerationSnapshot.load(
-            self.generated_voices_table,
+            self.voice_profiles_table,
+            self.voice_generations_table,
             self.directed_lines_table,
             self.generated_audio_table,
             self.tts_batches_table,
@@ -624,10 +627,14 @@ class PipelineReader:
         tokens = search_tokens(query.q)
         sort = query.sort or ("relevance" if tokens else "npc_line_count")
         direction: SortDirection = "desc" if sort == "relevance" else query.direction
-        dialogue_rows = cast(
-            list[DialogueRecord],
-            await self.dialogues_table.query().to_pydantic(DialogueRecord),
+        dialogue_rows, character_rows, metadata = await asyncio.gather(
+            self.dialogues_table.query().to_pydantic(DialogueRecord),
+            self.characters_table.query().to_pydantic(CharacterRecord),
+            self.metadata_snapshot(),
         )
+        dialogues = cast(list[DialogueRecord], dialogue_rows)
+        characters = cast(list[CharacterRecord], character_rows)
+        labels = LabelResolver.from_snapshot(metadata)
         attribution = await self.attribution_snapshot()
         generation = await self.generation_snapshot(attribution)
         if attribution.run is None:
@@ -643,7 +650,8 @@ class PipelineReader:
                 key_of=lambda row: row.voice_id,
                 score_of=lambda row: row.score,
             )
-        dialogues_by_resref = {row.resref.casefold(): row for row in dialogue_rows}
+        dialogues_by_resref = {row.resref.casefold(): row for row in dialogues}
+        characters_by_name = {row.resource_name.casefold(): row for row in characters}
         rows = []
         for record in records:
             directed_count, audio_count = generation.voice_counts(record.voice_id)
@@ -651,6 +659,8 @@ class PipelineReader:
                 voice_row(
                     record,
                     dialogues_by_resref,
+                    characters_by_name,
+                    labels,
                     generation.generated_voice(record.voice_id),
                     directed_count,
                     audio_count,
