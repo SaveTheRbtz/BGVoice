@@ -39,8 +39,11 @@ from bgvoice.pipeline_models import (
     ExtractionSummary,
 )
 from bgvoice.readable_models import ItmDump
+from bgvoice.reader import PipelineReader
+from bgvoice.reader_models import ClassQuery, KitQuery, RaceQuery
 from bgvoice.storage_records import ExtractionRunRecord
 from tests.factories import (
+    MetadataClient,
     make_dialogue_dump,
     make_dialogue_resource,
     make_dump,
@@ -48,8 +51,10 @@ from tests.factories import (
     make_item_resource,
     make_portrait_resource,
     make_resource,
+    metadata_resources,
 )
-from tests.scenarios import empty_metadata
+
+pytestmark = pytest.mark.integration
 
 type Extractor = Callable[..., ExtractionSummary]
 
@@ -136,28 +141,22 @@ class FakeIeCli:
             raise RuntimeError(f"cannot list {run_kind}")
 
 
-def test_metadata_extraction_replaces_all_metadata_and_records_its_run(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.anyio
+async def test_metadata_extraction_publishes_engine_definitions(
     tmp_path: Path,
 ) -> None:
-    client = FakeIeCli()
+    client = MetadataClient(metadata_resources())
     database = PipelineDatabase(tmp_path / "metadata.lancedb")
-    calls: list[tuple[Path, int]] = []
-
-    def build(_client: object, game_root: Path, *, workers: int) -> MetadataExtraction:
-        calls.append((game_root, workers))
-        return empty_metadata(3)
-
-    monkeypatch.setattr(pipeline, "build_metadata", build)
     summary = extract_metadata(client, database, tmp_path, workers=6)
+    reader = await PipelineReader.open(database.path)
+    try:
+        races = await reader.races(RaceQuery(page_size=100))
+        classes = await reader.classes(ClassQuery(class_id=2, page_size=10))
+        kits = await reader.kits(KitQuery(class_id=2, page_size=10))
+    finally:
+        reader.close()
 
-    assert calls == [(tmp_path.resolve(), 6)]
-    assert (summary.discovered, summary.attempted, summary.extracted, summary.status) == (
-        3,
-        3,
-        3,
-        "complete",
-    )
+    assert summary.status == "complete"
     run = (
         lancedb.connect(database.path)
         .open_table("extraction_runs")
@@ -166,9 +165,16 @@ def test_metadata_extraction_replaces_all_metadata_and_records_its_run(
     )[0]
     assert (run.run_kind, run.resources_discovered, run.details_extracted) == (
         RunKind.METADATA,
-        3,
-        3,
+        len(client.resources),
+        len(client.resources),
     )
+    human = next(race for race in races.items if race.race_id == 1)
+    beholder = next(race for race in races.items if race.race_id == 123)
+    assert human.campaign_texts[0].record.description == "text 101"
+    assert beholder.lore is not None
+    assert beholder.lore.help_text == "text 209"
+    assert classes.items[0].description == "text 111"
+    assert kits.items[0].help_text == "text 122"
 
 
 def test_metadata_extraction_failure_is_finalized_and_propagated(
@@ -317,6 +323,14 @@ def test_readable_extraction_scans_all_items_and_publishes_only_texts(
         ("BOOK.ITM", "book"),
         ("SCROLL.ITM", "scroll"),
     ]
+
+    client.items = [make_item_resource("SCROLL.ITM")]
+    client.failures.clear()
+    client.dumped.clear()
+    rerun = extract_readable_items(client, database, tmp_path)
+
+    assert (rerun.extracted, client.dumped) == (1, ["SCROLL.ITM"])
+    assert [item.resource_name for item in database.readable_items()] == ["SCROLL.ITM"]
 
 
 def test_character_inventory_can_skip_detail_extraction(tmp_path: Path) -> None:

@@ -5,91 +5,29 @@ import { cleanup, render, screen, waitFor, within } from "@testing-library/react
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { ListQuery, ListResult } from "./api";
+import * as apiModule from "./api";
 import {
   AttributionStatus,
-  type Character,
-  type CharacterClass,
   CharacterClassSchema,
   CharacterSchema,
   DetailStatus,
-  type Dialogue,
   DialogueSchema,
-  type DialogueLine,
   DialogueLineKind,
   DialogueLineSchema,
-  type ExtractionRun,
-  type IdentifierDefinition,
   IdentifierDefinitionSchema,
   IdentifierKind,
-  type Installation,
   InstallationSchema,
-  type Kit,
   KitSchema,
-  type Race,
   RaceSchema,
-  type ReadableItem,
   ReadableItemKind,
   ReadableItemSchema,
-  type Voice,
   VoiceSchema,
   SourceKind,
 } from "./gen/bgvoice/v1/pipeline_pb";
 
-const api = vi.hoisted(() => ({
-  getInstallation: vi.fn<(signal?: AbortSignal) => Promise<Installation>>(),
-  getVoice: vi.fn<(name: string, signal?: AbortSignal) => Promise<Voice>>(),
-  getCharacter: vi.fn<(name: string, signal?: AbortSignal) => Promise<Character>>(),
-  getDialogue: vi.fn<(name: string, signal?: AbortSignal) => Promise<Dialogue>>(),
-  listCharacters: vi.fn<
-    (query: ListQuery, signal?: AbortSignal) => Promise<ListResult<Character>>
-  >(),
-  listVoices: vi.fn<
-    (query: ListQuery, signal?: AbortSignal) => Promise<ListResult<Voice>>
-  >(),
-  listDialogues: vi.fn<
-    (query: ListQuery, signal?: AbortSignal) => Promise<ListResult<Dialogue>>
-  >(),
-  listDialogueLines: vi.fn<
-    (query: ListQuery, signal?: AbortSignal) => Promise<ListResult<DialogueLine>>
-  >(),
-  listExtractionRuns: vi.fn<
-    (query: ListQuery, signal?: AbortSignal) => Promise<ListResult<ExtractionRun>>
-  >(),
-  listRaces: vi.fn<
-    (query: ListQuery, signal?: AbortSignal) => Promise<ListResult<Race>>
-  >(),
-  listCharacterClasses: vi.fn<
-    (query: ListQuery, signal?: AbortSignal) => Promise<ListResult<CharacterClass>>
-  >(),
-  listKits: vi.fn<
-    (query: ListQuery, signal?: AbortSignal) => Promise<ListResult<Kit>>
-  >(),
-  listIdentifierDefinitions: vi.fn<
-    (query: ListQuery, signal?: AbortSignal) => Promise<ListResult<IdentifierDefinition>>
-  >(),
-  listReadableItems: vi.fn<
-    (query: ListQuery, signal?: AbortSignal) => Promise<ListResult<ReadableItem>>
-  >(),
-}));
+vi.mock(import("./api"));
 
-vi.mock(import("./api"), async (importOriginal) => ({
-  ...(await importOriginal()),
-  getInstallation: api.getInstallation,
-  getVoice: api.getVoice,
-  getCharacter: api.getCharacter,
-  getDialogue: api.getDialogue,
-  listCharacters: api.listCharacters,
-  listVoices: api.listVoices,
-  listDialogues: api.listDialogues,
-  listDialogueLines: api.listDialogueLines,
-  listExtractionRuns: api.listExtractionRuns,
-  listRaces: api.listRaces,
-  listCharacterClasses: api.listCharacterClasses,
-  listKits: api.listKits,
-  listIdentifierDefinitions: api.listIdentifierDefinitions,
-  listReadableItems: api.listReadableItems,
-}));
+const api = vi.mocked(apiModule);
 
 import App from "./App";
 
@@ -109,7 +47,7 @@ const installation = create(InstallationSchema, {
 });
 
 const voice = create(VoiceSchema, {
-  name: "installations/bg2ee-eet/voices/imoen",
+  name: "installations/bg2ee-eet/voices/imoen-befd8070",
   voiceId: "imoen",
   displayName: "Imoen",
   prompt: "Warm, quick-witted and mischievous. Keep an easy Amnian cadence.",
@@ -356,6 +294,13 @@ const readableItems = [
   }),
 ] as const;
 
+function summaryContaining(text: string): HTMLElement {
+  const summaries = screen.getAllByText(text, { exact: true })
+    .flatMap((element) => element.closest("summary") ?? []);
+  expect(summaries).not.toHaveLength(0);
+  return summaries[0]!;
+}
+
 beforeEach(() => {
   vi.resetAllMocks();
   api.getInstallation.mockResolvedValue(installation);
@@ -380,36 +325,31 @@ afterEach(() => {
 });
 
 describe("application jobs", () => {
-  it("finds a voice without loading its detail and preserves the collection query", async () => {
+  it("browses voices and characters through stable resource identities", async () => {
     api.listVoices.mockResolvedValue({ items: [voice], nextPageToken: "", totalSize: 1n });
     window.history.replaceState(null, "", "/voices?page_size=50");
     const user = userEvent.setup();
     render(<App />);
 
-    const name = await screen.findByText("Imoen");
-    const link = name.closest("a");
-    expect(link?.getAttribute("href")).toBe("/voices/imoen?page_size=50");
+    const link = await screen.findByRole("link", { name: /^Imoen, ready,/ });
+    expect(link.getAttribute("href")).toBe("/voices/imoen-befd8070?page_size=50");
     expect(api.getVoice).not.toHaveBeenCalled();
 
-    await user.click(link!);
-    expect(await screen.findByRole("heading", { name: "Imoen", level: 1 })).toBeTruthy();
-    expect(screen.getByRole("link", { name: "Back to voices" }).getAttribute("href"))
-      .toBe("/voices?page_size=50");
-  });
-
-  it("reviews a voice and follows its highest-workload character", async () => {
-    window.history.replaceState(null, "", "/voices/imoen");
-    const user = userEvent.setup();
-    render(<App />);
-
+    await user.click(link);
     expect(await screen.findByRole("heading", { name: "Imoen", level: 1 })).toBeTruthy();
     expect(api.getVoice).toHaveBeenCalledWith(voice.name, expect.any(AbortSignal));
-    expect(api.listVoices).not.toHaveBeenCalled();
+    expect(api.listVoices).toHaveBeenCalledOnce();
+    expect(screen.getByRole("link", { name: "Back to voices" }).getAttribute("href"))
+      .toBe("/voices?page_size=50");
     expect(screen.getByText(voice.prompt)).toBeTruthy();
     expect(screen.getByText(voice.generatedVoice?.description ?? "")).toBeTruthy();
     expect(screen.getByText("voice-imoen")).toBeTruthy();
-    expect(screen.getByRole("link", { name: "Needs audio" }).getAttribute("href"))
-      .toContain("voice_id");
+    const allLines = new URL(
+      screen.getByRole("link", { name: "All NPC lines" }).getAttribute("href") ?? "",
+      window.location.origin,
+    );
+    expect(allLines.pathname).toBe("/dialogue-lines/npc");
+    expect(allLines.searchParams.get("filter")).toBe('voice_id = "imoen"');
     expect(screen.getAllByRole("link", { name: /^IMOEN(?:15)? ×/ }).map((link) => link.textContent))
       .toEqual(["IMOEN × 6,108", "IMOEN15 × 812"]);
     expect(screen.getAllByRole("link", { name: /^IMOEN(?:2J|B) ×/ }).map((link) => link.textContent))
@@ -419,31 +359,34 @@ describe("application jobs", () => {
     await waitFor(() => expect(window.location.pathname).toBe("/characters/imoen-cre-3768424f"));
     expect(await screen.findByRole("heading", { name: "Imoen", level: 1 })).toBeTruthy();
     expect(api.getCharacter).toHaveBeenCalledWith(character.name, expect.any(AbortSignal));
-  });
-
-  it("browses exact CRE variants and preserves the collection query", async () => {
-    window.history.replaceState(null, "", "/characters?page_size=50");
-    const user = userEvent.setup();
-    render(<App />);
-
-    const link = await screen.findByRole("link", { name: "Imoen, IMOEN.CRE" });
-    expect(link.getAttribute("href")).toBe("/characters/imoen-cre-3768424f?page_size=50");
-    expect(screen.queryByRole("spinbutton", { name: "Gender ID" })).toBeNull();
-    expect(api.listCharacters).toHaveBeenCalledWith(
-      expect.objectContaining({ orderBy: "npc_line_count desc", pageSize: 50 }),
-      expect.any(AbortSignal),
-    );
-
-    await user.click(link);
-    expect(await screen.findByRole("heading", { name: "Imoen", level: 1 })).toBeTruthy();
     expect(screen.getByRole("link", { name: "Back to characters" }).getAttribute("href"))
-      .toBe("/characters?page_size=50");
+      .toBe("/characters");
     const workload = within(screen.getByLabelText("Character dialogue workload"));
     expect(workload.getAllByText("7,563")).toHaveLength(2);
     expect(workload.getByText("5 of 7")).toBeTruthy();
+
+    await user.click(screen.getByRole("link", { name: "Back to characters" }));
+    expect(await screen.findByRole("heading", { name: "Characters", level: 1 })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Imoen, IMOEN.CRE" }).getAttribute("href"))
+      .toBe("/characters/imoen-cre-3768424f");
+    expect(screen.queryByRole("spinbutton", { name: "Gender ID" })).toBeNull();
+    expect(api.listCharacters).toHaveBeenCalledWith(
+      expect.objectContaining({ orderBy: "npc_line_count desc", pageSize: 25 }),
+      expect.any(AbortSignal),
+    );
   });
 
-  it("reviews dialogue content, graph, and generated work without false coverage", async () => {
+  it("keeps resource navigation available when a detail request fails", async () => {
+    api.getVoice.mockRejectedValue(new Error("voice unavailable"));
+    window.history.replaceState(null, "", "/voices/imoen-befd8070?page_size=50");
+    render(<App />);
+
+    expect((await screen.findByRole("alert")).textContent).toContain("voice unavailable");
+    expect(screen.getByRole("link", { name: "Back to voices" }).getAttribute("href"))
+      .toBe("/voices?page_size=50");
+  });
+
+  it("reviews a dialogue and follows its generated work into each line workspace", async () => {
     window.history.replaceState(null, "", "/dialogues?page_size=50");
     const user = userEvent.setup();
     render(<App />);
@@ -484,34 +427,8 @@ describe("application jobs", () => {
     expect(transitionUrl.pathname).toBe("/dialogue-transitions");
     expect(transitionUrl.searchParams.get("filter"))
       .toBe('dialogue_resource_name = "IMOEN2J.DLG"');
-  });
 
-  it("filters dialogue lines by canonical voice identity", async () => {
-    const armoredFigure = create(VoiceSchema, {
-      name: "installations/bg2ee-eet/voices/armored-figure-befd8070",
-      voiceId: "armored figure",
-      displayName: "Armored Figure",
-      prompt: "A guarded voice resonating from inside a heavy helm.",
-    });
-    api.getVoice.mockResolvedValue(armoredFigure);
-    window.history.replaceState(
-      null,
-      "",
-      "/voices/armored-figure-befd8070?filter=search(%22armored+figure%22)",
-    );
-    render(<App />);
-
-    const href = (await screen.findByRole("link", { name: "All NPC lines" })).getAttribute("href");
-    const url = new URL(href ?? "", window.location.origin);
-    expect(url.pathname).toBe("/dialogue-lines/npc");
-    expect(url.searchParams.get("filter")).toBe('voice_id = "armored figure"');
-  });
-
-  it("reviews NPC delivery and keeps line kinds as distinct workspaces", async () => {
-    window.history.replaceState(null, "", "/dialogue-lines/npc");
-    const user = userEvent.setup();
-    render(<App />);
-
+    await user.click(screen.getAllByRole("link", { name: "Browse NPC lines" })[0]!);
     expect(await screen.findByRole("heading", { name: "NPC lines", level: 1 })).toBeTruthy();
     expect(screen.getByText(line.text ?? "")).toBeTruthy();
     const context = within(screen.getByLabelText("Dialogue tokens"));
@@ -525,12 +442,19 @@ describe("application jobs", () => {
     expect(audio.getAttribute("src")).toBe(line.directions[0]?.audioUrl);
     expect(screen.getByLabelText("Narrator audio sample attributed to Imoen")).toBeTruthy();
     expect(api.listDialogueLines).toHaveBeenCalledWith(
-      expect.objectContaining({ filter: 'line_kind = "npc"', orderBy: "dialogue asc", pageSize: 25 }),
+      expect.objectContaining({
+        filter: 'dialogue_resource_name = "IMOEN2J.DLG" AND line_kind = "npc"',
+        orderBy: "dialogue asc",
+        pageSize: 25,
+      }),
       expect.any(AbortSignal),
     );
     await user.selectOptions(screen.getByRole("combobox", { name: "Order" }), "text_length desc");
     await waitFor(() => expect(api.listDialogueLines).toHaveBeenLastCalledWith(
-      expect.objectContaining({ filter: 'line_kind = "npc"', orderBy: "text_length desc" }),
+      expect.objectContaining({
+        filter: 'dialogue_resource_name = "IMOEN2J.DLG" AND line_kind = "npc"',
+        orderBy: "text_length desc",
+      }),
       expect.any(AbortSignal),
     ));
 
@@ -538,12 +462,18 @@ describe("application jobs", () => {
     expect(await screen.findByRole("heading", { name: "Player lines", level: 1 })).toBeTruthy();
     expect(screen.queryByText("Voice ID")).toBeNull();
     expect(api.listDialogueLines).toHaveBeenLastCalledWith(
-      expect.objectContaining({ filter: 'line_kind = "player"', orderBy: "dialogue asc" }),
+      expect.objectContaining({
+        filter: 'line_kind = "player"',
+        orderBy: "dialogue asc",
+      }),
       expect.any(AbortSignal),
     );
     await user.selectOptions(screen.getByRole("combobox", { name: "Order" }), "text_length asc");
     await waitFor(() => expect(api.listDialogueLines).toHaveBeenLastCalledWith(
-      expect.objectContaining({ filter: 'line_kind = "player"', orderBy: "text_length asc" }),
+      expect.objectContaining({
+        filter: 'line_kind = "player"',
+        orderBy: "text_length asc",
+      }),
       expect.any(AbortSignal),
     ));
 
@@ -551,7 +481,10 @@ describe("application jobs", () => {
     expect(await screen.findByRole("heading", { name: "Journal entries", level: 1 })).toBeTruthy();
     await user.selectOptions(screen.getByRole("combobox", { name: "Order" }), "text_length desc");
     await waitFor(() => expect(api.listDialogueLines).toHaveBeenLastCalledWith(
-      expect.objectContaining({ filter: 'line_kind = "journal"', orderBy: "text_length desc" }),
+      expect.objectContaining({
+        filter: 'line_kind = "journal"',
+        orderBy: "text_length desc",
+      }),
       expect.any(AbortSignal),
     ));
   });
@@ -583,11 +516,11 @@ describe("application jobs", () => {
       expect.objectContaining({ orderBy: "display_name asc" }),
       expect.any(AbortSignal),
     ));
-    await user.click(screen.getByText("human", { selector: ".definition-card-title strong" }));
+    await user.click(summaryContaining("HUMAN"));
     expect(screen.getByText("Description · #9550")).toBeTruthy();
     expect(screen.getByText("Raised in Candlekeep under Gorion's care.")).toBeTruthy();
     expect(screen.getByText("RACETEXT.2DA")).toBeTruthy();
-    await user.click(screen.getByText("Beholder", { selector: ".definition-card-title strong" }));
+    await user.click(summaryContaining("BEHOLDER"));
     expect(screen.getByRole("heading", { name: "Bestiary lore", level: 3 })).toBeTruthy();
     expect(screen.getByText("Description · #54772")).toBeTruthy();
     expect(screen.getByText("A floating aberration with many magical eyes.")).toBeTruthy();
@@ -596,14 +529,14 @@ describe("application jobs", () => {
     await user.click(screen.getAllByRole("link", { name: "Classes" })[0]!);
     expect(await screen.findByRole("heading", { name: "Character classes", level: 1 }))
       .toBeTruthy();
-    await user.click(screen.getByText("Cleric", { selector: ".definition-card-title strong" }));
+    await user.click(summaryContaining("CLERIC"));
     expect(screen.getByText("CLASTEXT kit 16384")).toBeTruthy();
     expect(screen.getByText("Not fallen", { selector: ".definition-tags span" })).toBeTruthy();
     expect(screen.getByText("A divine spellcaster and armored healer.")).toBeTruthy();
 
     await user.click(screen.getAllByRole("link", { name: "Kits" })[0]!);
     expect(await screen.findByRole("heading", { name: "Kits", level: 1 })).toBeTruthy();
-    await user.click(screen.getByText("Berserker", { selector: ".definition-card-title strong" }));
+    await user.click(summaryContaining("BERSERKER"));
     expect(screen.getAllByText("FIGHTER · FIGHTER ALL").length).toBeGreaterThan(0);
     expect(screen.getByText("A warrior who channels a controlled battle rage.")).toBeTruthy();
     expect(screen.getByText("CLABFI02")).toBeTruthy();
@@ -639,7 +572,7 @@ describe("application jobs", () => {
       expect.any(AbortSignal),
     );
 
-    await user.click(screen.getByText("History of the North VIII"));
+    await user.click(summaryContaining("BOOK50.ITM"));
     const text = screen.getByLabelText("History of the North VIII text");
     expect(text.textContent).toContain("History of the North—1369\n\nThe tumultuous climate continued.");
     expect(screen.getByText("ITEMS.BIF", { exact: false })).toBeTruthy();

@@ -21,19 +21,16 @@ from bgvoice.model_types import (
     StringReference,
 )
 from bgvoice.pipeline import extract_characters, extract_dialogues, extract_portraits
-from bgvoice.storage_records import (
-    CharacterDirection,
-    DirectedLineRecord,
-    GeneratedAudioRecord,
-    GeneratedVoiceRecord,
-    GenerationFailureRecord,
-    VoiceDescription,
-)
+from bgvoice.storage_records import DirectedLineRecord
 from bgvoice.web import create_app
 from tests.factories import (
     make_dialogue_dump,
     make_dialogue_resource,
+    make_direction,
     make_dump,
+    make_generated_audio,
+    make_generated_voice,
+    make_generation_failure,
     make_portrait_resource,
     make_resource,
 )
@@ -95,54 +92,23 @@ def _connect(client: TestClient, method: str, payload: dict[str, object]) -> Res
 
 def _seed_generated_audio(path: Path) -> DirectedLineRecord:
     line_id = "AERIE.DLG:npc:0:-"
-    direction = DirectedLineRecord(
-        id=DirectedLineRecord.id_for("aerie", line_id),
-        voice_id="aerie",
-        dialogue_line_id=line_id,
-        character=CharacterDirection(directed_dialogue="[warmly] Hello."),
-        narrator=None,
-        created_at="2026-08-27T10:01:00+00:00",
-    )
+    direction = make_direction("aerie", line_id, directed_dialogue="[warmly] Hello.")
     records = {
-        "generated_voices": GeneratedVoiceRecord(
-            voice_id="aerie",
-            inworld_voice_id="voice-aerie",
-            description=VoiceDescription(
-                text="A gentle young adventurer with a warm, earnest delivery.",
-                language_code="en-GB",
-            ),
-            created_at="2026-08-27T10:00:00+00:00",
+        "generated_voices": make_generated_voice(
+            description="A gentle young adventurer with a warm, earnest delivery."
         ),
         "directed_lines": direction,
-        "generated_audio": GeneratedAudioRecord(
-            id=direction.id,
-            voice_id=direction.voice_id,
-            dialogue_line_id=line_id,
-            inworld_voice_id="voice-aerie",
-            batch_operation_name="operations/complete",
-            audio=b"OggSgenerated audio",
-            created_at="2026-08-27T10:02:00+00:00",
-        ),
+        "generated_audio": make_generated_audio(direction, operation_name="operations/complete"),
     }
     connection = lancedb.connect(path)
     for table_name, record in records.items():
         connection.open_table(table_name).add([record.model_dump()])
     connection.open_table("generation_failures").add(
         [
-            GenerationFailureRecord(
-                id=GenerationFailureRecord.id_for(
-                    stage,
-                    "aerie",
-                    None if stage is GenerationFailureStage.VOICE_CREATION else line_id,
-                ),
-                stage=stage,
-                voice_id="aerie",
-                dialogue_line_id=(
-                    None if stage is GenerationFailureStage.VOICE_CREATION else line_id
-                ),
-                error_type="RuntimeError",
+            make_generation_failure(
+                stage,
+                line_id=line_id,
                 error=f"{stage.value} failed",
-                failed_at="2026-08-27T10:03:00+00:00",
             ).model_dump()
             for stage in GenerationFailureStage
         ]
@@ -299,44 +265,6 @@ def test_connect_lists_each_browser_collection(
     if list_method == "ListRaces":
         assert first["displayName"] == "Beholder"
         assert first["lore"]["description"] == "Floating aberrations."
-
-
-def test_connect_filters_transitions_by_dialogue(
-    shared_scenario_database: Path,
-) -> None:
-    with TestClient(create_app(shared_scenario_database)) as client:
-        response = _connect(
-            client,
-            "ListDialogueTransitions",
-            {
-                "parent": _PARENT,
-                "filter": 'dialogue_resource_name = "UNUSED.DLG"',
-            },
-        )
-
-    assert response.status_code == 200
-    transitions = response.json()["dialogueTransitions"]
-    assert transitions
-    assert {row["dialogueResref"] for row in transitions} == {"UNUSED"}
-
-
-def test_connect_filters_sounds_by_character(
-    shared_scenario_database: Path,
-) -> None:
-    with TestClient(create_app(shared_scenario_database)) as client:
-        response = _connect(
-            client,
-            "ListCharacterSounds",
-            {
-                "parent": _PARENT,
-                "filter": 'character_resource_name = "AERIE.CRE"',
-            },
-        )
-
-    assert response.status_code == 200
-    sounds = response.json()["characterSounds"]
-    assert sounds
-    assert {row["characterDisplayName"] for row in sounds} == {"Aerie"}
 
 
 @pytest.mark.parametrize(

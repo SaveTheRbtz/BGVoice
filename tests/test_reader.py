@@ -37,16 +37,17 @@ from bgvoice.reader_models import (
 )
 from bgvoice.storage_records import (
     CharacterAttributionRecord,
-    CharacterDirection,
-    DirectedLineRecord,
-    GeneratedAudioRecord,
-    GeneratedVoiceRecord,
-    GenerationFailureRecord,
-    TtsBatchRecord,
-    VoiceDescription,
     VoiceResourceRecord,
 )
-from tests.factories import make_dump, make_resource
+from tests.factories import (
+    make_direction,
+    make_dump,
+    make_generated_audio,
+    make_generated_voice,
+    make_generation_failure,
+    make_resource,
+    make_tts_batch,
+)
 
 
 @pytest.mark.anyio
@@ -92,14 +93,10 @@ async def test_stats_report_the_published_pipeline_generation(
 
 def test_generation_counts_distinguish_assignments_from_inworld_voices() -> None:
     records = {
-        voice_id: GeneratedVoiceRecord(
-            voice_id=voice_id,
+        voice_id: make_generated_voice(
+            voice_id,
             inworld_voice_id=("shared-provider-voice" if voice_id != "default:male" else "default"),
-            description=VoiceDescription(
-                text="A clear reusable voice description for this focused test.",
-                language_code="en-GB",
-            ),
-            created_at="2026-08-29T00:00:00+00:00",
+            description="A clear reusable voice description for this focused test.",
         )
         for voice_id in ("aerie", "minsc", "default:male")
     }
@@ -346,86 +343,41 @@ async def test_generation_progress_enriches_and_filters_source_resources(
     scenario_database: Path,
 ) -> None:
     line_id = "AERIE.DLG:npc:0:-"
-    direction = DirectedLineRecord(
-        id=DirectedLineRecord.id_for("aerie", line_id),
-        voice_id="aerie",
-        dialogue_line_id=line_id,
-        character=CharacterDirection(directed_dialogue="[warmly] Hello."),
-        narrator=None,
-        created_at="2026-08-27T10:01:00+00:00",
-    )
+    direction = make_direction("aerie", line_id, directed_dialogue="[warmly] Hello.")
     store = await GenerationStore.open(scenario_database)
     try:
         await store.upsert_generated_voices(
             [
-                GeneratedVoiceRecord(
-                    voice_id="aerie",
-                    inworld_voice_id="voice-aerie",
-                    description=VoiceDescription(
-                        text="A gentle young adventurer with a warm, earnest delivery.",
-                        language_code="en-GB",
-                    ),
-                    created_at="2026-08-27T10:00:00+00:00",
+                make_generated_voice(
+                    "aerie",
+                    description="A gentle young adventurer with a warm, earnest delivery.",
                 ),
-                GeneratedVoiceRecord(
-                    voice_id="narrator",
+                make_generated_voice(
+                    "narrator",
                     inworld_voice_id="voice-narrator",
-                    description=VoiceDescription(
-                        text="A restrained storyteller with a clear and neutral delivery.",
-                        language_code="en-GB",
-                    ),
-                    created_at="2026-08-27T10:00:00+00:00",
+                    description="A restrained storyteller with a clear and neutral delivery.",
                 ),
             ]
         )
         await store.upsert_directed_lines([direction])
-        await store.upsert_generated_audio(
-            [
-                GeneratedAudioRecord(
-                    id=direction.id,
-                    voice_id=direction.voice_id,
-                    dialogue_line_id=line_id,
-                    inworld_voice_id="voice-aerie",
-                    batch_operation_name="operations/complete",
-                    audio=b"OggSgenerated audio",
-                    created_at="2026-08-27T10:02:00+00:00",
-                )
-            ]
-        )
+        await store.upsert_generated_audio([make_generated_audio(direction)])
         await store.upsert_batches(
             [
-                TtsBatchRecord(
-                    operation_name="operations/running",
-                    custom_ids=["d-running"],
-                    status=RunStatus.RUNNING,
-                    started_at="2026-08-27T10:02:00+00:00",
-                ),
-                TtsBatchRecord(
+                make_tts_batch(["d-running"], operation_name="operations/running"),
+                make_tts_batch(
+                    ["d-failed"],
                     operation_name="operations/failed",
-                    custom_ids=["d-failed"],
                     status=RunStatus.FAILED,
-                    started_at="2026-08-27T10:02:00+00:00",
-                    completed_at="2026-08-27T10:03:00+00:00",
                     error="provider rejected the batch",
                 ),
             ]
         )
         await store.upsert_failures(
             [
-                GenerationFailureRecord(
-                    id=GenerationFailureRecord.id_for(
-                        stage,
-                        "aerie",
-                        None if stage is GenerationFailureStage.VOICE_CREATION else line_id,
-                    ),
-                    stage=stage,
-                    voice_id="aerie",
-                    dialogue_line_id=(
-                        None if stage is GenerationFailureStage.VOICE_CREATION else line_id
-                    ),
-                    error_type="RuntimeError",
+                make_generation_failure(
+                    stage,
+                    line_id=line_id,
                     error=f"{stage.value} failed",
-                    failed_at="2026-08-27T10:04:00+00:00",
                 )
                 for stage in GenerationFailureStage
             ]

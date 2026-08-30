@@ -10,17 +10,14 @@ from lancedb.pydantic import LanceModel
 from bgvoice.character_models import CharacterExtraction
 from bgvoice.database import PipelineDatabase
 from bgvoice.dialogue_models import DialogueExtraction
-from bgvoice.metadata_models import IdentifierDefinition
 from bgvoice.model_types import (
     DetailStatus,
-    IdentifierKind,
     PortraitImage,
     ResourceSource,
     RunKind,
     RunStatus,
     SourceKind,
 )
-from bgvoice.readable_models import ReadableItem
 from bgvoice.storage_records import (
     CharacterRecord,
     CharacterSoundRecord,
@@ -33,8 +30,6 @@ from tests.factories import (
     make_dialogue_dump,
     make_dialogue_resource,
     make_dump,
-    make_item_dump,
-    make_item_resource,
     make_resource,
 )
 from tests.scenarios import empty_metadata, finish_run, make_metadata, rows
@@ -79,6 +74,10 @@ def test_metadata_replacement_is_a_complete_generation(tmp_path: Path) -> None:
     path = tmp_path / "metadata.lancedb"
     database = PipelineDatabase(path)
     metadata = make_metadata()
+    aliased = metadata.identifiers[0].model_copy(
+        update={"symbols": [*metadata.identifiers[0].symbols, "HUMAN_ALIAS"]}
+    )
+    metadata = metadata.model_copy(update={"identifiers": [aliased, *metadata.identifiers[1:]]})
     run_id = database.start_run(tmp_path, "iecli test", run_kind=RunKind.METADATA)
 
     database.replace_metadata(run_id, metadata)
@@ -89,6 +88,16 @@ def test_metadata_replacement_is_a_complete_generation(tmp_path: Path) -> None:
     assert {row.name for row in database.race_text_rows()} == {"Elf", "Gnome", "Vampire"}
     assert {row.mixed_name for row in database.class_text_rows()} == {"Mage", "Cleric / Mage"}
     assert [row.row_name for row in database.kits()] == ["BERSERKER"]
+    assert next(
+        row.symbols for row in database.identifier_definitions() if "HUMAN_ALIAS" in row.symbols
+    ) == ["HUMAN", "HUMAN_ALIAS"]
+
+    duplicate = aliased.model_copy(update={"ordinal": 999})
+    invalid = metadata.model_copy(update={"identifiers": [*metadata.identifiers, duplicate]})
+    invalid_run = database.start_run(tmp_path, "iecli test", run_kind=RunKind.METADATA)
+    with pytest.raises(AssertionError, match="duplicate keys"):
+        database.replace_metadata(invalid_run, invalid)
+    assert len(database.identifier_definitions()) == len(metadata.identifiers)
 
     empty_run = database.start_run(tmp_path, "iecli test", run_kind=RunKind.METADATA)
     database.replace_metadata(empty_run, empty_metadata())
@@ -98,19 +107,6 @@ def test_metadata_replacement_is_a_complete_generation(tmp_path: Path) -> None:
     assert database.race_text_rows() == []
     assert database.class_text_rows() == []
     assert database.kits() == []
-
-
-def test_metadata_duplicate_keys_fail_before_publication(tmp_path: Path) -> None:
-    database = PipelineDatabase(tmp_path / "metadata.lancedb")
-    metadata = make_metadata()
-    duplicate = metadata.identifiers[0].model_copy(update={"ordinal": 999})
-    invalid = metadata.model_copy(update={"identifiers": [*metadata.identifiers, duplicate]})
-    run_id = database.start_run(tmp_path, "iecli test", run_kind=RunKind.METADATA)
-
-    with pytest.raises(AssertionError, match="duplicate keys"):
-        database.replace_metadata(run_id, invalid)
-
-    assert database.identifier_definitions() == []
 
 
 def test_unchanged_inventory_resumes_but_changed_sources_reset_aggregate(
@@ -369,39 +365,6 @@ def test_portraits_follow_character_references_and_replace_as_one_set(tmp_path: 
     ]
 
 
-def test_readable_items_replace_the_complete_published_set(tmp_path: Path) -> None:
-    database = PipelineDatabase(tmp_path / "readables.lancedb")
-    book = ReadableItem.from_dump(make_item_resource(), make_item_dump())
-    scroll = ReadableItem.from_dump(
-        make_item_resource("SCROLL.ITM"),
-        make_item_dump("SCROLL.ITM", category=11, ground_icon="GSCRL01"),
-    )
-    assert book is not None and scroll is not None
-
-    first_run = database.start_run(
-        tmp_path,
-        "iecli test",
-        run_kind=RunKind.READABLE_ITEMS,
-    )
-    database.replace_readable_items(first_run, [book, scroll])
-    finish_run(database, first_run, attempted=2)
-    assert [item.resource_name for item in database.readable_items()] == [
-        "BOOK.ITM",
-        "SCROLL.ITM",
-    ]
-
-    second_run = database.start_run(
-        tmp_path,
-        "iecli test",
-        run_kind=RunKind.READABLE_ITEMS,
-    )
-    database.replace_readable_items(second_run, [scroll])
-    assert [
-        (item.resource_name, item.display_title, item.text_length)
-        for item in database.readable_items()
-    ] == [("SCROLL.ITM", "A Fine Book", len("Identified text"))]
-
-
 def test_run_lifecycle_records_progress_and_stats(tmp_path: Path) -> None:
     path = tmp_path / "runs.lancedb"
     database = PipelineDatabase(path)
@@ -439,23 +402,3 @@ def test_run_lifecycle_records_progress_and_stats(tmp_path: Path) -> None:
         run.failures,
         run.error,
     ) == (run_id, RunStatus.COMPLETE_WITH_ERRORS, 3, 2, 1, 1, "partial")
-
-
-def test_identifier_metadata_accepts_aliases_with_one_stable_key(tmp_path: Path) -> None:
-    database = PipelineDatabase(tmp_path / "aliases.lancedb")
-    metadata = empty_metadata().model_copy(
-        update={
-            "identifiers": [
-                IdentifierDefinition(
-                    kind=IdentifierKind.CLASS,
-                    value=1,
-                    source_resource="CLASS.IDS",
-                    ordinal=0,
-                    symbols=["MAGE", "MAGE_ALL"],
-                )
-            ]
-        }
-    )
-    run_id = database.start_run(tmp_path, "iecli test", run_kind=RunKind.METADATA)
-    database.replace_metadata(run_id, metadata)
-    assert database.identifier_definitions()[0].symbols == ["MAGE", "MAGE_ALL"]

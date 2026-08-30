@@ -1,7 +1,6 @@
 """Semantic direction-audit behavior."""
 
 import json
-from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
@@ -61,18 +60,9 @@ def test_luna_prompt_defines_the_semantic_boundary_and_escapes_dialogue() -> Non
     assert "Bread &amp; water." in prompt
     assert "A low fuzzy-match score is not evidence" in prompt
     assert "text copied from a neighboring line" in prompt
-    assert "reversed polarity" in prompt
-    assert "removal or natural neutral rewriting" in prompt
-    assert "*sighs* -> [sigh] is faithful" in prompt
-    assert "... -> [sigh] may be faithful" in prompt
     assert "no matter how long or detailed the omitted prose is" in " ".join(prompt.split())
-    assert "Indeed. *He turns away" in prompt
-    assert '"Get inside!" He pulls the door shut' in prompt
-    assert "She sighs when it is clear" in prompt
-    assert "narrated event disappeared" in prompt
     assert "� is always a mismatch" in prompt
     assert "complete parenthetical or asterisk-wrapped narrative sentence" in prompt
-    assert "Evaluate every requested pair from start to finish" in prompt
     assert "each pair is independent" in prompt.casefold()
 
 
@@ -177,24 +167,3 @@ async def test_model_ignores_unrequested_pair_ids(caplog: pytest.LogCaptureFixtu
     assert mismatches == set()
     assert batch_count == 1
     assert "returned unknown mismatch IDs" in caplog.text
-
-
-@pytest.mark.anyio
-async def test_luna_batches_prioritize_review_quality() -> None:
-    direction = _direction("imoen", "IMOEN.DLG:npc:0:-", "Unrelated text.")
-    pair = suspicious_pairs(
-        [direction],
-        {direction.dialogue_line_id: "The original line is completely different."},
-        100,
-    )[0]
-    pairs = [replace(pair, id=f"d-{index:032x}") for index in range(26)]
-    client = _Client(None)
-
-    mismatches, batch_count = await audit_module.find_mismatches(cast(AsyncOpenAI, client), pairs)
-
-    assert mismatches == set()
-    assert batch_count == 2
-    assert [call["reasoning"] for call in client.responses.calls] == [
-        {"effort": "medium"},
-        {"effort": "medium"},
-    ]

@@ -98,6 +98,27 @@ describe("resource browser workflow", () => {
     await user.click(screen.getByRole("button", { name: "Clear 2" }));
     await waitFor(() => expect(query())
       .toMatchObject({ filter: "", orderBy: "name desc", pageSize: 50 }));
+
+    const parameters = new URLSearchParams({
+      filter: 'search("Minsc") AND source_kind = "bif"',
+      order_by: "name asc",
+      page_size: "50",
+      page_token: "history-token",
+    });
+    window.history.pushState(null, "", `/characters?${parameters}`);
+    fireEvent.popState(window);
+
+    await waitFor(() => expect(query()).toMatchObject({
+      filter: 'search("Minsc") AND source_kind = "bif"',
+      orderBy: "name asc",
+      pageSize: 50,
+      pageToken: "history-token",
+    }));
+    expect(screen.getByRole("searchbox")).toBe(screen.getByDisplayValue("Minsc"));
+    expect(screen.getByRole("combobox", { name: "Source" }))
+      .toBe(screen.getByDisplayValue("bif"));
+    expect(screen.getByRole("combobox", { name: "Rows" }))
+      .toBe(screen.getByDisplayValue("50"));
   });
 
   it("reports a failed page load without discarding the browser shell", async () => {
@@ -110,34 +131,5 @@ describe("resource browser workflow", () => {
 
     expect((await screen.findByRole("alert")).textContent).toContain("database unavailable");
     expect(screen.getByRole("heading", { name: "Characters" })).toBeTruthy();
-  });
-
-  it("restores list controls and the next request from browser history", async () => {
-    const loadPage = vi.fn<LoadPage>(() => Promise.resolve({
-      items: [], nextPageToken: "", totalSize: 0n,
-    }));
-    renderBrowser(loadPage);
-    await waitFor(() => expect(loadPage).toHaveBeenCalledOnce());
-
-    const parameters = new URLSearchParams({
-      filter: 'search("Minsc") AND source_kind = "bif"',
-      order_by: "name asc",
-      page_size: "50",
-      page_token: "history-token",
-    });
-    window.history.pushState(null, "", `/characters?${parameters}`);
-    fireEvent.popState(window);
-
-    await waitFor(() => expect(loadPage.mock.lastCall?.[0]).toMatchObject({
-      filter: 'search("Minsc") AND source_kind = "bif"',
-      orderBy: "name asc",
-      pageSize: 50,
-      pageToken: "history-token",
-    }));
-    expect(screen.getByRole("searchbox")).toBe(screen.getByDisplayValue("Minsc"));
-    expect(screen.getByRole("combobox", { name: "Source" }))
-      .toBe(screen.getByDisplayValue("bif"));
-    expect(screen.getByRole("combobox", { name: "Rows" }))
-      .toBe(screen.getByDisplayValue("50"));
   });
 });

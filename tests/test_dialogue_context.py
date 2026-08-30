@@ -1,14 +1,8 @@
-"""Typed bulk loading and deterministic dialogue-history traversal."""
-
-from pathlib import Path
-from typing import cast
-
-import pytest
+"""Deterministic dialogue-history traversal."""
 
 import bgvoice.dialogue_context as context_module
 from bgvoice.dialogue_context import DialogueHistoryIndex, dialogue_history
 from bgvoice.model_types import DialogueLineKind
-from bgvoice.reader import PipelineReader
 from bgvoice.storage_records import DialogueLineRecord
 
 
@@ -27,91 +21,69 @@ def _line(dialogue: str, state: int) -> DialogueLineRecord:
     )
 
 
+def _context_line(
+    dialogue: str,
+    state: int,
+    text: str,
+    *,
+    kind: DialogueLineKind = DialogueLineKind.NPC,
+    transition: int | None = None,
+) -> context_module._ContextLineRecord:
+    suffix = "-" if transition is None else str(transition)
+    return context_module._ContextLineRecord(
+        id=f"{dialogue}:{kind.value}:{state}:{suffix}",
+        run_id="run",
+        dialogue_resource_name=dialogue,
+        line_kind=kind,
+        state_index=state,
+        transition_index=transition,
+        text=text,
+    )
+
+
+def _edge(
+    dialogue: str,
+    state: int,
+    transition: int,
+    next_dialogue: str | None,
+    next_state: int,
+) -> context_module._ContextTransitionRecord:
+    return context_module._ContextTransitionRecord(
+        id=f"{dialogue}:{state}:{transition}",
+        run_id="run",
+        dialogue_resource_name=dialogue,
+        state_index=state,
+        transition_index=transition,
+        next_dialog=next_dialogue,
+        next_state_index=next_state,
+    )
+
+
 def test_dialogue_history_index_preserves_two_hop_edge_selection_and_fallback() -> None:
     line_rows = [
-        context_module._ContextLineRecord(
-            id="A.DLG:npc:1:-",
-            run_id="run",
-            dialogue_resource_name="A.DLG",
-            line_kind=DialogueLineKind.NPC,
-            state_index=1,
-            transition_index=None,
-            text="  Earlier   NPC  ",
+        _context_line("A.DLG", 1, "  Earlier   NPC  "),
+        _context_line(
+            "A.DLG",
+            1,
+            " First   choice ",
+            kind=DialogueLineKind.PLAYER,
+            transition=7,
         ),
-        context_module._ContextLineRecord(
-            id="A.DLG:player:1:7",
-            run_id="run",
-            dialogue_resource_name="A.DLG",
-            line_kind=DialogueLineKind.PLAYER,
-            state_index=1,
-            transition_index=7,
-            text=" First   choice ",
+        _context_line("B.DLG", 0, "Immediate NPC"),
+        _context_line(
+            "B.DLG",
+            0,
+            "Second choice",
+            kind=DialogueLineKind.PLAYER,
+            transition=3,
         ),
-        context_module._ContextLineRecord(
-            id="B.DLG:npc:0:-",
-            run_id="run",
-            dialogue_resource_name="B.DLG",
-            line_kind=DialogueLineKind.NPC,
-            state_index=0,
-            transition_index=None,
-            text="Immediate NPC",
-        ),
-        context_module._ContextLineRecord(
-            id="B.DLG:player:0:3",
-            run_id="run",
-            dialogue_resource_name="B.DLG",
-            line_kind=DialogueLineKind.PLAYER,
-            state_index=0,
-            transition_index=3,
-            text="Second choice",
-        ),
-        context_module._ContextLineRecord(
-            id="B.DLG:npc:4:-",
-            run_id="run",
-            dialogue_resource_name="B.DLG",
-            line_kind=DialogueLineKind.NPC,
-            state_index=4,
-            transition_index=None,
-            text="Lower-priority internal edge",
-        ),
-        context_module._ContextLineRecord(
-            id="F.DLG:npc:1:-",
-            run_id="run",
-            dialogue_resource_name="F.DLG",
-            line_kind=DialogueLineKind.NPC,
-            state_index=1,
-            transition_index=None,
-            text="Fallback context",
-        ),
+        _context_line("B.DLG", 4, "Lower-priority internal edge"),
+        _context_line("F.DLG", 1, "Fallback context"),
     ]
     edge_rows = [
-        context_module._ContextTransitionRecord(
-            id="B.DLG:4:1",
-            run_id="run",
-            dialogue_resource_name="B.DLG",
-            state_index=4,
-            transition_index=1,
-            next_dialog=None,
-            next_state_index=2,
-        ),
-        context_module._ContextTransitionRecord(
-            id="B.DLG:0:3",
-            run_id="run",
-            dialogue_resource_name="B.DLG",
-            state_index=0,
-            transition_index=3,
-            next_dialog="b",
-            next_state_index=2,
-        ),
-        context_module._ContextTransitionRecord(
-            id="A.DLG:1:7",
-            run_id="run",
-            dialogue_resource_name="A.DLG",
-            state_index=1,
-            transition_index=7,
-            next_dialog="B",
-            next_state_index=0,
-        ),
+        _edge("B.DLG", 4, 1, None, 2),
+        _edge("B.DLG", 0, 3, "b", 2),
+        _edge("A.DLG", 1, 7, "B", 0),
     ]
     index = DialogueHistoryIndex._from_rows(line_rows, edge_rows)
 
@@ -129,30 +101,3 @@ def test_dialogue_history_index_preserves_two_hop_edge_selection_and_fallback() 
         "Previous NPC/scene line: Fallback context\n"
         "Player response: none (automatic scene transition)"
     )
-
-
-@pytest.mark.anyio
-async def test_dialogue_history_index_bulk_loads_typed_scenario_rows(
-    shared_scenario_database: Path,
-) -> None:
-    reader = await PipelineReader.open(shared_scenario_database)
-    try:
-        rows = cast(
-            list[DialogueLineRecord],
-            await reader.lines_table.query().to_pydantic(DialogueLineRecord),
-        )
-        index = await DialogueHistoryIndex.load(reader)
-    finally:
-        reader.close()
-
-    target = next(
-        row
-        for row in rows
-        if row.dialogue_resource_name == "AERIE.DLG"
-        and row.line_kind is DialogueLineKind.NPC
-        and row.state_index == 1
-    )
-    history = dialogue_history(index, target)
-    assert history is not None
-    assert "Previous NPC/scene line: Hello." in history
-    assert "Player response: Hi." in history

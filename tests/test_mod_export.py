@@ -36,6 +36,7 @@ def test_sound_resrefs_fill_the_five_digit_base36_namespace(
 
 
 @pytest.mark.anyio
+@pytest.mark.integration
 async def test_export_builds_an_installable_weidu_mod_from_generated_audio(
     scenario_database: Path,
     tmp_path: Path,

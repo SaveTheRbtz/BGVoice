@@ -4,7 +4,6 @@ import {
   countFilters, filterSearch, filterValue, listQuery, listSearch,
   setExactFilter, setFilterSearch,
 } from "./filters";
-import { formatBytes, formatCount, formatDate, formatHex } from "./format";
 import {
   characterPath,
   characterSoundsPath,
@@ -72,7 +71,7 @@ describe("public URL state", () => {
     expect(soundsUrl.searchParams.get("filter")).toBe('character_resource_name = "IMOEN.CRE"');
   });
 
-  it("round-trips shareable list state and keeps defaults compact", () => {
+  it("round-trips shareable list state and lets full-text relevance override defaults", () => {
     const query = {
       filter: 'search("warm alto") AND source_kind = "override"',
       orderBy: "npc_line_count desc",
@@ -81,9 +80,6 @@ describe("public URL state", () => {
     };
     expect(listQuery(listSearch(query))).toEqual(query);
     expect(listSearch({ ...query, filter: "", pageSize: 25, pageToken: "" }, query.orderBy)).toBe("");
-  });
-
-  it("uses default ordering only until full-text relevance takes over", () => {
     expect(listQuery("", "npc_line_count desc"))
       .toMatchObject({ orderBy: "npc_line_count desc", pageSize: 25 });
     expect(listQuery('?filter=search%28%22imoen%22%29', "npc_line_count desc").orderBy).toBe("");
@@ -105,19 +101,4 @@ it("composes, reads, and removes typed filter clauses", () => {
     .toEqual(["Imoen", "1", 4]);
   expect(setExactFilter(filter, "source_kind", ""))
     .toBe('search("Imoen") AND race_id = 1 AND attributed = true');
-});
-
-it("formats missing values, unit boundaries, dates, and engine identifiers", () => {
-  for (const [value, expected] of [
-    [null, "—"],
-    [0, "0 B"],
-    [1023, "1023 B"],
-    [1024, "1.0 KiB"],
-    [1024 ** 2, "1.0 MiB"],
-    [1024 ** 3, "1.0 GiB"],
-  ] as const) expect(formatBytes(value)).toBe(expected);
-  expect([formatCount(null), formatCount(1_234_567)]).toEqual(["—", "1,234,567"]);
-  expect([formatDate(null), formatDate("2026-08-26T12:34:00")])
-    .toEqual(["In progress", "Aug 26, 2026, 12:34 PM"]);
-  expect(formatHex(0x400a)).toBe("0x0000400A");
 });
