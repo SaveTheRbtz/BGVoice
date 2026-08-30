@@ -129,6 +129,15 @@ def test_voice_prompt_and_content_keep_tuned_local_evidence() -> None:
     evidence = root.find("local_evidence")
 
     assert root.tag == "voice_design_request"
+    assert [child.tag for child in root] == [
+        "task",
+        "voice_description_best_practices",
+        "structured_voice_example",
+        "research_requirements",
+        "evidence_usage",
+        "local_evidence",
+        "response_requirement",
+    ]
     assert evidence is not None
     assert evidence.findtext("display_name") == "Imoen"
     assert evidence.findtext("race_description") == source.race_description
@@ -145,6 +154,10 @@ def test_voice_prompt_and_content_keep_tuned_local_evidence() -> None:
     assert evidence.findtext("portrait") == "attached as an input image"
     assert root.find("voice_description_best_practices") is not None
     assert root.find("structured_voice_example") is not None
+    assert " ".join((root.findtext("response_requirement") or "").split()) == (
+        "Respond only with the supplied Structured Output for the TTS voice of the "
+        "Baldur's Gate character Imoen."
+    )
     assert len(content) == 2
     assert content[0] == {"type": "input_text", "text": prompt}
     assert content[1]["type"] == "input_image"
@@ -207,7 +220,11 @@ async def test_voice_design_requires_and_verifies_web_search_with_retry() -> Non
     assert "previous result failed local compatibility validation" in cast(
         str, second_content[0]["text"]
     )
-    ElementTree.fromstring(cast(str, second_content[0]["text"]))
+    retry_root = ElementTree.fromstring(cast(str, second_content[0]["text"]))
+    assert [child.tag for child in retry_root][-2:] == [
+        "retry_correction",
+        "response_requirement",
+    ]
 
 
 def _direction_source() -> DirectionSource:
