@@ -6,6 +6,7 @@ from collections import Counter
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from enum import StrEnum
+from hashlib import sha256
 from pathlib import Path
 from typing import cast
 
@@ -70,6 +71,7 @@ VOICE_CONCURRENCY = 75
 OPENAI_CONCURRENCY = 100
 NARRATOR_VOICE_ID = "narrator"
 DEFAULT_NAMED_RACE_COUNT = 9
+VOICE_DESIGN_SAMPLE_COUNT = 30
 
 _NARRATOR_DISPLAY_NAME = "Narrator"
 _NARRATOR_DESCRIPTION = (
@@ -144,6 +146,8 @@ class VoiceEvidence:
     gender: DefaultVoiceGender
     race_id: int
     race: str
+    race_description: str | None
+    class_description: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -153,6 +157,9 @@ class VoiceWorkload:
     ability_scores: CharacterAbilityScores
     portrait_png: bytes | None
     default_voice: DefaultVoice
+    race_description: str | None
+    class_description: str | None
+    dialogue_samples: tuple[str, ...]
 
 
 async def _record_failures(
@@ -257,6 +264,24 @@ def round_robin_lines(
             if limit is not None and len(selected) == limit:
                 return selected
     return selected
+
+
+def _dialogue_samples(
+    voice_id: str,
+    dialogues: Mapping[str, Sequence[DialogueLineRecord]],
+) -> tuple[str, ...]:
+    """Choose a stable pseudo-random sample of distinct exact NPC texts."""
+    texts = {
+        line.text
+        for lines in dialogues.values()
+        for line in lines
+        if line.text is not None and line.text.strip()
+    }
+    ranked = sorted(
+        texts,
+        key=lambda text: (sha256(f"{voice_id}\0{text}".encode()).digest(), text),
+    )
+    return tuple(ranked[:VOICE_DESIGN_SAMPLE_COUNT])
 
 
 async def load_workloads(
@@ -372,6 +397,9 @@ async def load_workloads(
                     race_id=evidence.race_id,
                     race=evidence.race,
                 ),
+                race_description=evidence.race_description,
+                class_description=evidence.class_description,
+                dialogue_samples=_dialogue_samples(voice.voice_id, groups),
             )
         )
     return workloads
@@ -501,6 +529,8 @@ def _voice_evidence(
         gender=default_voice_gender(default_detail.gender_id),
         race_id=default_detail.race_id,
         race=labels.race_label(default_detail.race_id),
+        race_description=labels.race_description(default_detail.race_id),
+        class_description=labels.class_description(default_detail.class_id),
     )
 
 
@@ -850,6 +880,9 @@ async def _ensure_character_voice(
                 biography=biography,
                 ability_scores=workload.ability_scores,
                 portrait_png=workload.portrait_png,
+                race_description=workload.race_description,
+                class_description=workload.class_description,
+                dialogue_samples=workload.dialogue_samples,
             ),
             model=VOICE_DESIGN_MODEL,
         )
@@ -892,7 +925,10 @@ async def _ensure_default_voice(
                     "Reusable fallback for characters with very little dialogue.\n"
                     f"Gender: {default_voice.gender}\nRace: {default_voice.race}"
                 ),
+                race_description=None,
+                class_description=None,
                 biography=None,
+                dialogue_samples=(),
                 ability_scores=None,
                 portrait_png=None,
             ),

@@ -22,6 +22,7 @@ from bgvoice.model_types import (
 )
 from bgvoice.reader import PipelineReader
 from bgvoice.reader_generation import GenerationSnapshot
+from bgvoice.reader_metadata import LabelResolver
 from bgvoice.reader_models import (
     CharacterQuery,
     ClassQuery,
@@ -196,6 +197,7 @@ async def test_metadata_queries_merge_canonical_ids_with_campaign_text(
         identifiers = await reader.identifiers(
             IdentifierQuery(kind=IdentifierKind.GENDER, q="Female", page_size=100)
         )
+        labels = LabelResolver.from_snapshot(await reader.metadata_snapshot())
     finally:
         reader.close()
 
@@ -226,6 +228,9 @@ async def test_metadata_queries_merge_canonical_ids_with_campaign_text(
         ["BERSERKER"],
     )
     assert (identifiers.total, identifiers.items[0].symbols) == (1, ["FEMALE"])
+    assert labels.race_description(2) == "The Tel'Quessir."
+    assert labels.race_description(123) == "Floating aberrations."
+    assert labels.class_description(14) == "A multiclass spellcaster."
 
 
 @pytest.mark.anyio

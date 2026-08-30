@@ -105,25 +105,41 @@ def test_round_robin_orders_dialogues_and_deduplicates_exact_text(
     assert [line.id for line in selected] == expected[:limit]
 
 
+@pytest.mark.parametrize("line_count", [0, 5, 40])
+def test_voice_design_dialogue_samples_are_stable_and_bounded(line_count: int) -> None:
+    lines = [_line("A.DLG", state, f"Distinct line {state}") for state in range(line_count)]
+    forward = generation_module._dialogue_samples("aerie", {"A.DLG": lines})
+    reversed_input = generation_module._dialogue_samples("aerie", {"A.DLG": lines[::-1]})
+
+    assert forward == reversed_input
+    assert len(forward) == min(line_count, generation_module.VOICE_DESIGN_SAMPLE_COUNT)
+    assert len(forward) == len(set(forward))
+    assert set(forward) <= {f"Distinct line {state}" for state in range(line_count)}
+
+
 @pytest.mark.anyio
 async def test_current_voice_workload_uses_attributed_nonempty_npc_lines(
     shared_scenario_database: Path,
 ) -> None:
     reader = await PipelineReader.open(shared_scenario_database)
     try:
-        workload = (await load_workloads(reader, ["Aerie"], 3))[0]
+        workload = (await load_workloads(reader, ["Aerie"], 1))[0]
         complete_workload = (await load_workloads(reader, ["Aerie"], None))[0]
         deduplicated = await load_workloads(reader, ["Aerie", "aerie"], None)
     finally:
         reader.close()
 
-    assert complete_workload.lines == workload.lines
+    assert workload.lines == complete_workload.lines[:1]
+    assert workload.dialogue_samples == complete_workload.dialogue_samples
     assert deduplicated == [complete_workload]
     assert workload.voice.voice_id == "aerie"
-    assert len(workload.lines) == 2
+    assert len(workload.lines) == 1
     assert all(line.line_kind is DialogueLineKind.NPC and line.text for line in workload.lines)
+    assert set(workload.dialogue_samples) == {"Hello.", "A quest for <DAYANDMONTH>."}
     assert workload.ability_scores.render() == ("STR 10, DEX 17, CON 9, INT 16, WIS 16, CHA 14")
     assert workload.portrait_png == b"\x89PNG\r\n\x1a\nfixture"
+    assert workload.race_description == "The Tel'Quessir."
+    assert workload.class_description == "A multiclass spellcaster."
     assert (
         workload.default_voice.gender,
         workload.default_voice.race_id,
@@ -173,6 +189,9 @@ async def test_directions_continue_skip_persisted_and_clear_failures(
             ability_scores=selected.ability_scores,
             portrait_png=selected.portrait_png,
             default_voice=selected.default_voice,
+            race_description=selected.race_description,
+            class_description=selected.class_description,
+            dialogue_samples=selected.dialogue_samples,
         )
         skipped_text = workload.lines[0].text
         history = await DialogueHistoryIndex.load(reader)
@@ -552,6 +571,9 @@ async def test_shared_default_generation_is_persisted_and_idempotent(
                 ability_scores=workload.ability_scores,
                 portrait_png=workload.portrait_png,
                 default_voice=workload.default_voice,
+                race_description=workload.race_description,
+                class_description=workload.class_description,
+                dialogue_samples=workload.dialogue_samples,
             ),
             asyncio.Semaphore(1),
             {},

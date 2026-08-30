@@ -51,6 +51,8 @@ class LabelResolver:
     symbols: Mapping[tuple[IdentifierKind, int], tuple[str, ...]]
     race_labels: Mapping[int, str]
     class_labels: Mapping[int, str]
+    race_descriptions: Mapping[int, str]
+    class_descriptions: Mapping[int, str]
     kit_names: Mapping[int, str]
     favored_enemy_labels: Mapping[int, str]
 
@@ -61,6 +63,8 @@ class LabelResolver:
             symbols=symbols,
             race_labels=_race_labels(metadata, symbols),
             class_labels=_class_labels(metadata, symbols),
+            race_descriptions=_race_descriptions(metadata),
+            class_descriptions=_class_descriptions(metadata),
             kit_names=_kit_names(metadata.kits),
             favored_enemy_labels=_favored_enemy_labels(metadata.favored_enemies),
         )
@@ -93,6 +97,12 @@ class LabelResolver:
             value,
             self.identifier_label(IdentifierKind.CLASS, value),
         )
+
+    def race_description(self, value: int) -> str | None:
+        return self.race_descriptions.get(value)
+
+    def class_description(self, value: int) -> str | None:
+        return self.class_descriptions.get(value)
 
     def favored_enemy_label(self, value: int) -> str:
         return self.favored_enemy_labels.get(value, self.race_label(value))
@@ -144,6 +154,66 @@ def _class_labels(
         _campaign_resources(metadata.bindings, CampaignResourceKind.CLASS_TEXT, "SOA"),
         lambda row: row.mixed_name or row.lower_name,
     )
+
+
+def _race_descriptions(metadata: MetadataSnapshot) -> dict[int, str]:
+    preferred = _campaign_resources(metadata.bindings, CampaignResourceKind.RACE_TEXT, "SOA")
+    race_texts = _group_by(metadata.race_texts, lambda row: row.race_id)
+    lore = _group_by(metadata.favored_enemies, lambda row: row.race_id)
+    descriptions: dict[int, str] = {}
+    for race_id in race_texts.keys() | lore.keys():
+        description = _preferred_text(
+            race_texts.get(race_id, []),
+            preferred,
+            lambda row: row.description,
+        )
+        if description is None:
+            description = next(
+                (
+                    row.help_text.strip()
+                    for row in sorted(lore.get(race_id, []), key=lambda row: (row.ordinal, row.key))
+                    if row.help_text is not None and row.help_text.strip()
+                ),
+                None,
+            )
+        if description is not None:
+            descriptions[race_id] = description
+    return descriptions
+
+
+def _class_descriptions(metadata: MetadataSnapshot) -> dict[int, str]:
+    preferred = _campaign_resources(metadata.bindings, CampaignResourceKind.CLASS_TEXT, "SOA")
+    rows = _group_by(
+        (row for row in metadata.class_texts if not row.fallen and row.class_text_kit_id == 0x4000),
+        lambda row: row.class_id,
+    )
+    descriptions: dict[int, str] = {}
+    for class_id, class_rows in rows.items():
+        description = _preferred_text(class_rows, preferred, lambda row: row.description)
+        if description is not None:
+            descriptions[class_id] = description
+    return descriptions
+
+
+def _preferred_text[Row: RaceTextRecord | ClassTextRecord](
+    rows: Sequence[Row],
+    preferred_resources: frozenset[str],
+    text: Callable[[Row], str | None],
+) -> str | None:
+    ordered = sorted(
+        rows,
+        key=lambda row: (
+            _resource_key(row.source_resource) not in preferred_resources,
+            row.source_resource.casefold(),
+            row.ordinal,
+            row.key,
+        ),
+    )
+    for row in ordered:
+        value = text(row)
+        if value is not None and value.strip():
+            return value.strip()
+    return None
 
 
 def _text_labels[Row: RaceTextRecord | ClassTextRecord](
