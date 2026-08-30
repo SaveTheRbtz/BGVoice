@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/bgvoice-title-lockup.png" alt="BGVoice" width="720">
+</p>
+
 # BGVoice
 
 Python 3.14 tooling for extracting Baldur's Gate EET characters and dialogue, attributing lines,
