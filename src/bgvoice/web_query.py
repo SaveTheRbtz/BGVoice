@@ -86,8 +86,7 @@ TRANSITION_ORDER: Final[dict[str, TransitionSort]] = {
 }
 RACE_ORDER: Final[dict[str, RaceSort]] = {
     "race_id": "race_id",
-    "display_name": "name",
-    "source_resource": "source_resource",
+    "display_name": "display_name",
 }
 CLASS_ORDER: Final[dict[str, ClassSort]] = {
     "class_id": "class_id",

@@ -14,7 +14,7 @@ from bgvoice.model_types import (
     CampaignResourceKind,
     IdentifierKind,
 )
-from bgvoice.reader_models import ClassRow, KitRow, RaceRow
+from bgvoice.reader_models import ClassRow, KitRow, RaceCampaignTextRow, RaceRow
 from bgvoice.reader_query import fts_query
 from bgvoice.storage_records import (
     CampaignDefinitionRecord,
@@ -112,13 +112,21 @@ def _race_labels(
     symbols: Mapping[tuple[IdentifierKind, int], tuple[str, ...]],
 ) -> dict[int, str]:
     rows = _group_by(metadata.race_texts, lambda row: row.race_id)
-    return _text_labels(
+    labels = _text_labels(
         rows,
         symbols,
         IdentifierKind.RACE,
         _campaign_resources(metadata.bindings, CampaignResourceKind.RACE_TEXT, "SOA"),
         lambda row: row.name,
     )
+    lore_labels = _favored_enemy_labels(metadata.favored_enemies)
+    for race_id in {row.race_id for row in metadata.favored_enemies}:
+        if not any(row.name is not None for row in rows.get(race_id, [])):
+            labels[race_id] = lore_labels.get(race_id) or _symbol_label(
+                symbols.get((IdentifierKind.RACE, race_id), ()),
+                race_id,
+            )
+    return labels
 
 
 def _class_labels(
@@ -202,53 +210,35 @@ def race_rows(metadata: MetadataSnapshot) -> list[RaceRow]:
     text_rows: dict[int, list[RaceTextRecord]] = defaultdict(list)
     for row in metadata.race_texts:
         text_rows[row.race_id].append(row)
+    lore_rows = _group_by(metadata.favored_enemies, lambda row: row.race_id)
+    labels = _race_labels(metadata, symbols)
 
     rows: list[RaceRow] = []
-    for race_id in sorted(set(race_symbols) | set(text_rows)):
-        details = sorted(
-            text_rows.get(race_id, []),
-            key=lambda row: (row.source_resource.casefold(), row.ordinal, row.key),
-        )
-        if not details:
-            rows.append(
-                RaceRow(
-                    key=f"race:{race_id}",
-                    race_id=race_id,
-                    symbols=race_symbols.get(race_id, []),
-                    source_resource=None,
-                    ordinal=None,
-                    campaigns=[],
-                    row_name=None,
-                    name_strref=None,
-                    name=None,
-                    description_strref=None,
-                    description=None,
-                    uppercase_name_strref=None,
-                    uppercase_name=None,
-                    biography_strref=None,
-                    biography=None,
-                )
+    for race_id in sorted(set(race_symbols) | set(text_rows) | set(lore_rows)):
+        campaign_texts = [
+            RaceCampaignTextRow(
+                record=row,
+                campaigns=campaigns.get(_resource_key(row.source_resource), []),
             )
-            continue
-        rows.extend(
+            for row in sorted(
+                text_rows.get(race_id, []),
+                key=lambda row: (row.source_resource.casefold(), row.ordinal, row.key),
+            )
+        ]
+        lore = min(
+            lore_rows.get(race_id, []),
+            key=lambda row: (row.ordinal, row.key),
+            default=None,
+        )
+        rows.append(
             RaceRow(
-                key=row.key,
+                key=f"race:{race_id}",
                 race_id=race_id,
                 symbols=race_symbols.get(race_id, []),
-                source_resource=row.source_resource,
-                ordinal=row.ordinal,
-                campaigns=campaigns.get(_resource_key(row.source_resource), []),
-                row_name=row.row_name,
-                name_strref=row.name_strref,
-                name=row.name,
-                description_strref=row.description_strref,
-                description=row.description,
-                uppercase_name_strref=row.uppercase_name_strref,
-                uppercase_name=row.uppercase_name,
-                biography_strref=row.biography_strref,
-                biography=row.biography,
+                display_name=labels[race_id],
+                campaign_texts=campaign_texts,
+                lore=lore,
             )
-            for row in details
         )
     return rows
 

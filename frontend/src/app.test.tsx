@@ -232,7 +232,7 @@ const race = create(RaceSchema, {
   raceId: 1,
   symbols: ["HUMAN"],
   displayName: "human",
-  texts: [{
+  campaignTexts: [{
     sourceResource: "RACETEXT.2DA",
     campaigns: ["SOA", "TOB"],
     rowName: "HUMAN",
@@ -243,6 +243,21 @@ const race = create(RaceSchema, {
     biographyStrref: 21_023,
     biography: "Raised in Candlekeep under Gorion's care.",
   }],
+});
+
+const bestiaryRace = create(RaceSchema, {
+  name: "installations/bg2ee-eet/races/r-123-c07a839b",
+  raceId: 123,
+  symbols: ["BEHOLDER"],
+  displayName: "Beholder",
+  lore: {
+    sourceResource: "HATERACE.2DA",
+    rowName: "BEHOLDER",
+    nameStrref: 54_770,
+    displayName: "Beholder",
+    descriptionStrref: 54_772,
+    description: "A floating aberration with many magical eyes.",
+  },
 });
 
 const characterClass = create(CharacterClassSchema, {
@@ -542,7 +557,11 @@ describe("application jobs", () => {
   });
 
   it("reads canonical definitions and their engine provenance", async () => {
-    api.listRaces.mockResolvedValue({ items: [race], nextPageToken: "", totalSize: 1n });
+    api.listRaces.mockResolvedValue({
+      items: [race, bestiaryRace],
+      nextPageToken: "",
+      totalSize: 2n,
+    });
     api.listCharacterClasses.mockResolvedValue({
       items: [characterClass],
       nextPageToken: "",
@@ -568,6 +587,11 @@ describe("application jobs", () => {
     expect(screen.getByText("Description · #9550")).toBeTruthy();
     expect(screen.getByText("Raised in Candlekeep under Gorion's care.")).toBeTruthy();
     expect(screen.getByText("RACETEXT.2DA")).toBeTruthy();
+    await user.click(screen.getByText("Beholder", { selector: ".definition-card-title strong" }));
+    expect(screen.getByRole("heading", { name: "Bestiary lore", level: 3 })).toBeTruthy();
+    expect(screen.getByText("Description · #54772")).toBeTruthy();
+    expect(screen.getByText("A floating aberration with many magical eyes.")).toBeTruthy();
+    expect(screen.getByText("HATERACE.2DA")).toBeTruthy();
 
     await user.click(screen.getAllByRole("link", { name: "Classes" })[0]!);
     expect(await screen.findByRole("heading", { name: "Character classes", level: 1 }))

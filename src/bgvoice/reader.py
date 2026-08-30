@@ -704,9 +704,7 @@ class PipelineReader:
             )
         conditions = [sound_generation]
         if query.character_resource_name is not None:
-            conditions.append(
-                col("character_resource_name") == lit(query.character_resource_name)
-            )
+            conditions.append(col("character_resource_name") == lit(query.character_resource_name))
         if query.slot_id is not None:
             conditions.append(col("slot_id") == lit(query.slot_id))
         total, records = await records_page(
@@ -817,13 +815,20 @@ class PipelineReader:
     async def races(self, query: RaceQuery) -> RacePage:
         metadata = await self.metadata_snapshot()
         rows = race_rows(metadata)
-        rows = _filter_value(rows, query.campaign, _campaign_matches)
+        rows = _filter_value(
+            rows,
+            query.campaign,
+            lambda row, campaign: any(
+                _campaign_matches(text, campaign) for text in row.campaign_texts
+            ),
+        )
 
         tokens = search_tokens(query.q)
         scores: dict[str, float] = {}
         if tokens:
-            text_scores, identifier_scores = await asyncio.gather(
+            text_scores, lore_scores, identifier_scores = await asyncio.gather(
                 fts_scores(self.race_texts_table, tokens),
+                fts_scores(self.favored_enemies_table, tokens),
                 fts_scores(
                     self.identifiers_table,
                     tokens,
@@ -838,14 +843,21 @@ class PipelineReader:
             rows, scores = _scored_rows(
                 rows,
                 lambda row: max(
-                    text_scores.get(row.key, 0.0),
+                    lore_scores.get(row.lore.key, 0.0) if row.lore is not None else 0.0,
                     race_id_scores.get(row.race_id, 0.0),
+                    *(text_scores.get(text.record.key, 0.0) for text in row.campaign_texts),
                 ),
             )
 
         sort: RaceSort | Literal["relevance"] = query.sort or ("relevance" if tokens else "race_id")
         direction: SortDirection = "desc" if sort == "relevance" else query.direction
-        rows = browse_order(rows, sort, direction, scores, lambda row: row.key)
+        if sort == "display_name":
+            rows.sort(
+                key=lambda row: (row.display_name.casefold(), row.key),
+                reverse=direction == "desc",
+            )
+        else:
+            rows = browse_order(rows, sort, direction, scores, lambda row: row.key)
         return RacePage(
             items=page_items(rows, query),
             page=query.page,

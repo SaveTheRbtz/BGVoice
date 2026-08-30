@@ -262,7 +262,7 @@ def test_generated_work_is_browsable_filterable_and_playable(
         ("ListDialogueLines", "dialogueLines", "text"),
         ("ListDialogueTransitions", "dialogueTransitions", "flagsRaw"),
         ("ListCharacterSounds", "characterSounds", "text"),
-        ("ListRaces", "races", "texts"),
+        ("ListRaces", "races", "lore"),
         ("ListCharacterClasses", "characterClasses", "texts"),
         ("ListKits", "kits", "displayName"),
         ("ListIdentifierDefinitions", "identifierDefinitions", "symbols"),
@@ -282,7 +282,7 @@ def test_connect_lists_each_browser_collection(
             "pageSize": 2,
         }
         if list_method == "ListRaces":
-            payload["filter"] = 'search("Elf")'
+            payload["filter"] = 'search("Floating aberrations")'
         elif list_method == "ListCharacterClasses":
             payload["filter"] = "class_id = 14"
         response = _connect(
@@ -296,6 +296,9 @@ def test_connect_lists_each_browser_collection(
     assert response.json()[response_field]
     assert int(response.json()["totalSize"]) >= len(response.json()[response_field])
     assert full_field in first
+    if list_method == "ListRaces":
+        assert first["displayName"] == "Beholder"
+        assert first["lore"]["description"] == "Floating aberrations."
 
 
 def test_connect_filters_transitions_by_dialogue(

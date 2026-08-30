@@ -451,7 +451,7 @@ message DialogueTransition {
   optional string next_dialogue = 17 [(google.api.resource_reference).type = "bgvoice.local/Dialogue"];
 }
 
-message RaceText {
+message RaceCampaignText {
   string source_resource = 1;
   repeated string campaigns = 2;
   string row_name = 3;
@@ -465,6 +465,15 @@ message RaceText {
   optional string biography = 11;
 }
 
+message RaceLore {
+  string source_resource = 1;
+  string row_name = 2;
+  uint32 name_strref = 3;
+  optional string display_name = 4;
+  uint32 description_strref = 5;
+  optional string description = 6;
+}
+
 message Race {
   option (google.api.resource) = {
     type: "bgvoice.local/Race"
@@ -475,7 +484,8 @@ message Race {
   uint32 race_id = 2;
   repeated string symbols = 3;
   string display_name = 4;
-  repeated RaceText texts = 5;
+  repeated RaceCampaignText campaign_texts = 5;
+  optional RaceLore lore = 6;
 }
 
 message CharacterClassText {

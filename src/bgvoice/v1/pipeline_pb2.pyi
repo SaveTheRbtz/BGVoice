@@ -681,7 +681,7 @@ class DialogueTransition(_message.Message):
     next_dialogue: str
     def __init__(self, name: _Optional[str] = ..., dialogue: _Optional[str] = ..., dialogue_resref: _Optional[str] = ..., source_kind: _Optional[_Union[SourceKind, str]] = ..., state_index: _Optional[int] = ..., transition_index: _Optional[int] = ..., flags_raw: _Optional[int] = ..., flags_decoded: _Optional[_Iterable[str]] = ..., trigger_index: _Optional[int] = ..., trigger_text: _Optional[str] = ..., action_index: _Optional[int] = ..., action_text: _Optional[str] = ..., next_dialogue_resref: _Optional[str] = ..., next_state_index: _Optional[int] = ..., terminates_dialogue: _Optional[bool] = ..., serialized_size: _Optional[int] = ..., next_dialogue: _Optional[str] = ...) -> None: ...
 
-class RaceText(_message.Message):
+class RaceCampaignText(_message.Message):
     __slots__ = ("source_resource", "campaigns", "row_name", "name_strref", "display_name", "description_strref", "description", "uppercase_name_strref", "uppercase_name", "biography_strref", "biography")
     SOURCE_RESOURCE_FIELD_NUMBER: _ClassVar[int]
     CAMPAIGNS_FIELD_NUMBER: _ClassVar[int]
@@ -707,19 +707,37 @@ class RaceText(_message.Message):
     biography: str
     def __init__(self, source_resource: _Optional[str] = ..., campaigns: _Optional[_Iterable[str]] = ..., row_name: _Optional[str] = ..., name_strref: _Optional[int] = ..., display_name: _Optional[str] = ..., description_strref: _Optional[int] = ..., description: _Optional[str] = ..., uppercase_name_strref: _Optional[int] = ..., uppercase_name: _Optional[str] = ..., biography_strref: _Optional[int] = ..., biography: _Optional[str] = ...) -> None: ...
 
+class RaceLore(_message.Message):
+    __slots__ = ("source_resource", "row_name", "name_strref", "display_name", "description_strref", "description")
+    SOURCE_RESOURCE_FIELD_NUMBER: _ClassVar[int]
+    ROW_NAME_FIELD_NUMBER: _ClassVar[int]
+    NAME_STRREF_FIELD_NUMBER: _ClassVar[int]
+    DISPLAY_NAME_FIELD_NUMBER: _ClassVar[int]
+    DESCRIPTION_STRREF_FIELD_NUMBER: _ClassVar[int]
+    DESCRIPTION_FIELD_NUMBER: _ClassVar[int]
+    source_resource: str
+    row_name: str
+    name_strref: int
+    display_name: str
+    description_strref: int
+    description: str
+    def __init__(self, source_resource: _Optional[str] = ..., row_name: _Optional[str] = ..., name_strref: _Optional[int] = ..., display_name: _Optional[str] = ..., description_strref: _Optional[int] = ..., description: _Optional[str] = ...) -> None: ...
+
 class Race(_message.Message):
-    __slots__ = ("name", "race_id", "symbols", "display_name", "texts")
+    __slots__ = ("name", "race_id", "symbols", "display_name", "campaign_texts", "lore")
     NAME_FIELD_NUMBER: _ClassVar[int]
     RACE_ID_FIELD_NUMBER: _ClassVar[int]
     SYMBOLS_FIELD_NUMBER: _ClassVar[int]
     DISPLAY_NAME_FIELD_NUMBER: _ClassVar[int]
-    TEXTS_FIELD_NUMBER: _ClassVar[int]
+    CAMPAIGN_TEXTS_FIELD_NUMBER: _ClassVar[int]
+    LORE_FIELD_NUMBER: _ClassVar[int]
     name: str
     race_id: int
     symbols: _containers.RepeatedScalarFieldContainer[str]
     display_name: str
-    texts: _containers.RepeatedCompositeFieldContainer[RaceText]
-    def __init__(self, name: _Optional[str] = ..., race_id: _Optional[int] = ..., symbols: _Optional[_Iterable[str]] = ..., display_name: _Optional[str] = ..., texts: _Optional[_Iterable[_Union[RaceText, _Mapping]]] = ...) -> None: ...
+    campaign_texts: _containers.RepeatedCompositeFieldContainer[RaceCampaignText]
+    lore: RaceLore
+    def __init__(self, name: _Optional[str] = ..., race_id: _Optional[int] = ..., symbols: _Optional[_Iterable[str]] = ..., display_name: _Optional[str] = ..., campaign_texts: _Optional[_Iterable[_Union[RaceCampaignText, _Mapping]]] = ..., lore: _Optional[_Union[RaceLore, _Mapping]] = ...) -> None: ...
 
 class CharacterClassText(_message.Message):
     __slots__ = ("source_resource", "campaigns", "row_name", "class_text_kit_id", "lower_name_strref", "lower_name", "description_strref", "description", "mixed_name_strref", "mixed_name", "biography_strref", "biography", "fallen", "brief_description_strref", "brief_description", "fallen_notice_strref", "fallen_notice")

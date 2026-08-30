@@ -86,7 +86,7 @@ def test_metadata_replacement_is_a_complete_generation(tmp_path: Path) -> None:
 
     assert len(database.identifier_definitions()) == len(metadata.identifiers)
     assert {row.campaign_id for row in database.campaigns()} == {"SOA", "BG1"}
-    assert {row.name for row in database.race_text_rows()} == {"Elf", "Gnome"}
+    assert {row.name for row in database.race_text_rows()} == {"Elf", "Gnome", "Vampire"}
     assert {row.mixed_name for row in database.class_text_rows()} == {"Mage", "Cleric / Mage"}
     assert [row.row_name for row in database.kits()] == ["BERSERKER"]
 

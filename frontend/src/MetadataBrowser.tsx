@@ -24,7 +24,8 @@ import type {
   IdentifierDefinition,
   Kit,
   Race,
-  RaceText,
+  RaceCampaignText,
+  RaceLore,
 } from "./gen/bgvoice/v1/pipeline_pb";
 import { useBrowser } from "./use-browser";
 
@@ -98,7 +99,7 @@ export function RaceBrowser() {
     <DefinitionCatalog
       browser={browser}
       title="Races"
-      description="Canonical RACE.IDS values with every campaign-specific name, description, and biography."
+      description="Canonical RACE.IDS values with campaign presentation and HATERACE bestiary lore."
       noun="races"
       searchPlaceholder="Search race symbols, names, and descriptions…"
       orderOptions={RACE_ORDERS}
@@ -273,12 +274,22 @@ function RaceDefinition({ race }: { race: Race }) {
       id={String(race.raceId)}
       name={race.displayName}
       symbols={race.symbols}
-      aside={variantLabel(race.texts.length)}
+      aside={(
+        <>
+          <strong>
+            {formatCount(race.campaignTexts.length)} campaign {race.campaignTexts.length === 1
+              ? "text"
+              : "texts"}
+          </strong>
+          <span>{race.lore == null ? "No bestiary lore" : "Bestiary lore"}</span>
+        </>
+      )}
     >
-      {race.texts.length > 0 ? (
+      {race.lore != null || race.campaignTexts.length > 0 ? (
         <div className="definition-variants">
-          {race.texts.map((text) => (
-            <RaceTextVariant
+          {race.lore != null ? <RaceLoreVariant lore={race.lore} /> : undefined}
+          {race.campaignTexts.map((text) => (
+            <RaceCampaignTextVariant
               key={`${text.sourceResource}:${text.rowName}`}
               text={text}
             />
@@ -289,10 +300,29 @@ function RaceDefinition({ race }: { race: Race }) {
   );
 }
 
-function RaceTextVariant({ text }: { text: RaceText }) {
+function RaceLoreVariant({ lore }: { lore: RaceLore }) {
   return (
     <section className="definition-variant">
-      <VariantHeader title={text.rowName} tags={[...text.campaigns, text.sourceResource]} />
+      <VariantHeader title="Bestiary lore" tags={[lore.rowName, lore.sourceResource]} />
+      <dl className="definition-fields">
+        <DefinitionField label="Name" value={lore.displayName} strref={lore.nameStrref} />
+        <DefinitionField
+          label="Description"
+          value={lore.description}
+          strref={lore.descriptionStrref}
+        />
+      </dl>
+    </section>
+  );
+}
+
+function RaceCampaignTextVariant({ text }: { text: RaceCampaignText }) {
+  return (
+    <section className="definition-variant">
+      <VariantHeader
+        title={`Campaign presentation · ${text.rowName}`}
+        tags={[...text.campaigns, text.sourceResource]}
+      />
       <dl className="definition-fields">
         <DefinitionField label="Name" value={text.displayName} strref={text.nameStrref} />
         <DefinitionField

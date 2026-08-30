@@ -190,6 +190,10 @@ async def test_metadata_queries_merge_canonical_ids_with_campaign_text(
         races = await reader.races(RaceQuery(page_size=100))
         soa_races = await reader.races(RaceQuery(campaign="soa", page_size=100))
         elf_search = await reader.races(RaceQuery(q="Elf", page_size=100))
+        lore_search = await reader.races(RaceQuery(q="Floating aberrations", page_size=100))
+        named_races = await reader.races(
+            RaceQuery(sort="display_name", direction="asc", page_size=100)
+        )
         classes = await reader.classes(ClassQuery(class_id=14, fallen=False, page_size=100))
         kits = await reader.kits(KitQuery(q="Berserker", class_id=2, page_size=100))
         identifiers = await reader.identifiers(
@@ -200,13 +204,23 @@ async def test_metadata_queries_merge_canonical_ids_with_campaign_text(
 
     human = next(row for row in races.items if row.race_id == 1)
     gnome = next(row for row in races.items if row.race_id == 7)
-    assert (human.symbols, human.source_resource, human.campaigns) == (["HUMAN"], None, [])
-    assert (gnome.symbols, gnome.campaigns) == ([], ["SOA"])
-    assert {row.name for row in soa_races.items} == {"Elf", "Gnome"}
-    assert {row.source_resource for row in elf_search.items} == {
+    beholder = next(row for row in races.items if row.race_id == 123)
+    vampire = next(row for row in races.items if row.race_id == 125)
+    assert (human.symbols, human.campaign_texts, human.lore) == (["HUMAN"], [], None)
+    assert (gnome.symbols, gnome.campaign_texts[0].campaigns) == ([], ["SOA"])
+    assert {row.display_name for row in soa_races.items} == {"Elf", "Gnome", "Vampire"}
+    assert {text.record.source_resource for text in elf_search.items[0].campaign_texts} == {
         "RACETEXT.2DA",
         "BGRACTXT.2DA",
     }
+    assert beholder.lore is not None
+    assert (beholder.display_name, beholder.lore.help_text) == ("Beholder", "Floating aberrations.")
+    assert (len(vampire.campaign_texts), vampire.lore is not None) == (1, True)
+    assert [row.race_id for row in lore_search.items] == [123]
+    assert [row.display_name for row in named_races.items] == sorted(
+        (row.display_name for row in named_races.items),
+        key=str.casefold,
+    )
     assert classes.total == 2
     assert {tuple(row.campaigns) for row in classes.items} == {("SOA",), ("BG1",)}
     assert (kits.total, kits.items[0].class_symbols, kits.items[0].kit_symbols) == (

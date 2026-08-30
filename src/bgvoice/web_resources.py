@@ -29,6 +29,7 @@ from bgvoice.reader_models import (
     DirectedLineRow,
     IdentifierRow,
     KitRow,
+    RaceCampaignTextRow,
     RaceRow,
     ReadableItemRow,
     SoundRow,
@@ -443,26 +444,37 @@ def transition(row: TransitionRow) -> pb.DialogueTransition:
     return message
 
 
-def race(rows: Sequence[RaceRow]) -> pb.Race:
-    assert rows, "a race resource needs at least one source row"
-    row = next((candidate for candidate in rows if candidate.name is not None), rows[0])
-    symbols = _symbols(candidate.symbols for candidate in rows)
+def race(row: RaceRow) -> pb.Race:
     message = pb.Race(
         name=resource_name(Collection.RACES, str(row.race_id)),
         race_id=row.race_id,
-        symbols=symbols,
-        display_name=row.name or _identifier_display(symbols, row.race_id),
+        symbols=row.symbols,
+        display_name=row.display_name,
     )
-    message.texts.extend(filter(None, map(_race_text, rows)))
+    message.campaign_texts.extend(map(_race_campaign_text, row.campaign_texts))
+    if row.lore is not None:
+        lore = pb.RaceLore(
+            source_resource=row.lore.source_resource,
+            row_name=row.lore.row_name,
+            name_strref=row.lore.name_strref,
+            description_strref=row.lore.help_strref,
+        )
+        if row.lore.name is not None:
+            lore.display_name = row.lore.name
+        if row.lore.help_text is not None:
+            lore.description = row.lore.help_text
+        message.lore.CopyFrom(lore)
     return message
 
 
-def _race_text(source: RaceRow) -> pb.RaceText | None:
-    if source.source_resource is None:
-        return None
-    text = pb.RaceText(source_resource=source.source_resource, campaigns=source.campaigns)
+def _race_campaign_text(source: RaceCampaignTextRow) -> pb.RaceCampaignText:
+    record = source.record
+    text = pb.RaceCampaignText(
+        source_resource=record.source_resource,
+        campaigns=source.campaigns,
+        row_name=record.row_name,
+    )
     for field_name in (
-        "row_name",
         "name_strref",
         "description_strref",
         "description",
@@ -471,11 +483,11 @@ def _race_text(source: RaceRow) -> pb.RaceText | None:
         "biography_strref",
         "biography",
     ):
-        value = getattr(source, field_name)
+        value = getattr(record, field_name)
         if value is not None:
             setattr(text, field_name, value)
-    if source.name is not None:
-        text.display_name = source.name
+    if record.name is not None:
+        text.display_name = record.name
     return text
 
 

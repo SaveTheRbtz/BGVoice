@@ -14,7 +14,12 @@ from bgvoice.model_types import (
     ResourceSource,
     SourceKind,
 )
-from bgvoice.storage_records import CharacterDirection, NarratorDirection
+from bgvoice.storage_records import (
+    CharacterDirection,
+    FavoredEnemyRecord,
+    NarratorDirection,
+    RaceTextRecord,
+)
 
 type CharacterSort = Literal[
     "resource_name",
@@ -50,7 +55,7 @@ type LineSort = Literal[
 type SortDirection = Literal["asc", "desc"]
 type StableColumn = Literal["resource_name", "id", "key"]
 type ChildParentColumn = Literal["character_resource_name", "dialogue_resource_name"]
-type RaceSort = Literal["race_id", "row_name", "name", "source_resource"]
+type RaceSort = Literal["race_id", "display_name"]
 type ClassSort = Literal["class_id", "row_name", "lower_name", "fallen"]
 type KitSort = Literal["row_id", "row_name", "lower_name", "class_id"]
 type IdentifierSort = Literal["kind", "value", "source_resource"]
@@ -398,22 +403,18 @@ class TransitionPage(ResultPage[TransitionRow, TransitionSort | Literal["relevan
     pass
 
 
+class RaceCampaignTextRow(_ReaderModel):
+    record: RaceTextRecord
+    campaigns: list[str]
+
+
 class RaceRow(_ReaderModel):
     key: str
     race_id: int
     symbols: list[str]
-    source_resource: str | None
-    ordinal: int | None
-    campaigns: list[str]
-    row_name: str | None
-    name_strref: int | None
-    name: str | None
-    description_strref: int | None
-    description: str | None
-    uppercase_name_strref: int | None
-    uppercase_name: str | None
-    biography_strref: int | None
-    biography: str | None
+    display_name: str
+    campaign_texts: list[RaceCampaignTextRow]
+    lore: FavoredEnemyRecord | None
 
 
 class RacePage(ResultPage[RaceRow, RaceSort | Literal["relevance"]]):

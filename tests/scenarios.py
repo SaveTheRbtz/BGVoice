@@ -117,6 +117,7 @@ def make_metadata() -> MetadataExtraction:
             [
                 (IdentifierKind.RACE, 1, "RACE.IDS", ["HUMAN"]),
                 (IdentifierKind.RACE, 2, "RACE.IDS", ["ELF"]),
+                (IdentifierKind.RACE, 125, "RACE.IDS", ["VAMPIRE"]),
                 (IdentifierKind.RACE, 255, "RACE.IDS", ["NO_RACE"]),
                 (IdentifierKind.CLASS, 1, "CLASS.IDS", ["MAGE"]),
                 (IdentifierKind.CLASS, 2, "CLASS.IDS", ["FIGHTER"]),
@@ -170,6 +171,7 @@ def make_metadata() -> MetadataExtraction:
                 ("RACETEXT.2DA", "ELF", 2, "Elf", "The Tel'Quessir."),
                 ("BGRACTXT.2DA", "ELF", 2, "Elf", "An elf in the Sword Coast."),
                 ("RACETEXT.2DA", "GNOME", 7, "Gnome", "A text-only race."),
+                ("RACETEXT.2DA", "VAMPIRE", 125, "Vampire", None),
             )
         )
     ]
@@ -269,7 +271,17 @@ def make_metadata() -> MetadataExtraction:
                     race_id=RaceId(123),
                     help_strref=4001,
                     help_text="Floating aberrations.",
-                )
+                ),
+                FavoredEnemyDefinition(
+                    source_resource="HATERACE.2DA",
+                    ordinal=1,
+                    row_name="VAMPIRE",
+                    name_strref=4002,
+                    name="Vampire",
+                    race_id=RaceId(125),
+                    help_strref=4003,
+                    help_text="Undead creatures that feed on blood.",
+                ),
             ],
             "race_text_rows": race_texts,
             "class_text_rows": class_texts,

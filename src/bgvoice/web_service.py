@@ -625,42 +625,15 @@ class PipelineService(pipeline_connect.PipelineService):
                 query.model_copy(update={"page": page_number, "page_size": READER_PAGE_SIZE})
             )
 
-        source_rows = await all_rows(load)
-        resources = _groups(source_rows, lambda row: row.race_id)
-        if sort is not None or filters.search is None:
-            field = sort or "race_id"
-            if field == "race_id":
-                resources.sort(key=lambda rows: rows[0].race_id, reverse=direction == "desc")
-            elif field == "name":
-                resources.sort(
-                    key=lambda rows: next(
-                        (row.name.casefold() for row in rows if row.name is not None),
-                        "",
-                    ),
-                    reverse=direction == "desc",
-                )
-            else:
-                resources.sort(
-                    key=lambda rows: next(
-                        (
-                            row.source_resource.casefold()
-                            for row in rows
-                            if row.source_resource is not None
-                        ),
-                        "",
-                    ),
-                    reverse=direction == "desc",
-                )
-        total = len(resources)
-        selected = resources[page.offset : page.offset + page.size]
+        rows, total = await read_window(page.offset, page.size, load)
         return pb.ListRacesResponse(
-            races=[race(rows) for rows in selected],
+            races=[race(row) for row in rows],
             next_page_token=next_token(
                 Collection.RACES,
                 request.filter,
                 request.order_by,
                 page,
-                len(selected),
+                len(rows),
                 total,
             ),
             total_size=total,
