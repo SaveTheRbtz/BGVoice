@@ -1,6 +1,4 @@
-<p align="center">
-  <img src="docs/assets/bgvoice-title-lockup.png" alt="BGVoice" width="720">
-</p>
+https://github.com/user-attachments/assets/75696bdb-e96c-44e5-9bd1-94e515f22527
 
 <p align="center">
   <strong>AI-generated voice-over for NPC dialogue in English Baldur's Gate: Enhanced Edition Trilogy.</strong>
