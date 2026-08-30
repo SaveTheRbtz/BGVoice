@@ -263,7 +263,7 @@ async def _write_mod(
 
         audio_bytes = await _write_audio(audio_table, audio, assets)
         (root / _MOD_FOLDER / "README.md").write_text(
-            _readme(assets, generated_lines, len(grouped), audio_bytes, version),
+            _readme(assets, generated_lines, len(grouped), version),
             encoding="utf-8",
             newline="\n",
         )
@@ -376,39 +376,56 @@ def _readme(
     assets: list[_ContentAsset],
     generated_lines: int,
     voice_catalog_count: int,
-    audio_bytes: int,
     version: str,
 ) -> str:
-    return f"""# BGVoice EET dialogue audio
+    return f"""# BGVoice
+
+> AI-generated voice-over for NPC dialogue in English Baldur's Gate: Enhanced Edition Trilogy.
 
 Version {version}.
 
-This export contains {len(assets):,} canonical recordings covering
-{generated_lines:,} generated NPC lines for {voice_catalog_count:,} character voices
-({audio_bytes:,} bytes).
+This release contains {len(assets):,} canonical recordings covering
+{generated_lines:,} NPC dialogue occurrences across {voice_catalog_count:,} character voice roles.
 
-## Install
+## Requirements
 
-1. Install every dialogue/content mod you want.
-2. Copy this export's entire contents into the EET game directory.
+- Baldur's Gate: Enhanced Edition Trilogy
+- The English game language (`en_US`)
+
+BGVoice replaces existing audio on every uniquely matched NPC dialogue line. It does not voice
+player responses, journal entries, books, or general combat and soundset lines.
+
+## Installation
+
+1. Install EET and every dialogue or content mod you want to use.
+2. Extract the complete BGVoice release into the EET game directory.
 3. Run `setup-bgvoice.exe` and install BGVoice.
-4. Install `EET_end` if the EET installation has not yet been finalized.
+4. If the installation has not been finalized, run `EET_end` after BGVoice.
 
-BGVoice replaces the audio on every matched dialogue occurrence.
+Recommended order: dialogue and content mods -> BGVoice -> EET_end.
 
-The installer discovers character dialogue ownership from the target game's CRE,
-CAMPAIGN, INTERDIA, and PDIALOG resources. It patches only exact character-name and
-resolved-English-text matches. For split families, each CRE-to-DLG ownership supplies
-the gender: single-gender DLGs prefer that catalog with neutral fallback, while mixed
-DLGs use neutral. Unsplit families keep their default catalog. DLG names, state numbers,
-TLK string references, EET versions, and installed content mods may differ from the
-source. Missing characters, resources, and changed text are skipped. If one DLG/text
-could belong to different character families, that occurrence is left unchanged rather
-than guessing. WeiDU prints aggregate coverage totals and manages backups and
-uninstallation. BGVoice works both before and after `EET_end`; installing before it
-lets `EET_end` carry patched source dialogue strings into its final merges. If you
-later change earlier mods, uninstall later components in reverse order and reinstall
-them in their original order.
+BGVoice can also be installed on an already-finalized EET setup.
+
+## Updating or uninstalling
+
+WeiDU manages backups and uninstallation. To update safely:
+
+1. Uninstall components installed after BGVoice, then uninstall BGVoice.
+2. Remove the old `bgvoice` folder, `setup-bgvoice.exe`, and `setup-bgvoice.tp2`.
+3. Extract and install the new release.
+4. Reinstall later components in their original order.
+
+Do not extract a new release over the old `bgvoice` folder: obsolete catalogs could otherwise
+remain installed.
+
+## Compatibility
+
+The installer matches the character name and exact resolved English text found in the target game.
+It does not depend on matching DLG names, state numbers, TLK references, EET versions, or installed
+content mods. Missing resources and modified text are skipped. Ambiguous occurrences are left
+unchanged instead of being assigned a guessed voice.
+
+WeiDU prints aggregate coverage totals when installation finishes.
 """
 
 
