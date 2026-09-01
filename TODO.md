@@ -1,11 +1,9 @@
 # v2.0.0
 
-- [x] Figure out how to handle voice over for the common characters like Commoner, etc
-  - [x] likely would need a heurstic for splitting a voice into variants (at least Male Female Neutral) if 1) voice has over X chars 2) chars have different genders.
-- [x] Add a tool for detecting inconsistencies between original and directed dialogues lines.
-- [x] During voice creation, add a sample of dialogue lines so that voice creator can adjust.
-  - [x] while here, switch voice creation prompt to be xml-like to avoid confusing the prompt.
+Each full regen is ~$500 so it's a bit of "meassure twice, cut once."
+
 - [ ] EEex script to read books aloud.
-- [x] Create default voices for chars with < 20 lines for every gender/race combination.
-- [x] Figure out ideal volume for the voiceovers.
-  - [x] normalize LUFS.
+- [ ] Figure out how to make line transitions more consistent. Sometimes voice noticeably jumps between two successive lines.
+- [ ] Improve handling of *xxx* in the dialogue lines: right now it is somtimes cut out.  Prompt should be improved to properly handle emphasis, plus a couple of examples of it. (e.g. Tulbor: "I *told* him")
+- [ ] Make voices more diverse/creative (except for generic and shared voices.).  Maybe add some high-level description for the voice besides the specified dimensions.
+- [ ] Narrator voice can be a bit more polished.  Need to iterate on prompt, maybe consider female/neutral.  Maybe Volo-type sarcastic/playful/mischievous one instead.  Maybe provide multiple narrator variants?
